@@ -15,7 +15,7 @@ func TestFormatRead_WhenTranscriptHasDialogueAndToolUse_ThenWritesReadableTimeli
 	transcriptPath, _ := writeFormatterFixture(t)
 
 	var out bytes.Buffer
-	if err := FormatRead(transcriptPath, 0, false, false, &out); err != nil {
+	if err := FormatRead(transcriptPath, 0, FormatOptions{}, &out); err != nil {
 		t.Fatalf("FormatRead returned error: %v", err)
 	}
 
@@ -40,7 +40,7 @@ func TestFormatContext_WhenSessionMetadataExists_ThenWritesCompactContextWithHea
 
 	var out bytes.Buffer
 	store := parser.Store{SessionMetaDir: metaDir}
-	if err := FormatContextWithStore(transcriptPath, formatterFixtureSessionID, false, false, &out, store); err != nil {
+	if err := FormatContextWithStore(transcriptPath, formatterFixtureSessionID, FormatOptions{}, &out, store); err != nil {
 		t.Fatalf("FormatContext returned error: %v", err)
 	}
 
@@ -64,7 +64,7 @@ func TestFormatRead_WhenMaxLinesReached_ThenStopsWithTruncationMessage(t *testin
 	transcriptPath, _ := writeFormatterFixture(t)
 
 	var out bytes.Buffer
-	if err := FormatRead(transcriptPath, 3, false, false, &out); err != nil {
+	if err := FormatRead(transcriptPath, 3, FormatOptions{}, &out); err != nil {
 		t.Fatalf("FormatRead returned error: %v", err)
 	}
 
@@ -83,7 +83,7 @@ func TestFormatRead_WhenVerboseAgents_ThenWritesFullAgentResult(t *testing.T) {
 	transcriptPath, _ := writeAgentFormatterFixture(t)
 
 	var out bytes.Buffer
-	if err := FormatRead(transcriptPath, 0, true, false, &out); err != nil {
+	if err := FormatRead(transcriptPath, 0, FormatOptions{VerboseAgents: true}, &out); err != nil {
 		t.Fatalf("FormatRead returned error: %v", err)
 	}
 
@@ -111,7 +111,7 @@ func TestFormatRead_WhenToolResultHasNoPendingTool_ThenStillWritesSummary(t *tes
 	}
 
 	var out bytes.Buffer
-	if err := FormatRead(transcriptPath, 0, false, false, &out); err != nil {
+	if err := FormatRead(transcriptPath, 0, FormatOptions{}, &out); err != nil {
 		t.Fatalf("FormatRead returned error: %v", err)
 	}
 
@@ -180,7 +180,7 @@ func TestFormatReadEvents_WhenVerboseBash_ThenShowsFullBashOutput(t *testing.T) 
 		},
 	}
 	var out bytes.Buffer
-	FormatReadEvents(events, nil, 0, true, &out)
+	FormatReadEvents(events, nil, 0, FormatOptions{VerboseBash: true}, &out)
 	got := out.String()
 
 	if !strings.Contains(got, "detail line3") {
@@ -211,7 +211,7 @@ func TestFormatReadEvents_WhenVerboseBash_ThenNonBashToolsStillCompressed(t *tes
 		},
 	}
 	var out bytes.Buffer
-	FormatReadEvents(events, nil, 0, true, &out)
+	FormatReadEvents(events, nil, 0, FormatOptions{VerboseBash: true}, &out)
 	got := out.String()
 
 	// Non-Bash tools should be compressed to one-line summary even with verbose-bash on
@@ -240,7 +240,7 @@ func TestFormatContextEvents_WhenVerboseBash_ThenShowsFullBashOutput(t *testing.
 		},
 	}
 	var out bytes.Buffer
-	FormatContextEvents(events, nil, true, &out)
+	FormatContextEvents(events, nil, FormatOptions{VerboseBash: true}, &out)
 	got := out.String()
 
 	if !strings.Contains(got, "ok line2") {

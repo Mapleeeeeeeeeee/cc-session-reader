@@ -159,7 +159,8 @@ func runRead(args []string, out io.Writer, errOut io.Writer, store parser.Store)
 		return err
 	}
 
-	return formatter.FormatRead(resolved.Path, *maxLines, *isVerboseAgents, *isVerboseBash, out)
+	opts := formatter.FormatOptions{VerboseAgents: *isVerboseAgents, VerboseBash: *isVerboseBash}
+	return formatter.FormatRead(resolved.Path, *maxLines, opts, out)
 }
 
 func cmdContext(args []string) {
@@ -183,7 +184,8 @@ func runContext(args []string, out io.Writer, errOut io.Writer, store parser.Sto
 		return err
 	}
 
-	return formatter.FormatContextWithStore(resolved.Path, resolved.ID, *isVerboseAgents, *isVerboseBash, out, store)
+	opts := formatter.FormatOptions{VerboseAgents: *isVerboseAgents, VerboseBash: *isVerboseBash}
+	return formatter.FormatContextWithStore(resolved.Path, resolved.ID, opts, out, store)
 }
 
 func cmdStats(args []string) {
@@ -322,12 +324,9 @@ func runAudit(args []string, out io.Writer, errOut io.Writer, store parser.Store
 // --- helpers ---
 
 var reorderBoolFlags = map[string]bool{
-	"-verbose-agents":  true,
-	"--verbose-agents": true,
-	"-verbose-bash":    true,
-	"--verbose-bash":   true,
-	"-no-tokens":       true,
-	"--no-tokens":      true,
+	"verbose-agents": true,
+	"verbose-bash":   true,
+	"no-tokens":      true,
 }
 
 // reorderArgs moves flags before positional args so Go's flag package
@@ -342,7 +341,7 @@ func reorderArgs(args []string) []string {
 	for i < len(args) {
 		if strings.HasPrefix(args[i], "-") {
 			flags = append(flags, args[i])
-			name := strings.SplitN(args[i], "=", 2)[0]
+			name := strings.TrimLeft(strings.SplitN(args[i], "=", 2)[0], "-")
 			if reorderBoolFlags[name] {
 				i++
 				continue
