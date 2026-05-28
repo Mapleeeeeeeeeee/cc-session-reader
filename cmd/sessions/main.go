@@ -248,10 +248,7 @@ func cmdAudit(args []string) {
 		if len(items) == 0 {
 			continue
 		}
-		shown := *samples
-		if shown > len(items) {
-			shown = len(items)
-		}
+		shown := sampleCount(*samples, len(items))
 		fmt.Printf("=== %s (%d items, showing %d) ===\n", catName, len(items), shown)
 		for _, item := range items[:shown] {
 			fmt.Printf("  %s\n\n", item)
@@ -328,4 +325,14 @@ func formatNumber(n int) string {
 		result = append(result, byte(c))
 	}
 	return string(result)
+}
+
+func sampleCount(requested int, total int) int {
+	if requested < 0 {
+		return 0
+	}
+	if requested > total {
+		return total
+	}
+	return requested
 }

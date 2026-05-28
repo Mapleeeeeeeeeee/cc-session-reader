@@ -78,8 +78,9 @@ func ComputeAudit(entries []map[string]interface{}) AuditResult {
 }
 
 func truncateStr(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen]
+	return string(runes[:maxLen])
 }
