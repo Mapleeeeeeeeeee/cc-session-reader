@@ -16,11 +16,12 @@ go install github.com/Mapleeeeeeeeeee/cc-session-reader/cmd/sessions@latest
 
 ### 作為 Claude Code Skill 使用
 
-Clone repo 後把 skill 目錄 symlink 到 Claude Code skills：
+將 SKILL.md 放到 `~/.claude/skills/sessions/` 目錄下：
 
 ```bash
-git clone https://github.com/Mapleeeeeeeeeee/cc-session-reader.git
-ln -s "$(pwd)/cc-session-reader/skill" ~/.claude/skills/sessions
+mkdir -p ~/.claude/skills/sessions
+curl -o ~/.claude/skills/sessions/SKILL.md \
+  https://raw.githubusercontent.com/Mapleeeeeeeeeee/cc-session-reader/main/skill/SKILL.md
 ```
 
 之後在 Claude Code 中輸入 `/sessions` 即可觸發。

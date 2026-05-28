@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"cc-session-reader/internal/session"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
 )
 
 func TestParseLine_UserStringContent(t *testing.T) {

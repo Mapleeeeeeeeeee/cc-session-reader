@@ -3,7 +3,7 @@ package analyzer
 import (
 	"testing"
 
-	"cc-session-reader/internal/session"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
 )
 
 func TestComputeStats_CategorizesRawAndFilteredContent(t *testing.T) {

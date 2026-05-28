@@ -5,7 +5,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"cc-session-reader/internal/session"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
 )
 
 func TestComputeAudit_ToolResultCutUsesRuneSafeTruncation(t *testing.T) {

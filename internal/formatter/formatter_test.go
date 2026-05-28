@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"cc-session-reader/internal/parser"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/parser"
 )
 
 func TestFormatRead_WhenTranscriptHasDialogueAndToolUse_ThenWritesReadableTimeline(t *testing.T) {

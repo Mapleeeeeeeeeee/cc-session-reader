@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"cc-session-reader/internal/session"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
 )
 
 func toolInput(raw map[string]any) session.ToolInput {

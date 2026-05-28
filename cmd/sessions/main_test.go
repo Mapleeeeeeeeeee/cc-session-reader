@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"cc-session-reader/internal/parser"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/parser"
 )
 
 func TestSampleCount(t *testing.T) {

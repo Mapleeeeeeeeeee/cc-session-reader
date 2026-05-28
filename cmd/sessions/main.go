@@ -11,12 +11,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"cc-session-reader/internal/analyzer"
-	"cc-session-reader/internal/claudecodec"
-	"cc-session-reader/internal/formatter"
-	"cc-session-reader/internal/parser"
-	"cc-session-reader/internal/session"
-	"cc-session-reader/internal/tokens"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/analyzer"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/claudecodec"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/formatter"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/parser"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/tokens"
 )
 
 func main() {

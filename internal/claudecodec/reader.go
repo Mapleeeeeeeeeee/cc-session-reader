@@ -10,7 +10,7 @@ import (
 	"os"
 	"strings"
 
-	"cc-session-reader/internal/session"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
 )
 
 // noiseTypes are entry types that carry no user/assistant conversation content

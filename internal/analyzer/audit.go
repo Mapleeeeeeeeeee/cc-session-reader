@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"cc-session-reader/internal/session"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
 )
 
 type AuditResult struct {

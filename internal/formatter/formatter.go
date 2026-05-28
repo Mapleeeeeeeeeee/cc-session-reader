@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"cc-session-reader/internal/claudecodec"
-	"cc-session-reader/internal/jsonutil"
-	"cc-session-reader/internal/parser"
-	"cc-session-reader/internal/session"
-	"cc-session-reader/internal/summarizer"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/claudecodec"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/jsonutil"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/parser"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/summarizer"
 )
 
 func FormatRead(transcriptPath string, maxLines int, isVerboseAgents bool, out io.Writer) error {

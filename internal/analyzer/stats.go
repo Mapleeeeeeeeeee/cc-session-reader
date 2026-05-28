@@ -5,8 +5,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"cc-session-reader/internal/session"
-	"cc-session-reader/internal/summarizer"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/summarizer"
 )
 
 type StatsResult struct {
