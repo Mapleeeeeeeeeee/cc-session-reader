@@ -12,13 +12,7 @@ allowed-tools:
 
 # Session Reader
 
-## Binary
-
-```
-BIN=${HOME}/go/bin/sessions
-```
-
-若 binary 不存在：`cd ~/Desktop/cc-session-reader && go install ./cmd/sessions`
+若 `sessions` 不在 PATH：`cd ~/Desktop/cc-session-reader && go install ./cmd/sessions`
 
 ## 選擇子命令
 
@@ -26,13 +20,13 @@ BIN=${HOME}/go/bin/sessions
 
 | 意圖 | 子命令 | 說明 |
 |------|--------|------|
-| 找到目標 session | `${BIN} list` | 列出最近的 session，支援 `-p` 過濾專案 |
-| 回顧完整對話脈絡 | `${BIN} read <id>` | 對話全文 + 每個 tool call 壓成一行摘要 |
-| 注入前次 session 為 context | `${BIN} context <id>` | 同 read 但格式更緊湊，帶 metadata header |
-| 分析 token 節省效果 | `${BIN} stats <id>` | 各類別字元分佈和壓縮比 |
-| 檢查過濾是否漏掉重要內容 | `${BIN} audit <id>` | 從被過濾的內容取樣檢視 |
+| 找到目標 session | `sessions list` | 列出最近的 session，支援 `-p` 過濾專案 |
+| 回顧完整對話脈絡 | `sessions read <id>` | 對話全文 + 每個 tool call 壓成一行摘要 |
+| 注入前次 session 為 context | `sessions context <id>` | 同 read 但格式更緊湊，帶 metadata header |
+| 分析 token 節省效果 | `sessions stats <id>` | 各類別字元分佈和壓縮比 |
+| 檢查過濾是否漏掉重要內容 | `sessions audit <id>` | 從被過濾的內容取樣檢視 |
 
-Session ID 支援 prefix match，前 8 碼通常就夠。各子命令的 flags 用 `${BIN} <cmd> --help` 查看。
+Session ID 支援 prefix match，前 8 碼通常就夠。各子命令的 flags 用 `sessions <cmd> --help` 查看。
 
 ## 常用 flags
 
