@@ -9,10 +9,12 @@
 ## 安裝
 
 ```bash
-go install github.com/Mapleeeeeeeeeee/cc-session-reader/cmd/sessions@latest
+go install github.com/Mapleeeeeeeeeee/cc-session-reader/cmd/sessions@v0.1.0
 ```
 
-安裝後 `sessions` binary 會放在 `$GOPATH/bin`。
+安裝後 `sessions` binary 會放在 `$GOPATH/bin`（確保該路徑在 PATH 中）。
+
+> 如果 `@latest` 遇到 module path 衝突，用明確版號 `@v0.1.0` 或 `GOPROXY=direct go install ...@latest`。
 
 ### 作為 Claude Code Skill 使用
 
