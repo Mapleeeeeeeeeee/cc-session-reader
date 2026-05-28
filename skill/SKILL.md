@@ -12,7 +12,9 @@ allowed-tools:
 
 # Session Reader
 
-若 `sessions` 不在 PATH：`cd ~/Desktop/cc-session-reader && go install ./cmd/sessions`
+呼叫前先確保 PATH 包含 Go bin：`source ~/.zshrc` 或 `export PATH="$HOME/go/bin:$PATH"`。
+
+若 `sessions` 未安裝：`go install github.com/Mapleeeeeeeeeee/cc-session-reader/cmd/sessions@latest`
 
 ## 選擇子命令
 
