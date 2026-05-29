@@ -160,6 +160,7 @@ func runRead(args []string, out io.Writer, errOut io.Writer, store parser.Store)
 	isVerboseAgents := fs.Bool("verbose-agents", false, "show full agent results")
 	isVerboseBash := fs.Bool("verbose-bash", false, "show full Bash tool stdout/stderr")
 	isVerboseThinking := fs.Bool("verbose-thinking", false, "show assistant thinking blocks")
+	isVerboseCommands := fs.Bool("verbose-commands", false, "show full slash/bash command output")
 	if err := fs.Parse(reorderArgs(args)); err != nil {
 		return err
 	}
@@ -169,7 +170,7 @@ func runRead(args []string, out io.Writer, errOut io.Writer, store parser.Store)
 		return err
 	}
 
-	opts := formatter.FormatOptions{VerboseAgents: *isVerboseAgents, VerboseBash: *isVerboseBash, VerboseThinking: *isVerboseThinking}
+	opts := formatter.FormatOptions{VerboseAgents: *isVerboseAgents, VerboseBash: *isVerboseBash, VerboseThinking: *isVerboseThinking, VerboseCommands: *isVerboseCommands}
 	return formatter.FormatRead(resolved.Path, *maxLines, opts, out)
 }
 
@@ -186,6 +187,7 @@ func runContext(args []string, out io.Writer, errOut io.Writer, store parser.Sto
 	isVerboseAgents := fs.Bool("verbose-agents", false, "show full agent results")
 	isVerboseBash := fs.Bool("verbose-bash", false, "show full Bash tool stdout/stderr")
 	isVerboseThinking := fs.Bool("verbose-thinking", false, "show assistant thinking blocks")
+	isVerboseCommands := fs.Bool("verbose-commands", false, "show full slash/bash command output")
 	if err := fs.Parse(reorderArgs(args)); err != nil {
 		return err
 	}
@@ -195,7 +197,7 @@ func runContext(args []string, out io.Writer, errOut io.Writer, store parser.Sto
 		return err
 	}
 
-	opts := formatter.FormatOptions{VerboseAgents: *isVerboseAgents, VerboseBash: *isVerboseBash, VerboseThinking: *isVerboseThinking}
+	opts := formatter.FormatOptions{VerboseAgents: *isVerboseAgents, VerboseBash: *isVerboseBash, VerboseThinking: *isVerboseThinking, VerboseCommands: *isVerboseCommands}
 	return formatter.FormatContextWithStore(resolved.Path, resolved.ID, opts, out, store)
 }
 
@@ -253,6 +255,7 @@ func runStats(args []string, out io.Writer, errOut io.Writer, store parser.Store
 		{"CUT   tool input (raw): ", "tool_input_raw"},
 		{"CUT   tool result (raw):", "tool_result_raw"},
 		{"CUT   system/noise:     ", "system_noise"},
+		{"CUT   command noise:    ", "command_noise"},
 	} {
 		fmt.Fprintf(out, "  %s %10s\n", bl.label, formatNumber(result.Categories[bl.key]))
 	}
@@ -457,6 +460,7 @@ var reorderBoolFlags = map[string]bool{
 	"verbose-agents":   true,
 	"verbose-bash":     true,
 	"verbose-thinking": true,
+	"verbose-commands": true,
 	"no-tokens":        true,
 }
 

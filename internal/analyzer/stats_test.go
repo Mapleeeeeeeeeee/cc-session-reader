@@ -116,6 +116,54 @@ func TestComputeStats_UserAnswerIsKeptAsUserAnswer(t *testing.T) {
 	assertCategory(t, result, "tool_result_raw", 0)
 }
 
+// TestComputeStats_CommandNoiseCountsRawNotFiltered verifies command output
+// and caveat bodies are routed to the command_noise cut bucket: counted in raw
+// (so reduction reflects the real cut) but kept out of user_text and the
+// filtered stream. Guards against the regression where command machine output
+// inflated user_text and made reduction look artificially low.
+func TestComputeStats_CommandNoiseCountsRawNotFiltered(t *testing.T) {
+	const stdoutBody = "Context Usage 30k/200k tokens" // command stdout, must be cut
+	const caveatBody = "Caveat: DO NOT respond"        // caveat, must be cut
+
+	events := []session.Event{
+		{Kind: session.EventUserMessage, User: &session.UserMessage{
+			IsCommandNoise: true, Text: stdoutBody,
+		}},
+		{Kind: session.EventUserMessage, User: &session.UserMessage{
+			IsCommandNoise: true, IsCaveat: true, Text: caveatBody,
+		}},
+	}
+
+	result := ComputeStats(events)
+
+	wantNoise := len([]rune(stdoutBody)) + len([]rune(caveatBody))
+	assertCategory(t, result, "command_noise", wantNoise)
+	// Must not leak into the kept user-text bucket.
+	assertCategory(t, result, "user_text", 0)
+
+	assertContains(t, "RawText", result.RawText, stdoutBody)
+	assertContains(t, "RawText", result.RawText, caveatBody)
+	assertNotContains(t, "FilteredText", result.FilteredText, stdoutBody)
+	assertNotContains(t, "FilteredText", result.FilteredText, caveatBody)
+}
+
+// TestComputeStats_CommandMarkerIsKeptContent verifies the short invocation
+// marker is treated as kept user content: it appears in both streams and is
+// counted under user_text, never command_noise.
+func TestComputeStats_CommandMarkerIsKeptContent(t *testing.T) {
+	const marker = "[/context]"
+	events := []session.Event{
+		{Kind: session.EventUserMessage, User: &session.UserMessage{CommandMarker: marker}},
+	}
+
+	result := ComputeStats(events)
+
+	assertCategory(t, result, "user_text", len([]rune(marker)))
+	assertCategory(t, result, "command_noise", 0)
+	assertContains(t, "FilteredText", result.FilteredText, marker)
+	assertContains(t, "RawText", result.RawText, marker)
+}
+
 func assertCategory(t *testing.T, result StatsResult, key string, want int) {
 	t.Helper()
 	if got := result.Categories[key]; got != want {

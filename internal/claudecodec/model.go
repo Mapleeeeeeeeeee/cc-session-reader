@@ -13,6 +13,81 @@ var userAnswerPrefixes = []string{
 	"Your questions have been answered:",
 }
 
+// Command-related tags that Claude Code embeds in user-role transcript entries.
+// Invocation tags carry a marker; output and caveat tags are command noise.
+const (
+	tagCommandNameOpen  = "<command-name>"
+	tagCommandNameClose = "</command-name>"
+	tagBashInputOpen    = "<bash-input>"
+	tagBashInputClose   = "</bash-input>"
+	tagLocalStdout      = "<local-command-stdout>"
+	tagBashStdout       = "<bash-stdout>"
+	tagBashStderr       = "<bash-stderr>"
+	tagLocalCaveat      = "<local-command-caveat>"
+)
+
+// bangCommandMarkerMaxRunes caps the bang-command text rendered inside the
+// "[!...]" marker so a long one-liner does not blow up the marker line.
+const bangCommandMarkerMaxRunes = 80
+
+// classifyCommandUserMessage inspects a user-role message body and returns a
+// classified UserMessage when the body is a slash/bang command invocation or
+// command output. It returns nil for ordinary typed messages so the caller
+// falls back to plain user-message handling.
+//
+// Single source of truth: detection lives here in the parser layer so the
+// formatter and stats consumers branch on domain fields, never re-match tags.
+func classifyCommandUserMessage(text string) *session.UserMessage {
+	trimmed := strings.TrimSpace(text)
+
+	// Caveat is pure boilerplate — always droppable, even in verbose mode.
+	if strings.HasPrefix(trimmed, tagLocalCaveat) {
+		return &session.UserMessage{IsCommandNoise: true, IsCaveat: true}
+	}
+
+	// Slash-command invocation: extract "/context" -> marker "[/context]".
+	if name := extractBetween(trimmed, tagCommandNameOpen, tagCommandNameClose); name != "" {
+		return &session.UserMessage{CommandMarker: "[" + strings.TrimSpace(name) + "]"}
+	}
+
+	// Bang-command invocation: extract the command -> marker "[!CMD]".
+	if cmd := extractBetween(trimmed, tagBashInputOpen, tagBashInputClose); strings.TrimSpace(cmd) != "" {
+		oneLine := collapseWhitespace(cmd)
+		return &session.UserMessage{CommandMarker: "[!" + session.Truncate(oneLine, bangCommandMarkerMaxRunes) + "]"}
+	}
+
+	// Command output (slash stdout, bash stdout/stderr): droppable body,
+	// surfaced only under -verbose-commands with ANSI stripped at render time.
+	if strings.HasPrefix(trimmed, tagLocalStdout) ||
+		strings.HasPrefix(trimmed, tagBashStdout) ||
+		strings.HasPrefix(trimmed, tagBashStderr) {
+		return &session.UserMessage{IsCommandNoise: true, Text: trimmed}
+	}
+
+	return nil
+}
+
+// extractBetween returns the substring between the first open and the next
+// close tag, or "" if either tag is absent.
+func extractBetween(s, open, close string) string {
+	start := strings.Index(s, open)
+	if start < 0 {
+		return ""
+	}
+	start += len(open)
+	end := strings.Index(s[start:], close)
+	if end < 0 {
+		return ""
+	}
+	return s[start : start+end]
+}
+
+// collapseWhitespace folds runs of whitespace (including newlines) into single
+// spaces so a multi-line bang command renders as one marker line.
+func collapseWhitespace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
 type rawEntry struct {
 	Type          string          `json:"type"`
 	Timestamp     string          `json:"timestamp"`

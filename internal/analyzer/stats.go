@@ -27,6 +27,7 @@ func ComputeStats(events []session.Event) StatsResult {
 		"tool_input_raw":  0,
 		"tool_result_raw": 0,
 		"system_noise":    0,
+		"command_noise":   0,
 	}
 
 	for _, event := range events {
@@ -39,7 +40,25 @@ func ComputeStats(events []session.Event) StatsResult {
 			rawParts = append(rawParts, event.Noise.Text)
 
 		case session.EventUserMessage:
-			if event.User == nil || strings.TrimSpace(event.User.Text) == "" {
+			if event.User == nil {
+				continue
+			}
+			// Command invocation: the short marker is kept content.
+			if event.User.CommandMarker != "" {
+				categories["user_text"] += utf8.RuneCountInString(event.User.CommandMarker)
+				rawParts = append(rawParts, event.User.CommandMarker)
+				filteredParts = append(filteredParts, event.User.CommandMarker)
+				continue
+			}
+			// Command output / caveat: machine noise. Count toward raw so the
+			// reduction reflects what was actually cut, but never toward
+			// filtered — mirrors how system_noise is handled.
+			if event.User.IsCommandNoise {
+				categories["command_noise"] += utf8.RuneCountInString(event.User.Text)
+				rawParts = append(rawParts, event.User.Text)
+				continue
+			}
+			if strings.TrimSpace(event.User.Text) == "" {
 				continue
 			}
 			categories["user_text"] += utf8.RuneCountInString(event.User.Text)

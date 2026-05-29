@@ -123,7 +123,11 @@ func ParseLine(line []byte) (session.Event, bool, error) {
 			return session.Event{}, false, nil
 		}
 		event.Kind = session.EventUserMessage
-		event.User = &session.UserMessage{Text: text}
+		if classified := classifyCommandUserMessage(text); classified != nil {
+			event.User = classified
+		} else {
+			event.User = &session.UserMessage{Text: text}
+		}
 		return event, true, nil
 	case "assistant":
 		assistant := raw.Message.Assistant()

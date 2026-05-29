@@ -5,6 +5,29 @@ import (
 	"unicode/utf8"
 )
 
+// TestStripANSI_GivenEscapeSequences_ThenRemovesThemButKeepsContent verifies
+// SGR colour codes and other CSI escapes are removed while printable content,
+// including the "⛁ ⛶" box glyphs used in the /context usage chart, survives.
+func TestStripANSI_GivenEscapeSequences_ThenRemovesThemButKeepsContent(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"bold then reset", "\x1b[1mContext Usage\x1b[22m", "Context Usage"},
+		{"24-bit colour", "\x1b[38;2;136;136;136m⛁ ⛁ \x1b[39m", "⛁ ⛁ "},
+		{"no escapes is identity", "plain text ⛶", "plain text ⛶"},
+		{"empty stays empty", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := StripANSI(tc.in); got != tc.want {
+				t.Fatalf("StripANSI(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestToolShortID(t *testing.T) {
 	cases := []struct {
 		id   string
