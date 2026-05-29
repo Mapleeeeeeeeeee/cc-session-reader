@@ -110,8 +110,8 @@ func ParseLine(line []byte) (session.Event, bool, error) {
 		toolResult := raw.toToolResult()
 		event.Kind = session.EventToolResult
 		event.Tool = &toolResult
-		if isUserAnswer(raw.Message.Blocks) {
-			event.User = &session.UserMessage{Text: extractUserAnswer(raw.Message.Blocks), IsAnswer: true}
+		if answer := extractUserAnswer(raw.Message.Blocks); answer != "" {
+			event.User = &session.UserMessage{Text: answer, IsAnswer: true}
 		}
 		return event, true, nil
 	}
@@ -123,7 +123,11 @@ func ParseLine(line []byte) (session.Event, bool, error) {
 			return session.Event{}, false, nil
 		}
 		event.Kind = session.EventUserMessage
-		event.User = &session.UserMessage{Text: text}
+		if classified := classifyCommandUserMessage(text); classified != nil {
+			event.User = classified
+		} else {
+			event.User = &session.UserMessage{Text: text}
+		}
 		return event, true, nil
 	case "assistant":
 		assistant := raw.Message.Assistant()
@@ -145,7 +149,7 @@ func CollectAgentToolIDs(events []session.Event) map[string]bool {
 			continue
 		}
 		for _, tool := range event.Assistant.ToolUses {
-			if tool.Name == "Agent" && tool.ID != "" {
+			if tool.Name == session.ToolAgent && tool.ID != "" {
 				ids[tool.ID] = true
 			}
 		}

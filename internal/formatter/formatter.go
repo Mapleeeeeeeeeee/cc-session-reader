@@ -14,18 +14,54 @@ import (
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/summarizer"
 )
 
-const toolNameBash = "Bash"
-
 // FormatOptions controls verbosity for formatting functions.
 type FormatOptions struct {
-	VerboseAgents bool
-	VerboseBash   bool
+	VerboseAgents   bool
+	VerboseBash     bool
+	VerboseThinking bool
+	VerboseCommands bool
+}
+
+// userRender is the rendered form of a user-message event: the body to print
+// and whether anything should be printed at all.
+type userRender struct {
+	body string
+	show bool
+}
+
+// renderUserMessage resolves how a user-message event should appear given the
+// verbosity options. It is the single rendering policy shared by read and
+// context so both stay consistent:
+//   - command invocation -> always show the marker (e.g. "[/context]")
+//   - command noise -> drop by default; show ANSI-stripped body under
+//     -verbose-commands, except caveats which are always dropped
+//   - plain typed message -> show verbatim
+func renderUserMessage(user *session.UserMessage, opts FormatOptions) userRender {
+	if user == nil {
+		return userRender{}
+	}
+	if user.CommandMarker != "" {
+		return userRender{body: user.CommandMarker, show: true}
+	}
+	if user.IsCommandNoise {
+		if !opts.VerboseCommands || user.IsCaveat {
+			return userRender{}
+		}
+		body := strings.TrimSpace(session.StripANSI(user.Text))
+		if body == "" {
+			return userRender{}
+		}
+		return userRender{body: body, show: true}
+	}
+	if strings.TrimSpace(user.Text) == "" {
+		return userRender{}
+	}
+	return userRender{body: user.Text, show: true}
 }
 
 type pendingTool struct {
 	summary string
 	name    string // e.g. "Bash", "Read", "Edit"
-	toolID  string // last 4 chars of tool_use_id
 }
 
 func FormatRead(transcriptPath string, maxLines int, opts FormatOptions, out io.Writer) error {
@@ -60,16 +96,24 @@ func FormatReadEvents(events []session.Event, agentIDs map[string]bool, maxLines
 
 		switch event.Kind {
 		case session.EventUserMessage:
-			if event.User == nil || strings.TrimSpace(event.User.Text) == "" {
+			rendered := renderUserMessage(event.User, opts)
+			if !rendered.show {
 				continue
 			}
 			flush()
-			fmt.Fprintf(out, "[%s] user:\n%s\n\n", parser.FormatTimestamp(event.Timestamp), event.User.Text)
-			linesOutput += strings.Count(event.User.Text, "\n") + 3
+			fmt.Fprintf(out, "[%s] user:\n%s\n\n", parser.FormatTimestamp(event.Timestamp), rendered.body)
+			linesOutput += strings.Count(rendered.body, "\n") + 3
 
 		case session.EventAssistantMessage:
 			if event.Assistant == nil {
 				continue
+			}
+			if opts.VerboseThinking {
+				for _, thinking := range event.Assistant.Thinking {
+					flush()
+					fmt.Fprintf(out, "[%s] thinking:\n%s\n\n", parser.FormatTimestamp(event.Timestamp), thinking)
+					linesOutput += strings.Count(thinking, "\n") + 3
+				}
 			}
 			hasText := strings.TrimSpace(event.Assistant.Text) != ""
 			hasTools := len(event.Assistant.ToolUses) > 0
@@ -121,15 +165,22 @@ func FormatContextEvents(events []session.Event, agentIDs map[string]bool, opts 
 	for _, event := range events {
 		switch event.Kind {
 		case session.EventUserMessage:
-			if event.User == nil || strings.TrimSpace(event.User.Text) == "" {
+			rendered := renderUserMessage(event.User, opts)
+			if !rendered.show {
 				continue
 			}
 			flush()
-			fmt.Fprintf(out, "U: %s\n\n", event.User.Text)
+			fmt.Fprintf(out, "U: %s\n\n", rendered.body)
 
 		case session.EventAssistantMessage:
 			if event.Assistant == nil {
 				continue
+			}
+			if opts.VerboseThinking {
+				for _, thinking := range event.Assistant.Thinking {
+					flush()
+					fmt.Fprintf(out, "T: %s\n\n", thinking)
+				}
 			}
 			if strings.TrimSpace(event.Assistant.Text) != "" {
 				flush()
@@ -221,7 +272,7 @@ func writeContextHeader(sessionID string, out io.Writer, store parser.Store) {
 func appendToolResult(result *session.ToolResult, pendingTools *[]pendingTool, opts FormatOptions) {
 	if len(*pendingTools) > 0 {
 		last := &(*pendingTools)[len(*pendingTools)-1]
-		if opts.VerboseBash && last.name == toolNameBash {
+		if opts.VerboseBash && last.name == session.ToolBash {
 			last.summary += formatVerboseBashResult(result)
 			return
 		}
@@ -233,7 +284,7 @@ func appendToolResult(result *session.ToolResult, pendingTools *[]pendingTool, o
 		name = "ToolResult"
 	}
 	summary := fmt.Sprintf("[%s]%s", name, result.Summary())
-	if opts.VerboseBash && name == toolNameBash {
+	if opts.VerboseBash && name == session.ToolBash {
 		summary = fmt.Sprintf("[%s]%s", name, formatVerboseBashResult(result))
 	}
 	*pendingTools = append(*pendingTools, pendingTool{
@@ -275,7 +326,6 @@ func summarizeToolUse(tool session.ToolUse) pendingTool {
 	return pendingTool{
 		summary: tagged,
 		name:    name,
-		toolID:  shortID,
 	}
 }
 

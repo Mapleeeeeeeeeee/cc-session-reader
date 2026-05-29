@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,11 +56,10 @@ func TestCLI_WhenSessionExists_ThenListReadContextAndAuditWorkEndToEnd(t *testin
 			},
 		},
 		{
-			name: "audit accepts negative sample count without crashing",
-			args: []string{"audit", sid, "-n", "-1"},
+			name: "audit samples cut tool results",
+			args: []string{"audit", sid, "-n", "5"},
 			want: []string{
-				"=== tool_result_cut (1 items, showing 0) ===",
-				"... and 1 more",
+				"=== tool_result_cut (1 items, showing 1) ===",
 			},
 		},
 		{
@@ -99,6 +99,52 @@ func TestCLI_WhenSessionExists_ThenListReadContextAndAuditWorkEndToEnd(t *testin
 				if !strings.Contains(got, want) {
 					t.Fatalf("output missing %q:\n%s", want, got)
 				}
+			}
+		})
+	}
+}
+
+// The cmdX wrappers funnel every error through a single contract: print
+// "Error: <msg>" to stderr and exit non-zero. This is the user's only signal
+// that a command failed. Tested out-of-process because the contract lives in
+// os.Exit, which can't be observed in-process. Mutation guard: if any wrapper
+// regresses to a bare Fprintln(err) (no "Error:" prefix) or stops exiting
+// non-zero, this turns red.
+func TestCLI_WhenSubcommandFails_ThenPrintsErrorPrefixAndExitsNonZero(t *testing.T) {
+	root := t.TempDir()
+	bin := filepath.Join(root, "sessions")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	build.Dir = "."
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build CLI: %v\n%s", err, out)
+	}
+
+	// HOME points at an empty root: no transcripts exist, so resolving any
+	// session ID fails. One case per distinct wrapper is enough — they share
+	// the same wrapper shape.
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "read with unknown session", args: []string{"read", "no-such-session-id"}},
+		{name: "context with unknown session", args: []string{"context", "no-such-session-id"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := exec.Command(bin, tt.args...)
+			cmd.Env = append(os.Environ(), "HOME="+root)
+			out, err := cmd.CombinedOutput()
+
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) {
+				t.Fatalf("expected non-zero exit, got err=%v\noutput:\n%s", err, out)
+			}
+			if exitErr.ExitCode() == 0 {
+				t.Fatalf("expected non-zero exit code, got 0\noutput:\n%s", out)
+			}
+			if !strings.Contains(string(out), "Error:") {
+				t.Fatalf("output missing %q prefix:\n%s", "Error:", out)
 			}
 		})
 	}

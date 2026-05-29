@@ -4,8 +4,22 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+// ansiEscapePattern matches ANSI/VT100 escape sequences: an ESC (\x1b)
+// followed by a CSI sequence "[ ... <final-byte>" (covers SGR colour codes
+// like "\x1b[38;2;136;136;136m" and "\x1b[1m"/"\x1b[22m"/"\x1b[39m"), or a
+// single two-character escape. Content characters such as the "⛁ ⛶" box
+// glyphs are not escape codes and are left untouched.
+var ansiEscapePattern = regexp.MustCompile(`\x1b(?:\[[0-9;?]*[ -/]*[@-~]|[@-Z\\-_])`)
+
+// StripANSI removes terminal control sequences from s, leaving printable
+// content intact. Used when rendering command output bodies in verbose mode.
+func StripANSI(s string) string {
+	return ansiEscapePattern.ReplaceAllString(s, "")
+}
 
 type EventKind string
 
@@ -14,6 +28,21 @@ const (
 	EventAssistantMessage EventKind = "assistant_message"
 	EventToolResult       EventKind = "tool_result"
 	EventNoise            EventKind = "noise"
+)
+
+// Tool names. Single source of truth for tool name literals shared across the
+// summarizer, formatter, and claudecodec packages.
+const (
+	ToolBash            = "Bash"
+	ToolRead            = "Read"
+	ToolEdit            = "Edit"
+	ToolWrite           = "Write"
+	ToolAgent           = "Agent"
+	ToolGrep            = "Grep"
+	ToolGlob            = "Glob"
+	ToolSkill           = "Skill"
+	ToolAskUserQuestion = "AskUserQuestion"
+	ToolSearch          = "ToolSearch"
 )
 
 type Event struct {
@@ -30,6 +59,22 @@ type Event struct {
 type UserMessage struct {
 	Text     string
 	IsAnswer bool
+
+	// CommandMarker is the one-line representation of a slash- or bang-command
+	// invocation, e.g. "[/context]" or "[!ls -la]". Empty for plain user
+	// messages and for command output. When set, formatters render the marker
+	// instead of Text regardless of verbosity.
+	CommandMarker string
+
+	// IsCommandNoise marks machine-generated command output that Claude Code
+	// stores as a user-role entry (<local-command-stdout>, <bash-stdout>,
+	// <bash-stderr>, <local-command-caveat>). The body is dropped by default
+	// and only shown under -verbose-commands.
+	IsCommandNoise bool
+
+	// IsCaveat marks the boilerplate <local-command-caveat> disclaimer. It is
+	// dropped unconditionally (zero information even in verbose mode).
+	IsCaveat bool
 }
 
 type AssistantMessage struct {
@@ -125,6 +170,12 @@ func FirstLine(s string, maxRunes int) string {
 }
 
 func Truncate(s string, maxRunes int) string {
+	// Byte length >= rune count, so a string within maxRunes bytes is
+	// guaranteed within maxRunes runes — a fast early return that avoids
+	// allocating a rune slice for the common short-string case.
+	if len(s) <= maxRunes {
+		return s
+	}
 	runes := []rune(s)
 	if len(runes) <= maxRunes {
 		return s

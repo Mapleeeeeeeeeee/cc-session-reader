@@ -4,7 +4,8 @@
 每個 tool call 壓成一行摘要（tool name + 關鍵參數 + result 狀態），對話文字完整保留。
 純靜態提取，不使用 LLM。
 
-典型 token reduction：**80–88%**。
+token reduction 視 session 組成而定：tool I/O 為主的 session 典型可達 **80–88%**；
+以大型 plan 文件或純對話為主的 session 較低（實測約 40–65%），因為使用者／assistant 文字會完整保留、不壓縮。
 
 ## 安裝
 
@@ -38,6 +39,10 @@ sessions list -n 10        # 最近 10 筆
 sessions list -p myproject # 依專案名稱過濾
 ```
 
+`list` 的來源是 Claude Code 的 session metadata（`~/.claude/usage-data/session-meta/`），
+只涵蓋有 metadata 的 session，數量通常少於磁碟上的全部 transcript。
+若已知 session ID，`read`／`context`／`stats` 可直接以前綴存取任何 transcript，不限於 `list` 列出的。
+
 ### read — 完整對話 + inline tool 摘要
 
 ```bash
@@ -48,7 +53,13 @@ sessions read <session-id> -verbose-agents
 
 Session ID 支援 prefix match，通常前 8 碼就夠。
 
-`-verbose-agents`：完整保留 Agent subagent 回傳的結果（預設只保留一行摘要）。
+預設將工具 I/O、Agent 結果、slash／bash 指令輸出、thinking 都壓成摘要或一行 marker。
+需要完整內容時用對應的 verbose flag（read 與 context 皆適用）：
+
+- `-verbose-agents`：完整保留 Agent subagent 回傳的結果（預設只保留一行摘要）。
+- `-verbose-bash`：完整顯示 Bash 工具的 stdout/stderr（預設摘要）。
+- `-verbose-thinking`：顯示 assistant 的 thinking 區塊（預設隱藏）。
+- `-verbose-commands`：展開 slash／bash 指令的完整輸出（預設只留 `[/cmd]`／`[!cmd]` marker、丟棄終端 UI 與 caveat 樣板）。
 
 ### context — 精簡注入格式
 

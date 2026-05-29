@@ -17,7 +17,7 @@ const (
 // SummarizeToolUse produces a one-line summary of a tool_use block.
 func SummarizeToolUse(name string, inp session.ToolInput) string {
 	switch name {
-	case "Bash":
+	case session.ToolBash:
 		desc := inp.String("description")
 		if desc != "" {
 			return fmt.Sprintf("[Bash] %s", desc)
@@ -25,7 +25,7 @@ func SummarizeToolUse(name string, inp session.ToolInput) string {
 		cmd := inp.String("command")
 		return fmt.Sprintf("[Bash] %s", session.Truncate(cmd, maxCommandLen))
 
-	case "Read":
+	case session.ToolRead:
 		path := inp.String("file_path")
 		if path == "" {
 			path = "?"
@@ -39,7 +39,7 @@ func SummarizeToolUse(name string, inp session.ToolInput) string {
 		}
 		return fmt.Sprintf("[Read] %s", short)
 
-	case "Edit", "Write":
+	case session.ToolEdit, session.ToolWrite:
 		path := inp.String("file_path")
 		if path == "" {
 			path = "?"
@@ -50,7 +50,7 @@ func SummarizeToolUse(name string, inp session.ToolInput) string {
 		}
 		return fmt.Sprintf("[%s] %s", name, filename)
 
-	case "Agent":
+	case session.ToolAgent:
 		desc := inp.String("description")
 		if desc == "" {
 			desc = "?"
@@ -61,7 +61,7 @@ func SummarizeToolUse(name string, inp session.ToolInput) string {
 		}
 		return fmt.Sprintf("[Agent] %s", desc)
 
-	case "Grep":
+	case session.ToolGrep:
 		pat := inp.String("pattern")
 		if pat == "" {
 			pat = "?"
@@ -72,14 +72,14 @@ func SummarizeToolUse(name string, inp session.ToolInput) string {
 		}
 		return fmt.Sprintf("[Grep] \"%s\"", pat)
 
-	case "Glob":
+	case session.ToolGlob:
 		pat := inp.String("pattern")
 		if pat == "" {
 			pat = "?"
 		}
 		return fmt.Sprintf("[Glob] %s", pat)
 
-	case "Skill":
+	case session.ToolSkill:
 		skill := inp.String("skill")
 		if skill == "" {
 			skill = "?"
@@ -88,18 +88,18 @@ func SummarizeToolUse(name string, inp session.ToolInput) string {
 		result := fmt.Sprintf("[Skill] /%s %s", skill, args)
 		return session.Truncate(strings.TrimSpace(result), maxSkillLen)
 
-	case "AskUserQuestion":
+	case session.ToolAskUserQuestion:
 		qs, hasQuestions := inp.Raw["questions"]
 		if !hasQuestions {
 			return "[AskUserQuestion]"
 		}
-		qsList, isList := qs.([]interface{})
+		qsList, isList := qs.([]any)
 		if !isList || len(qsList) == 0 {
 			return "[AskUserQuestion]"
 		}
 		var lines []string
 		for i, q := range qsList {
-			qMap, isMap := q.(map[string]interface{})
+			qMap, isMap := q.(map[string]any)
 			if !isMap {
 				continue
 			}
@@ -115,7 +115,7 @@ func SummarizeToolUse(name string, inp session.ToolInput) string {
 		}
 		return strings.Join(lines, "\n  ")
 
-	case "ToolSearch":
+	case session.ToolSearch:
 		query := inp.String("query")
 		if query == "" {
 			query = "?"

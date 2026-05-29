@@ -27,6 +27,7 @@ func ComputeStats(events []session.Event) StatsResult {
 		"tool_input_raw":  0,
 		"tool_result_raw": 0,
 		"system_noise":    0,
+		"command_noise":   0,
 	}
 
 	for _, event := range events {
@@ -39,7 +40,35 @@ func ComputeStats(events []session.Event) StatsResult {
 			rawParts = append(rawParts, event.Noise.Text)
 
 		case session.EventUserMessage:
-			if event.User == nil || strings.TrimSpace(event.User.Text) == "" {
+			if event.User == nil {
+				continue
+			}
+			// Command invocation: the short marker is kept content. Deliberate
+			// undercount — the marker counts identically toward raw and filtered,
+			// so an invocation contributes zero reduction here. The original
+			// invocation wrapper (<command-name>...<command-args>) was already
+			// dropped at parse time and never reaches stats, so its ~100 chars of
+			// savings are not reflected in the reduction. We accept this: the
+			// wrapper is tiny, and the bulk command savings (multi-KB stdout) are
+			// correctly captured via the IsCommandNoise branch below, which counts
+			// toward raw but not filtered. Surfacing the wrapper would mean
+			// re-plumbing the dropped text through the parser for a rounding-error
+			// gain — not worth the coupling.
+			if event.User.CommandMarker != "" {
+				categories["user_text"] += utf8.RuneCountInString(event.User.CommandMarker)
+				rawParts = append(rawParts, event.User.CommandMarker)
+				filteredParts = append(filteredParts, event.User.CommandMarker)
+				continue
+			}
+			// Command output / caveat: machine noise. Count toward raw so the
+			// reduction reflects what was actually cut, but never toward
+			// filtered — mirrors how system_noise is handled.
+			if event.User.IsCommandNoise {
+				categories["command_noise"] += utf8.RuneCountInString(event.User.Text)
+				rawParts = append(rawParts, event.User.Text)
+				continue
+			}
+			if strings.TrimSpace(event.User.Text) == "" {
 				continue
 			}
 			categories["user_text"] += utf8.RuneCountInString(event.User.Text)

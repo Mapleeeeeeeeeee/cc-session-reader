@@ -32,61 +32,6 @@ func TestFormatTimestamp(t *testing.T) {
 	}
 }
 
-func TestStoreResolveSessionID(t *testing.T) {
-	root := t.TempDir()
-	projectsDir := filepath.Join(root, "projects", "proj")
-	if err := os.MkdirAll(projectsDir, 0o755); err != nil {
-		t.Fatalf("create projects dir: %v", err)
-	}
-	sid := "12345678-1234-1234-1234-123456789abc"
-	writeFile(t, filepath.Join(projectsDir, sid+".jsonl"), "")
-
-	store := Store{ProjectsDir: filepath.Join(root, "projects")}
-	got, err := store.ResolveSessionID("12345678")
-	if err != nil {
-		t.Fatalf("ResolveSessionID returned error: %v", err)
-	}
-	if got != sid {
-		t.Fatalf("ResolveSessionID = %q, want %q", got, sid)
-	}
-}
-
-func TestStoreResolveSessionID_WhenPrefixIsAmbiguous_ThenReturnsError(t *testing.T) {
-	root := t.TempDir()
-	projectsDir := filepath.Join(root, "projects", "proj")
-	if err := os.MkdirAll(projectsDir, 0o755); err != nil {
-		t.Fatalf("create projects dir: %v", err)
-	}
-	writeFile(t, filepath.Join(projectsDir, "12345678-0000-0000-0000-000000000000.jsonl"), "")
-	writeFile(t, filepath.Join(projectsDir, "12345678-1111-1111-1111-111111111111.jsonl"), "")
-
-	store := Store{ProjectsDir: filepath.Join(root, "projects")}
-	_, err := store.ResolveSessionID("12345678")
-	if err == nil {
-		t.Fatal("ResolveSessionID returned nil error, want ambiguous error")
-	}
-	if !strings.Contains(err.Error(), "ambiguous prefix") {
-		t.Fatalf("error = %v, want ambiguous prefix", err)
-	}
-}
-
-func TestStoreResolveSessionID_WhenPrefixHasNoMatch_ThenReturnsError(t *testing.T) {
-	root := t.TempDir()
-	projectsDir := filepath.Join(root, "projects")
-	if err := os.MkdirAll(projectsDir, 0o755); err != nil {
-		t.Fatalf("create projects dir: %v", err)
-	}
-
-	store := Store{ProjectsDir: projectsDir}
-	_, err := store.ResolveSessionID("notfound")
-	if err == nil {
-		t.Fatal("ResolveSessionID returned nil error, want not found error")
-	}
-	if !strings.Contains(err.Error(), "session prefix not found") {
-		t.Fatalf("error = %v, want session prefix not found", err)
-	}
-}
-
 func TestStoreFindTranscript(t *testing.T) {
 	root := t.TempDir()
 	projectsDir := filepath.Join(root, "projects", "proj")
@@ -181,6 +126,77 @@ func TestStoreResolveSession_WhenPrefixIsAmbiguous_ThenReturnsError(t *testing.T
 	}
 }
 
+// Guards against the bug where the same session UUID living in multiple project
+// dirs (worktrees reuse the session ID) was counted as multiple ambiguous
+// candidates, making `read <prefix>` fail with a bogus "ambiguous prefix" error
+// that listed the same UUID twice.
+func TestStoreResolveSession_WhenSameUUIDInMultipleProjectDirs_ThenResolvesNotAmbiguous(t *testing.T) {
+	root := t.TempDir()
+	projectsDir := filepath.Join(root, "projects")
+	worktreeDir := filepath.Join(projectsDir, "-Users-x-worktrees-feature")
+	mainDir := filepath.Join(projectsDir, "-Users-x-main")
+	if err := os.MkdirAll(worktreeDir, 0o755); err != nil {
+		t.Fatalf("create worktree dir: %v", err)
+	}
+	if err := os.MkdirAll(mainDir, 0o755); err != nil {
+		t.Fatalf("create main dir: %v", err)
+	}
+	sid := "03db3dbe-0c12-1234-1234-123456789abc"
+	writeFile(t, filepath.Join(worktreeDir, sid+".jsonl"), "")
+	writeFile(t, filepath.Join(mainDir, sid+".jsonl"), "")
+
+	store := Store{ProjectsDir: projectsDir}
+	got, err := store.ResolveSession("03db3dbe")
+	if err != nil {
+		t.Fatalf("ResolveSession returned error: %v, want no error (same UUID is not ambiguous)", err)
+	}
+	if got.ID != sid {
+		t.Fatalf("ResolveSession().ID = %q, want %q", got.ID, sid)
+	}
+	if got.Path == "" {
+		t.Fatal("ResolveSession().Path is empty, want a transcript path")
+	}
+	if filepath.Base(got.Path) != sid+".jsonl" {
+		t.Fatalf("ResolveSession().Path = %q, want a file named %q", got.Path, sid+".jsonl")
+	}
+}
+
+// Guards the converse of the dedup fix: distinct UUIDs sharing a prefix remain a
+// real conflict, but each UUID must appear only once in the error message.
+func TestStoreResolveSession_WhenDistinctUUIDsShareAndDuplicate_ThenErrorListsEachUUIDOnce(t *testing.T) {
+	root := t.TempDir()
+	projectsDir := filepath.Join(root, "projects")
+	dirA := filepath.Join(projectsDir, "-Users-x-worktrees-feature")
+	dirB := filepath.Join(projectsDir, "-Users-x-main")
+	if err := os.MkdirAll(dirA, 0o755); err != nil {
+		t.Fatalf("create dir A: %v", err)
+	}
+	if err := os.MkdirAll(dirB, 0o755); err != nil {
+		t.Fatalf("create dir B: %v", err)
+	}
+	sidOne := "12345678-0000-0000-0000-000000000000"
+	sidTwo := "12345678-1111-1111-1111-111111111111"
+	// sidOne appears in both dirs (the worktree-duplicate case); sidTwo is distinct.
+	writeFile(t, filepath.Join(dirA, sidOne+".jsonl"), "")
+	writeFile(t, filepath.Join(dirB, sidOne+".jsonl"), "")
+	writeFile(t, filepath.Join(dirA, sidTwo+".jsonl"), "")
+
+	store := Store{ProjectsDir: projectsDir}
+	_, err := store.ResolveSession("12345678")
+	if err == nil {
+		t.Fatal("ResolveSession returned nil error, want ambiguous error for two distinct UUIDs")
+	}
+	if !strings.Contains(err.Error(), "ambiguous prefix") {
+		t.Fatalf("error = %v, want ambiguous prefix", err)
+	}
+	if got := strings.Count(err.Error(), sidOne[:12]); got != 1 {
+		t.Fatalf("error lists %q %d times, want exactly 1: %v", sidOne[:12], got, err)
+	}
+	if got := strings.Count(err.Error(), sidTwo[:12]); got != 1 {
+		t.Fatalf("error lists %q %d times, want exactly 1: %v", sidTwo[:12], got, err)
+	}
+}
+
 func TestStoreResolveSession_WhenPrefixHasNoMatch_ThenReturnsError(t *testing.T) {
 	root := t.TempDir()
 	projectsDir := filepath.Join(root, "projects")
@@ -195,6 +211,27 @@ func TestStoreResolveSession_WhenPrefixHasNoMatch_ThenReturnsError(t *testing.T)
 	}
 	if !strings.Contains(err.Error(), "session prefix not found") {
 		t.Fatalf("error = %v, want session prefix not found", err)
+	}
+}
+
+// Regression (F3): an empty prefix used to fall through to the prefix walk,
+// matching every session and surfacing a misleading "ambiguous prefix ”"
+// error. ResolveSession is the single choke point for all commands that accept
+// a session_id, so it must reject "" up front with a clear "required" message
+// and must not mention ambiguity. The walk must not even run (no projects dir
+// configured here proves the empty check short-circuits before any filesystem
+// access).
+func TestStoreResolveSession_WhenPrefixIsEmpty_ThenReturnsRequiredError(t *testing.T) {
+	store := Store{}
+	_, err := store.ResolveSession("")
+	if err == nil {
+		t.Fatal("ResolveSession(\"\") returned nil error, want required error")
+	}
+	if !strings.Contains(err.Error(), "session_id is required") {
+		t.Fatalf("error = %v, want 'session_id is required'", err)
+	}
+	if strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("error = %v, must not mention 'ambiguous'", err)
 	}
 }
 
