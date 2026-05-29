@@ -99,11 +99,26 @@ func (s Store) ResolveSession(prefix string) (ResolvedSession, error) {
 	}
 	sort.Slice(matches, func(i, j int) bool { return matches[i].id < matches[j].id })
 
-	if len(matches) == 1 {
-		return ResolvedSession{ID: matches[0].id, Path: matches[0].path}, nil
+	// A single UUID can live in multiple project dirs (worktrees reuse the session
+	// ID), producing several matches with an identical stem. Dedup by UUID before
+	// judging single vs. ambiguous so those copies are not mistaken for a conflict.
+	// We keep the first walk match per UUID, matching the full-UUID fast path which
+	// takes the first walk hit.
+	seen := make(map[string]bool)
+	uniqueMatches := matches[:0:0]
+	for _, m := range matches {
+		if seen[m.id] {
+			continue
+		}
+		seen[m.id] = true
+		uniqueMatches = append(uniqueMatches, m)
 	}
-	if len(matches) > 1 {
-		shown := matches
+
+	if len(uniqueMatches) == 1 {
+		return ResolvedSession{ID: uniqueMatches[0].id, Path: uniqueMatches[0].path}, nil
+	}
+	if len(uniqueMatches) > 1 {
+		shown := uniqueMatches
 		if len(shown) > 5 {
 			shown = shown[:5]
 		}

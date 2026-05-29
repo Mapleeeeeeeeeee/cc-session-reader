@@ -126,6 +126,77 @@ func TestStoreResolveSession_WhenPrefixIsAmbiguous_ThenReturnsError(t *testing.T
 	}
 }
 
+// Guards against the bug where the same session UUID living in multiple project
+// dirs (worktrees reuse the session ID) was counted as multiple ambiguous
+// candidates, making `read <prefix>` fail with a bogus "ambiguous prefix" error
+// that listed the same UUID twice.
+func TestStoreResolveSession_WhenSameUUIDInMultipleProjectDirs_ThenResolvesNotAmbiguous(t *testing.T) {
+	root := t.TempDir()
+	projectsDir := filepath.Join(root, "projects")
+	worktreeDir := filepath.Join(projectsDir, "-Users-x-worktrees-feature")
+	mainDir := filepath.Join(projectsDir, "-Users-x-main")
+	if err := os.MkdirAll(worktreeDir, 0o755); err != nil {
+		t.Fatalf("create worktree dir: %v", err)
+	}
+	if err := os.MkdirAll(mainDir, 0o755); err != nil {
+		t.Fatalf("create main dir: %v", err)
+	}
+	sid := "03db3dbe-0c12-1234-1234-123456789abc"
+	writeFile(t, filepath.Join(worktreeDir, sid+".jsonl"), "")
+	writeFile(t, filepath.Join(mainDir, sid+".jsonl"), "")
+
+	store := Store{ProjectsDir: projectsDir}
+	got, err := store.ResolveSession("03db3dbe")
+	if err != nil {
+		t.Fatalf("ResolveSession returned error: %v, want no error (same UUID is not ambiguous)", err)
+	}
+	if got.ID != sid {
+		t.Fatalf("ResolveSession().ID = %q, want %q", got.ID, sid)
+	}
+	if got.Path == "" {
+		t.Fatal("ResolveSession().Path is empty, want a transcript path")
+	}
+	if filepath.Base(got.Path) != sid+".jsonl" {
+		t.Fatalf("ResolveSession().Path = %q, want a file named %q", got.Path, sid+".jsonl")
+	}
+}
+
+// Guards the converse of the dedup fix: distinct UUIDs sharing a prefix remain a
+// real conflict, but each UUID must appear only once in the error message.
+func TestStoreResolveSession_WhenDistinctUUIDsShareAndDuplicate_ThenErrorListsEachUUIDOnce(t *testing.T) {
+	root := t.TempDir()
+	projectsDir := filepath.Join(root, "projects")
+	dirA := filepath.Join(projectsDir, "-Users-x-worktrees-feature")
+	dirB := filepath.Join(projectsDir, "-Users-x-main")
+	if err := os.MkdirAll(dirA, 0o755); err != nil {
+		t.Fatalf("create dir A: %v", err)
+	}
+	if err := os.MkdirAll(dirB, 0o755); err != nil {
+		t.Fatalf("create dir B: %v", err)
+	}
+	sidOne := "12345678-0000-0000-0000-000000000000"
+	sidTwo := "12345678-1111-1111-1111-111111111111"
+	// sidOne appears in both dirs (the worktree-duplicate case); sidTwo is distinct.
+	writeFile(t, filepath.Join(dirA, sidOne+".jsonl"), "")
+	writeFile(t, filepath.Join(dirB, sidOne+".jsonl"), "")
+	writeFile(t, filepath.Join(dirA, sidTwo+".jsonl"), "")
+
+	store := Store{ProjectsDir: projectsDir}
+	_, err := store.ResolveSession("12345678")
+	if err == nil {
+		t.Fatal("ResolveSession returned nil error, want ambiguous error for two distinct UUIDs")
+	}
+	if !strings.Contains(err.Error(), "ambiguous prefix") {
+		t.Fatalf("error = %v, want ambiguous prefix", err)
+	}
+	if got := strings.Count(err.Error(), sidOne[:12]); got != 1 {
+		t.Fatalf("error lists %q %d times, want exactly 1: %v", sidOne[:12], got, err)
+	}
+	if got := strings.Count(err.Error(), sidTwo[:12]); got != 1 {
+		t.Fatalf("error lists %q %d times, want exactly 1: %v", sidTwo[:12], got, err)
+	}
+}
+
 func TestStoreResolveSession_WhenPrefixHasNoMatch_ThenReturnsError(t *testing.T) {
 	root := t.TempDir()
 	projectsDir := filepath.Join(root, "projects")
