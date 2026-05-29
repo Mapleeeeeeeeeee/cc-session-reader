@@ -95,6 +95,109 @@ func TestFormatRead_WhenVerboseAgents_ThenWritesFullAgentResult(t *testing.T) {
 	}
 }
 
+func TestFormatRead_WhenVerboseThinkingDisabled_ThenOmitsThinkingBlocks(t *testing.T) {
+	// Default behavior (VerboseThinking: false) must reproduce the token-reduced
+	// output exactly: no thinking content, regardless of what reasoning the
+	// assistant message carried. Guards against thinking leaking into the default
+	// read output.
+	transcriptPath := writeThinkingFormatterFixture(t)
+
+	var out bytes.Buffer
+	if err := FormatRead(transcriptPath, 0, FormatOptions{}, &out); err != nil {
+		t.Fatalf("FormatRead returned error: %v", err)
+	}
+
+	got := out.String()
+	if strings.Contains(got, "thinking:") {
+		t.Fatalf("default read output must not contain a thinking header\ngot:\n%q", got)
+	}
+	if strings.Contains(got, thinkingFixtureFirstBlock) || strings.Contains(got, thinkingFixtureSecondBlock) {
+		t.Fatalf("default read output must not contain thinking text\ngot:\n%q", got)
+	}
+	// The surrounding assistant text must still render so we know the fixture
+	// itself is non-empty and the absence above is meaningful.
+	if !strings.Contains(got, "[05-28 00:00] assistant:\nfinal answer") {
+		t.Fatalf("read output missing assistant text\ngot:\n%q", got)
+	}
+}
+
+func TestFormatRead_WhenVerboseThinkingEnabled_ThenRendersEachThinkingBlock(t *testing.T) {
+	// With VerboseThinking on, every thinking block (the field is []string and
+	// may hold multiple) must appear under a "thinking:" header before the
+	// assistant text, in timeline order. Mutation guard: if the render loop is
+	// dropped or skips blocks, these exact-string assertions go red.
+	transcriptPath := writeThinkingFormatterFixture(t)
+
+	var out bytes.Buffer
+	if err := FormatRead(transcriptPath, 0, FormatOptions{VerboseThinking: true}, &out); err != nil {
+		t.Fatalf("FormatRead returned error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "[05-28 00:00] thinking:\n"+thinkingFixtureFirstBlock) {
+		t.Fatalf("verbose-thinking read output missing first thinking block\ngot:\n%q", got)
+	}
+	if !strings.Contains(got, "[05-28 00:00] thinking:\n"+thinkingFixtureSecondBlock) {
+		t.Fatalf("verbose-thinking read output missing second thinking block\ngot:\n%q", got)
+	}
+	// Thinking precedes the assistant text in the output (timeline order).
+	if strings.Index(got, thinkingFixtureFirstBlock) > strings.Index(got, "assistant:\nfinal answer") {
+		t.Fatalf("thinking should be rendered before assistant text\ngot:\n%q", got)
+	}
+}
+
+func TestFormatContextEvents_WhenVerboseThinkingEnabled_ThenRendersThinkingWithCompactPrefix(t *testing.T) {
+	// Context mode uses compact prefixes (U:/A:); thinking renders as "T:".
+	// Default off => no thinking; on => each block present.
+	events := []session.Event{
+		{
+			Kind: session.EventAssistantMessage,
+			Assistant: &session.AssistantMessage{
+				Text:     "final answer",
+				Thinking: []string{thinkingFixtureFirstBlock, thinkingFixtureSecondBlock},
+			},
+		},
+	}
+
+	var offOut bytes.Buffer
+	FormatContextEvents(events, nil, FormatOptions{}, &offOut)
+	if strings.Contains(offOut.String(), thinkingFixtureFirstBlock) {
+		t.Fatalf("default context output must not contain thinking text\ngot:\n%q", offOut.String())
+	}
+
+	var onOut bytes.Buffer
+	FormatContextEvents(events, nil, FormatOptions{VerboseThinking: true}, &onOut)
+	got := onOut.String()
+	if !strings.Contains(got, "T: "+thinkingFixtureFirstBlock) {
+		t.Fatalf("verbose-thinking context output missing first thinking block\ngot:\n%q", got)
+	}
+	if !strings.Contains(got, "T: "+thinkingFixtureSecondBlock) {
+		t.Fatalf("verbose-thinking context output missing second thinking block\ngot:\n%q", got)
+	}
+}
+
+const (
+	thinkingFixtureFirstBlock  = "weighing option A versus option B"
+	thinkingFixtureSecondBlock = "option B wins because it avoids the lock"
+)
+
+// writeThinkingFormatterFixture writes a transcript whose assistant message
+// carries two thinking blocks plus visible text, mirroring how Claude Code
+// records reasoning before an answer.
+func writeThinkingFormatterFixture(t *testing.T) string {
+	t.Helper()
+
+	root := t.TempDir()
+	transcriptPath := filepath.Join(root, formatterFixtureSessionID+".jsonl")
+	transcript := `{"type":"user","timestamp":"2026-05-28T00:00:00Z","message":{"role":"user","content":"question"}}
+{"type":"assistant","timestamp":"2026-05-28T00:00:00Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"` + thinkingFixtureFirstBlock + `"},{"type":"thinking","thinking":"` + thinkingFixtureSecondBlock + `"},{"type":"text","text":"final answer"}]}}
+`
+	if err := os.WriteFile(transcriptPath, []byte(transcript), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	return transcriptPath
+}
+
 func TestFormatRead_WhenToolResultHasNoPendingTool_ThenStillWritesSummary(t *testing.T) {
 	root := t.TempDir()
 	transcriptPath := filepath.Join(root, formatterFixtureSessionID+".jsonl")

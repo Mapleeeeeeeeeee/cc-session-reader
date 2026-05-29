@@ -16,8 +16,9 @@ import (
 
 // FormatOptions controls verbosity for formatting functions.
 type FormatOptions struct {
-	VerboseAgents bool
-	VerboseBash   bool
+	VerboseAgents   bool
+	VerboseBash     bool
+	VerboseThinking bool
 }
 
 type pendingTool struct {
@@ -67,6 +68,13 @@ func FormatReadEvents(events []session.Event, agentIDs map[string]bool, maxLines
 		case session.EventAssistantMessage:
 			if event.Assistant == nil {
 				continue
+			}
+			if opts.VerboseThinking {
+				for _, thinking := range event.Assistant.Thinking {
+					flush()
+					fmt.Fprintf(out, "[%s] thinking:\n%s\n\n", parser.FormatTimestamp(event.Timestamp), thinking)
+					linesOutput += strings.Count(thinking, "\n") + 3
+				}
 			}
 			hasText := strings.TrimSpace(event.Assistant.Text) != ""
 			hasTools := len(event.Assistant.ToolUses) > 0
@@ -127,6 +135,12 @@ func FormatContextEvents(events []session.Event, agentIDs map[string]bool, opts 
 		case session.EventAssistantMessage:
 			if event.Assistant == nil {
 				continue
+			}
+			if opts.VerboseThinking {
+				for _, thinking := range event.Assistant.Thinking {
+					flush()
+					fmt.Fprintf(out, "T: %s\n\n", thinking)
+				}
 			}
 			if strings.TrimSpace(event.Assistant.Text) != "" {
 				flush()

@@ -159,6 +159,7 @@ func runRead(args []string, out io.Writer, errOut io.Writer, store parser.Store)
 	maxLines := fs.Int("max-lines", 0, "max output lines (0=unlimited)")
 	isVerboseAgents := fs.Bool("verbose-agents", false, "show full agent results")
 	isVerboseBash := fs.Bool("verbose-bash", false, "show full Bash tool stdout/stderr")
+	isVerboseThinking := fs.Bool("verbose-thinking", false, "show assistant thinking blocks")
 	if err := fs.Parse(reorderArgs(args)); err != nil {
 		return err
 	}
@@ -168,7 +169,7 @@ func runRead(args []string, out io.Writer, errOut io.Writer, store parser.Store)
 		return err
 	}
 
-	opts := formatter.FormatOptions{VerboseAgents: *isVerboseAgents, VerboseBash: *isVerboseBash}
+	opts := formatter.FormatOptions{VerboseAgents: *isVerboseAgents, VerboseBash: *isVerboseBash, VerboseThinking: *isVerboseThinking}
 	return formatter.FormatRead(resolved.Path, *maxLines, opts, out)
 }
 
@@ -184,6 +185,7 @@ func runContext(args []string, out io.Writer, errOut io.Writer, store parser.Sto
 	fs.SetOutput(errOut)
 	isVerboseAgents := fs.Bool("verbose-agents", false, "show full agent results")
 	isVerboseBash := fs.Bool("verbose-bash", false, "show full Bash tool stdout/stderr")
+	isVerboseThinking := fs.Bool("verbose-thinking", false, "show assistant thinking blocks")
 	if err := fs.Parse(reorderArgs(args)); err != nil {
 		return err
 	}
@@ -193,7 +195,7 @@ func runContext(args []string, out io.Writer, errOut io.Writer, store parser.Sto
 		return err
 	}
 
-	opts := formatter.FormatOptions{VerboseAgents: *isVerboseAgents, VerboseBash: *isVerboseBash}
+	opts := formatter.FormatOptions{VerboseAgents: *isVerboseAgents, VerboseBash: *isVerboseBash, VerboseThinking: *isVerboseThinking}
 	return formatter.FormatContextWithStore(resolved.Path, resolved.ID, opts, out, store)
 }
 
@@ -452,9 +454,10 @@ func matchToolUses(byShortID map[string][]session.ToolUse, reqID string) []sessi
 // --- helpers ---
 
 var reorderBoolFlags = map[string]bool{
-	"verbose-agents": true,
-	"verbose-bash":   true,
-	"no-tokens":      true,
+	"verbose-agents":   true,
+	"verbose-bash":     true,
+	"verbose-thinking": true,
+	"no-tokens":        true,
 }
 
 // reorderArgs moves flags before positional args so Go's flag package
