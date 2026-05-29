@@ -214,6 +214,27 @@ func TestStoreResolveSession_WhenPrefixHasNoMatch_ThenReturnsError(t *testing.T)
 	}
 }
 
+// Regression (F3): an empty prefix used to fall through to the prefix walk,
+// matching every session and surfacing a misleading "ambiguous prefix ”"
+// error. ResolveSession is the single choke point for all commands that accept
+// a session_id, so it must reject "" up front with a clear "required" message
+// and must not mention ambiguity. The walk must not even run (no projects dir
+// configured here proves the empty check short-circuits before any filesystem
+// access).
+func TestStoreResolveSession_WhenPrefixIsEmpty_ThenReturnsRequiredError(t *testing.T) {
+	store := Store{}
+	_, err := store.ResolveSession("")
+	if err == nil {
+		t.Fatal("ResolveSession(\"\") returned nil error, want required error")
+	}
+	if !strings.Contains(err.Error(), "session_id is required") {
+		t.Fatalf("error = %v, want 'session_id is required'", err)
+	}
+	if strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("error = %v, must not mention 'ambiguous'", err)
+	}
+}
+
 func TestStoreLoadSessionMeta(t *testing.T) {
 	root := t.TempDir()
 	metaDir := filepath.Join(root, "session-meta")

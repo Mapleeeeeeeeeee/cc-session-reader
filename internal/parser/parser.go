@@ -66,6 +66,14 @@ type ResolvedSession struct {
 // ResolveSession resolves a prefix to a full session UUID and its transcript path
 // in a single filesystem walk.
 func (s Store) ResolveSession(prefix string) (ResolvedSession, error) {
+	// Reject an empty prefix up front. Without this, an empty string is treated
+	// as a prefix that matches every session, yielding a misleading "ambiguous
+	// prefix ''" error when the user simply forgot to supply an ID. This is the
+	// single choke point for all commands that accept a session_id (read,
+	// context, stats, audit via resolveSession; expand calls this directly).
+	if prefix == "" {
+		return ResolvedSession{}, fmt.Errorf("session_id is required")
+	}
 	if len(prefix) == 36 {
 		path, err := s.FindTranscript(prefix)
 		if err != nil {

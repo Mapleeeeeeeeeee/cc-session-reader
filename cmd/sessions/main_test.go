@@ -207,6 +207,117 @@ func TestRunList_WhenMetadataIsInvalid_ThenWarnsAndContinues(t *testing.T) {
 	}
 }
 
+// Regression (F1): `list -n -1` (and 0) used to return an empty list with exit
+// 0, giving no signal that the requested display count was nonsensical. -n is
+// "max sessions to display" and must be a positive integer; any value < 1 is a
+// validation error that fails the command.
+func TestRunList_WhenDisplayCountIsNotPositive_ThenReturnsValidationError(t *testing.T) {
+	tests := []struct {
+		name  string
+		nFlag string
+	}{
+		{name: "negative", nFlag: "-1"},
+		{name: "zero", nFlag: "0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			// Store is irrelevant: validation must reject before listing anything.
+			err := runList([]string{"-n", tt.nFlag}, &stdout, &stderr, parser.Store{})
+			if err == nil {
+				t.Fatalf("runList(-n %s) returned nil error, want validation error", tt.nFlag)
+			}
+			if !strings.Contains(err.Error(), "-n must be a positive integer") {
+				t.Fatalf("error = %v, want '-n must be a positive integer'", err)
+			}
+		})
+	}
+}
+
+// Regression (F2): `read -max-lines -1` was silently treated as 0 (unlimited),
+// hiding the user's mistake. A negative cap is meaningless and must be a
+// validation error. 0 retains its documented "unlimited" meaning.
+func TestRunRead_WhenMaxLinesIsNegative_ThenReturnsValidationError(t *testing.T) {
+	root, sid := writeCLIFixture(t)
+	store := parser.Store{
+		ProjectsDir:    filepath.Join(root, ".claude", "projects"),
+		SessionMetaDir: filepath.Join(root, ".claude", "usage-data", "session-meta"),
+	}
+	var stdout, stderr bytes.Buffer
+	err := runRead([]string{sid, "-max-lines", "-1"}, &stdout, &stderr, store)
+	if err == nil {
+		t.Fatal("runRead(-max-lines -1) returned nil error, want validation error")
+	}
+	if !strings.Contains(err.Error(), "-max-lines must be") {
+		t.Fatalf("error = %v, want -max-lines validation message", err)
+	}
+}
+
+// Guards F2's carve-out: -max-lines 0 is the documented "unlimited" sentinel and
+// must keep working. The fixture has two message lines plus headers, all of which
+// must appear when no cap is applied.
+func TestRunRead_WhenMaxLinesIsZero_ThenEmitsUnlimitedOutput(t *testing.T) {
+	root, sid := writeCLIFixture(t)
+	store := parser.Store{
+		ProjectsDir:    filepath.Join(root, ".claude", "projects"),
+		SessionMetaDir: filepath.Join(root, ".claude", "usage-data", "session-meta"),
+	}
+	var stdout, stderr bytes.Buffer
+	if err := runRead([]string{sid, "-max-lines", "0"}, &stdout, &stderr, store); err != nil {
+		t.Fatalf("runRead(-max-lines 0) returned error: %v", err)
+	}
+	got := stdout.String()
+	// Both the user line and the assistant reply survive when unlimited.
+	if !strings.Contains(got, "hello") || !strings.Contains(got, "hi") {
+		t.Fatalf("stdout missing unlimited output (both messages):\n%s", got)
+	}
+}
+
+// Regression (F3): an empty session_id used to be matched as a prefix against
+// every session, producing the misleading "ambiguous prefix ”" error. The user
+// simply omitted the ID, so the message must say it is required and must not
+// mention ambiguity. ResolveSession is the single choke point, so every command
+// that accepts a session_id inherits this; we cover read, stats, and expand
+// (expand calls ResolveSession directly rather than via the helper).
+func TestRunCommands_WhenSessionIDIsEmpty_ThenReturnsRequiredError(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(args []string, out, errOut *bytes.Buffer, store parser.Store) error
+		args []string
+	}{
+		{
+			name: "read",
+			run:  func(a []string, o, e *bytes.Buffer, s parser.Store) error { return runRead(a, o, e, s) },
+			args: []string{""},
+		},
+		{
+			name: "stats",
+			run:  func(a []string, o, e *bytes.Buffer, s parser.Store) error { return runStats(a, o, e, s) },
+			args: []string{""},
+		},
+		{
+			name: "expand",
+			run:  func(a []string, o, e *bytes.Buffer, s parser.Store) error { return runExpand(a, o, e, s) },
+			args: []string{"", "uCVa"}, // expand needs a tool ID arg too
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := tt.run(tt.args, &stdout, &stderr, parser.Store{})
+			if err == nil {
+				t.Fatalf("%s with empty session_id returned nil error", tt.name)
+			}
+			if !strings.Contains(err.Error(), "required") {
+				t.Fatalf("%s error = %v, want 'required'", tt.name, err)
+			}
+			if strings.Contains(err.Error(), "ambiguous") {
+				t.Fatalf("%s error = %v, must not mention 'ambiguous'", tt.name, err)
+			}
+		})
+	}
+}
+
 func TestRunRead_WhenSessionIDIsMissing_ThenReturnsError(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := runRead(nil, &stdout, &stderr, parser.Store{})
@@ -318,6 +429,15 @@ func TestRunStats_WhenTokenAPIUnavailable_ThenFallsBackToEstimate(t *testing.T) 
 	// Proves we took the fallback branch, not the API branch nor --no-tokens.
 	if !strings.Contains(got, "=== Tokens (estimated) ===") {
 		t.Fatalf("stdout missing estimated-tokens header:\n%s", got)
+	}
+	// UX: the fallback must explain itself on stderr so the user knows why they
+	// got an estimate. The diagnostic belongs on stderr, never in the stdout
+	// payload — assert both. A mutation that drops the warning turns this red.
+	if !strings.Contains(stderr.String(), "warning: token API unavailable") {
+		t.Fatalf("stderr missing token-API fallback warning:\n%s", stderr.String())
+	}
+	if strings.Contains(got, "warning: token API unavailable") {
+		t.Fatalf("fallback warning leaked into stdout payload:\n%s", got)
 	}
 	if strings.Contains(got, "=== Tokens (Anthropic API) ===") {
 		t.Fatalf("stdout unexpectedly took the API branch:\n%s", got)
@@ -454,39 +574,31 @@ func mustReadAll(t *testing.T, path string) []session.Event {
 	return events
 }
 
-func TestRunAudit_WhenSamplesIsNegative_ThenShowsZeroSamplesWithoutPanic(t *testing.T) {
-	root := t.TempDir()
-	sid := "12345678-1234-1234-1234-123456789abc"
-	projectDir := filepath.Join(root, ".claude", "projects", "proj")
-	metaDir := filepath.Join(root, ".claude", "usage-data", "session-meta")
-	if err := os.MkdirAll(projectDir, 0o755); err != nil {
-		t.Fatalf("create project dir: %v", err)
+// Regression (F1): `audit -n -1` (and 0) used to be silently accepted, sampling
+// zero items and exiting 0 — the user got an empty result with no feedback that
+// their -n was nonsensical. The -n sample count must be a positive integer; any
+// value < 1 is a validation error that fails the command before reading the
+// transcript. Spec: -n "number of samples per category" requires >= 1.
+func TestRunAudit_WhenSampleCountIsNotPositive_ThenReturnsValidationError(t *testing.T) {
+	tests := []struct {
+		name  string
+		nFlag string
+	}{
+		{name: "negative", nFlag: "-1"},
+		{name: "zero", nFlag: "0"},
 	}
-	if err := os.MkdirAll(metaDir, 0o755); err != nil {
-		t.Fatalf("create meta dir: %v", err)
-	}
-
-	transcript := `{"type":"user","timestamp":"2026-05-28T00:00:01Z","toolUseResult":{"success":true,"commandName":"Bash"},"message":{"role":"user","content":[{"type":"tool_result","content":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}` + "\n"
-	if err := os.WriteFile(filepath.Join(projectDir, sid+".jsonl"), []byte(transcript), 0o644); err != nil {
-		t.Fatalf("write transcript: %v", err)
-	}
-
-	t.Setenv("HOME", root)
-
-	var stdout, stderr bytes.Buffer
-	err := runAudit([]string{sid, "-n", "-1"}, &stdout, &stderr, parser.DefaultStore())
-	if err != nil {
-		t.Fatalf("runAudit returned error: %v", err)
-	}
-	if stderr.Len() != 0 {
-		t.Fatalf("stderr = %q, want empty", stderr.String())
-	}
-	out := stdout.String()
-	if !strings.Contains(out, "=== tool_result_cut (1 items, showing 0) ===") {
-		t.Fatalf("stdout missing zero-sample header:\n%s", out)
-	}
-	if !strings.Contains(out, "... and 1 more") {
-		t.Fatalf("stdout missing remaining-sample count:\n%s", out)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			// Store is irrelevant: validation must reject before any session lookup.
+			err := runAudit([]string{"anysession", "-n", tt.nFlag}, &stdout, &stderr, parser.Store{})
+			if err == nil {
+				t.Fatalf("runAudit(-n %s) returned nil error, want validation error", tt.nFlag)
+			}
+			if !strings.Contains(err.Error(), "-n must be a positive integer") {
+				t.Fatalf("error = %v, want '-n must be a positive integer'", err)
+			}
+		})
 	}
 }
 

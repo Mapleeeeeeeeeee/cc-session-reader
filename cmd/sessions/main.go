@@ -73,6 +73,9 @@ func runList(args []string, out io.Writer, errOut io.Writer, store parser.Store)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if *limit < 1 {
+		return fmt.Errorf("-n must be a positive integer")
+	}
 
 	metaFiles, err := store.ListSessionMetaFiles()
 	if err != nil {
@@ -163,6 +166,11 @@ func runRead(args []string, out io.Writer, errOut io.Writer, store parser.Store)
 	isVerboseCommands := fs.Bool("verbose-commands", false, "show full slash/bash command output")
 	if err := fs.Parse(reorderArgs(args)); err != nil {
 		return err
+	}
+	// 0 means unlimited (intentional); a negative cap is meaningless and was
+	// previously silently treated as unlimited, hiding the user's mistake.
+	if *maxLines < 0 {
+		return fmt.Errorf("-max-lines must be zero (unlimited) or a positive integer")
 	}
 
 	resolved, err := resolveSession(fs, store)
@@ -292,6 +300,13 @@ func runStats(args []string, out io.Writer, errOut io.Writer, store parser.Store
 			fmt.Fprintf(out, "  Saved:    %10s (%.1f%%)\n", formatNumber(saved), pct)
 		}
 	} else {
+		// Surface why the user is getting an estimate instead of API counts.
+		// Diagnostics go to stderr so the stdout payload stays machine-clean.
+		apiErr := errRaw
+		if apiErr == nil {
+			apiErr = errFilt
+		}
+		fmt.Fprintf(errOut, "warning: token API unavailable (%v), using estimate\n", apiErr)
 		rawEst := tokens.EstimateTokens(result.RawText)
 		filtEst := tokens.EstimateTokens(result.FilteredText)
 		savedEst := rawEst - filtEst
@@ -319,6 +334,9 @@ func runAudit(args []string, out io.Writer, errOut io.Writer, store parser.Store
 	samples := fs.Int("n", 5, "number of samples per category")
 	if err := fs.Parse(reorderArgs(args)); err != nil {
 		return err
+	}
+	if *samples < 1 {
+		return fmt.Errorf("-n must be a positive integer")
 	}
 
 	resolved, err := resolveSession(fs, store)
