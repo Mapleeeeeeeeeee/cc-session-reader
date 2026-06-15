@@ -34,6 +34,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	defer waitUsageLog()
+
 	subcommand := os.Args[1]
 	switch subcommand {
 	case "list":
@@ -463,11 +465,14 @@ func runExpand(args []string, out io.Writer, errOut io.Writer, store parser.Stor
 	return nil
 }
 
+var usageWG sync.WaitGroup
 
 // logUsageAsync logs a usage entry in a background goroutine.
-// Tracking failures are silently discarded to never affect the main command.
+// Call waitUsageLog before process exit to ensure the write completes.
 func logUsageAsync(cmd string, target string) {
+	usageWG.Add(1)
 	go func() {
+		defer usageWG.Done()
 		cwd, _ := os.Getwd()
 		caller := tracker.DetectCallerSession(cwd)
 		entry := tracker.UsageEntry{
@@ -480,6 +485,8 @@ func logUsageAsync(cmd string, target string) {
 		_ = tracker.LogUsage(entry)
 	}()
 }
+
+func waitUsageLog() { usageWG.Wait() }
 
 func cmdUsage(args []string) {
 	if err := runUsage(args, os.Stdout, os.Stderr); err != nil {
@@ -495,6 +502,9 @@ func runUsage(args []string, out io.Writer, errOut io.Writer) error {
 	cmdFilter := fs.String("cmd", "", "filter by subcommand name")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *limit < 1 {
+		return fmt.Errorf("-n must be >= 1, got %d", *limit)
 	}
 
 	entries, err := tracker.ReadUsageLog(*limit, *cmdFilter)
