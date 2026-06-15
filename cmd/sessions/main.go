@@ -1,5 +1,5 @@
 // Package main is the CLI entry point for the Claude session reader.
-// Subcommands: list, read, context, stats, audit, expand.
+// Subcommands: list, read, context, stats, audit, expand, usage.
 package main
 
 import (
@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/analyzer"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/claudecodec"
@@ -19,6 +20,7 @@ import (
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/parser"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/tokens"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/tracker"
 )
 
 // countTokensFn is the token-counting backend used by runStats. It is a
@@ -46,6 +48,8 @@ func main() {
 		cmdAudit(os.Args[2:])
 	case "expand":
 		cmdExpand(os.Args[2:])
+	case "usage":
+		cmdUsage(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", subcommand)
 		printUsage()
@@ -55,7 +59,7 @@ func main() {
 
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "Usage: sessions <command> [options]")
-	fmt.Fprintln(os.Stderr, "Commands: list, read, context, stats, audit, expand")
+	fmt.Fprintln(os.Stderr, "Commands: list, read, context, stats, audit, expand, usage")
 }
 
 func cmdList(args []string) {
@@ -76,6 +80,7 @@ func runList(args []string, out io.Writer, errOut io.Writer, store parser.Store)
 	if *limit < 1 {
 		return fmt.Errorf("-n must be a positive integer")
 	}
+	logUsageAsync("list", "")
 
 	metaFiles, err := store.ListSessionMetaFiles()
 	if err != nil {
@@ -177,6 +182,7 @@ func runRead(args []string, out io.Writer, errOut io.Writer, store parser.Store)
 	if err != nil {
 		return err
 	}
+	logUsageAsync("read", session.ShortID(resolved.ID, 8))
 
 	opts := formatter.FormatOptions{VerboseAgents: *isVerboseAgents, VerboseBash: *isVerboseBash, VerboseThinking: *isVerboseThinking, VerboseCommands: *isVerboseCommands}
 	return formatter.FormatRead(resolved.Path, *maxLines, opts, out)
@@ -204,6 +210,7 @@ func runContext(args []string, out io.Writer, errOut io.Writer, store parser.Sto
 	if err != nil {
 		return err
 	}
+	logUsageAsync("context", session.ShortID(resolved.ID, 8))
 
 	opts := formatter.FormatOptions{VerboseAgents: *isVerboseAgents, VerboseBash: *isVerboseBash, VerboseThinking: *isVerboseThinking, VerboseCommands: *isVerboseCommands}
 	return formatter.FormatContextWithStore(resolved.Path, resolved.ID, opts, out, store)
@@ -228,6 +235,7 @@ func runStats(args []string, out io.Writer, errOut io.Writer, store parser.Store
 	if err != nil {
 		return err
 	}
+	logUsageAsync("stats", session.ShortID(resolved.ID, 8))
 
 	events, err := claudecodec.ReadAll(resolved.Path)
 	if err != nil {
@@ -343,6 +351,7 @@ func runAudit(args []string, out io.Writer, errOut io.Writer, store parser.Store
 	if err != nil {
 		return err
 	}
+	logUsageAsync("audit", session.ShortID(resolved.ID, 8))
 
 	events, err := claudecodec.ReadAll(resolved.Path)
 	if err != nil {
@@ -390,6 +399,7 @@ func runExpand(args []string, out io.Writer, errOut io.Writer, store parser.Stor
 	if resolved.Path == "" {
 		return fmt.Errorf("transcript not found: %s", resolved.ID)
 	}
+	logUsageAsync("expand", session.ShortID(resolved.ID, 8))
 
 	events, err := claudecodec.ReadAll(resolved.Path)
 	if err != nil {
@@ -449,6 +459,74 @@ func runExpand(args []string, out io.Writer, errOut io.Writer, store parser.Stor
 
 	if found == 0 {
 		return fmt.Errorf("no matching tool IDs found. Use 'sessions read <session-id>' to see available IDs")
+	}
+	return nil
+}
+
+
+// logUsageAsync logs a usage entry in a background goroutine.
+// Tracking failures are silently discarded to never affect the main command.
+func logUsageAsync(cmd string, target string) {
+	go func() {
+		cwd, _ := os.Getwd()
+		caller := tracker.DetectCallerSession(cwd)
+		entry := tracker.UsageEntry{
+			Timestamp: time.Now().Format(time.RFC3339),
+			Command:   cmd,
+			Target:    target,
+			Cwd:       cwd,
+			Caller:    caller,
+		}
+		_ = tracker.LogUsage(entry)
+	}()
+}
+
+func cmdUsage(args []string) {
+	if err := runUsage(args, os.Stdout, os.Stderr); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runUsage(args []string, out io.Writer, errOut io.Writer) error {
+	fs := flag.NewFlagSet("usage", flag.ContinueOnError)
+	fs.SetOutput(errOut)
+	limit := fs.Int("n", 20, "max entries to display")
+	cmdFilter := fs.String("cmd", "", "filter by subcommand name")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	entries, err := tracker.ReadUsageLog(*limit, *cmdFilter)
+	if err != nil {
+		return fmt.Errorf("read usage log: %w", err)
+	}
+
+	if len(entries) == 0 {
+		fmt.Fprintln(errOut, "No usage entries found.")
+		return nil
+	}
+
+	for _, e := range entries {
+		// Parse timestamp to display in short format
+		ts, parseErr := time.Parse(time.RFC3339, e.Timestamp)
+		dateStr := e.Timestamp // fallback to raw
+		if parseErr == nil {
+			dateStr = ts.Format("2006-01-02 15:04")
+		}
+
+		target := e.Target
+		if target == "" {
+			target = "-"
+		}
+
+		callerShort := "-"
+		if e.Caller != "" {
+			callerShort = "caller:" + session.ShortID(e.Caller, 8)
+		}
+
+		fmt.Fprintf(out, "%s  %-8s %s  %s  %s\n",
+			dateStr, e.Command, target, callerShort, e.Cwd)
 	}
 	return nil
 }

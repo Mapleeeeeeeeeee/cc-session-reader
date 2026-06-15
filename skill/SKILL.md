@@ -1,10 +1,8 @@
 ---
 name: sessions
 description: |
-  用 sessions CLI 讀取過去的 Claude Code session，而不是直接讀 JSONL 檔案。
-  JSONL 原始檔動輒數萬行，會佔滿 context；sessions CLI 在 context 外完成過濾，
-  只保留對話文字和 tool call 一行摘要。tool I/O 為主的 session 典型 reduction 80-88%，
-  以大型 plan 文件或純對話為主者較低（約 40-65%）。
+  用 sessions CLI 讀取過去的 Claude Code session，取代直接讀 JSONL。
+  CLI 在 context 外完成過濾，原始 300K 壓到 30-50K，只保留對話和 tool call 一行摘要。
   使用者想回顧、引用、分析過去的對話時使用。
 allowed-tools:
   - Bash
@@ -13,36 +11,61 @@ allowed-tools:
 
 # Session Reader
 
-呼叫前先確保 PATH 包含 Go bin：`source ~/.zshrc` 或 `export PATH="$HOME/go/bin:$PATH"`。
-
-若 `sessions` 未安裝：`go install github.com/Mapleeeeeeeeeee/cc-session-reader/cmd/sessions@latest`
-
 ## 選擇子命令
 
-根據使用者的意圖選擇對應的子命令：
+| 意圖 | 命令 |
+|------|------|
+| 找目標 session | `sessions list` — 列出最近 session，`-p` 過濾專案 |
+| 讀對話內容 | `sessions read <id>` — 對話全文 + tool call 一行摘要 |
+| 注入為 context | `sessions context <id>` — 同 read 但更緊湊，帶 metadata header |
+| 分析 token 消耗 | `sessions stats <id>` — 字元分佈、壓縮比、per-tool 明細 |
+| 檢查過濾遺漏 | `sessions audit <id>` — 從被過濾內容取樣檢視 |
+| 展開特定 tool call | `sessions expand <id> <tool-id>` — read 輸出的 #xxxx 即 tool-id |
+| 查看 CLI 使用紀錄 | `sessions usage` — 列出哪些 session 曾呼叫此 CLI |
 
-| 意圖 | 子命令 | 說明 |
-|------|--------|------|
-| 找到目標 session | `sessions list` | 列出最近的 session，支援 `-p` 過濾專案 |
-| 回顧完整對話脈絡 | `sessions read <id>` | 對話全文 + 每個 tool call 壓成一行摘要 |
-| 注入前次 session 為 context | `sessions context <id>` | 同 read 但格式更緊湊，帶 metadata header |
-| 分析 token 節省效果 | `sessions stats <id>` | 各類別字元分佈和壓縮比 |
-| 檢查過濾是否漏掉重要內容 | `sessions audit <id>` | 從被過濾的內容取樣檢視 |
-| 展開特定 tool call 完整內容 | `sessions expand <id> <tool-id> [...]` | read 輸出的 #xxxx 就是 tool-id |
+Session ID 支援 prefix match，前 8 碼通常就夠。
 
-Session ID 支援 prefix match，前 8 碼通常就夠。各子命令的 flags 用 `sessions <cmd> --help` 查看。
+## 分頁讀取
 
-## 常用 flags
+大 session 的 read 輸出可達數千行。一次全倒會超出 Bash stdout buffer，
+被 harness 寫入 persisted-output 檔案，之後只能用 Read 分段載入——等同讀原始 JSONL。
 
-- `-verbose-agents`（read/context）：完整保留 Agent subagent 回傳的分析結果，用於優化 skill/agent prompt 時開啟
-- `-verbose-bash`（read/context）：完整顯示 Bash 工具的 stdout/stderr（預設摘要）
-- `-verbose-thinking`（read/context）：顯示 assistant 的 thinking 區塊（預設隱藏）
-- `-verbose-commands`（read/context）：展開 slash／bash 指令的完整輸出（預設只留 `[/cmd]`／`[!cmd]` marker、丟棄終端 UI 與 caveat 樣板）
-- `-max-lines N`（read）：限制輸出行數，避免大 session 佔滿 context
-- `-no-tokens`（stats）：跳過 token 計算，只看字元分佈
+`read` 和 `context` 預設輸出 200 行後截斷，截斷時印出總行數和建議的下一段 offset。
+
+讀取流程：
+1. `sessions read <id>` → 前 200 行 + 總行數提示
+2. `sessions read <id> -offset 180 -max-lines 200` → 第 180-380 行（overlap 前頁尾部 20 行銜接上下文）
+3. 重複直到讀完或已取得所需資訊
+
+全文輸出用 `-max-lines 0`。只在確認輸出行數可控時使用。
+
+## Flags
+
+### 分頁控制（read/context）
+
+| Flag | 預設 | 說明 |
+|------|------|------|
+| `-max-lines N` | 200 | 輸出行數上限，0 = 無限制 |
+| `-offset N` | 0 | 從第 N 行開始輸出 |
+
+### 詳細模式（read/context）
+
+選擇性展開被壓縮的內容。只在使用者明確需要該層資訊時開啟。
+
+| Flag | 展開內容 |
+|------|----------|
+| `-verbose-agents` | Agent subagent 回傳的完整分析結果 |
+| `-verbose-bash` | Bash stdout/stderr 完整輸出 |
+| `-verbose-thinking` | Assistant thinking 區塊 |
+| `-verbose-commands` | Slash/bash 指令的完整終端輸出 |
+
+### Stats 選項
+
+| Flag | 說明 |
+|------|------|
+| `-no-tokens` | 跳過 token 計算，只看字元分佈 |
 
 ## 過濾邏輯
 
-保留對話文字和 tool call 一行摘要；過濾 tool result 原始輸出、檔案內容、tool input JSON、system/noise messages，
-以及 slash／bash 指令的終端輸出（壓成一行 marker）。
-reduction 視 session 組成而定：tool I/O 為主者典型 80-88%，大型 plan 文件或純對話為主者較低（約 40-65%）。
+保留對話文字和 tool call 一行摘要。過濾 tool result 原始輸出、檔案內容、tool input JSON、system/noise messages。
+壓縮比視 session 組成而定：tool I/O 為主 80-88%，純對話為主 40-65%。
