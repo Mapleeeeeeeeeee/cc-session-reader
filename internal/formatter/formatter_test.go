@@ -2,6 +2,7 @@ package formatter
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +16,7 @@ func TestFormatRead_WhenTranscriptHasDialogueAndToolUse_ThenWritesReadableTimeli
 	transcriptPath, _ := writeFormatterFixture(t)
 
 	var out bytes.Buffer
-	if err := FormatRead(transcriptPath, 0, FormatOptions{}, &out); err != nil {
+	if err := FormatRead(transcriptPath, 0, 0, FormatOptions{}, &out); err != nil {
 		t.Fatalf("FormatRead returned error: %v", err)
 	}
 
@@ -39,7 +40,7 @@ func TestFormatContext_WhenSessionMetadataExists_ThenWritesCompactContextWithHea
 
 	var out bytes.Buffer
 	store := parser.Store{SessionMetaDir: metaDir}
-	if err := FormatContextWithStore(transcriptPath, formatterFixtureSessionID, FormatOptions{}, &out, store); err != nil {
+	if err := FormatContextWithStore(transcriptPath, formatterFixtureSessionID, 0, 0, FormatOptions{}, &out, store); err != nil {
 		t.Fatalf("FormatContext returned error: %v", err)
 	}
 
@@ -58,21 +59,30 @@ func TestFormatContext_WhenSessionMetadataExists_ThenWritesCompactContextWithHea
 }
 
 func TestFormatRead_WhenMaxLinesReached_ThenStopsWithTruncationMessage(t *testing.T) {
+	// Guards the new pagination format: offset N is shown in the truncation
+	// message so the user knows what flag to pass to continue reading.
 	transcriptPath, _ := writeFormatterFixture(t)
 
 	var out bytes.Buffer
-	if err := FormatRead(transcriptPath, 3, FormatOptions{}, &out); err != nil {
+	if err := FormatRead(transcriptPath, 3, 0, FormatOptions{}, &out); err != nil {
 		t.Fatalf("FormatRead returned error: %v", err)
 	}
 
-	want := `[05-28 00:00] user:
-hello
-
-
---- truncated at 3 output lines ---
-`
-	if got := out.String(); got != want {
-		t.Fatalf("FormatRead truncated output mismatch\nwant:\n%q\ngot:\n%q", want, got)
+	got := out.String()
+	// First 3 lines of the user block must be present.
+	if !strings.Contains(got, "[05-28 00:00] user:\nhello") {
+		t.Fatalf("FormatRead truncated output missing user block\ngot:\n%q", got)
+	}
+	// Truncation message must name the resume offset so the user can continue.
+	if !strings.Contains(got, "--- truncated at line 3") {
+		t.Fatalf("FormatRead truncated output missing truncation marker\ngot:\n%q", got)
+	}
+	if !strings.Contains(got, "use --offset 3 to continue") {
+		t.Fatalf("FormatRead truncated output missing offset continuation hint\ngot:\n%q", got)
+	}
+	// No assistant content should appear (it starts after line 3).
+	if strings.Contains(got, "assistant:") {
+		t.Fatalf("FormatRead should not emit content past maxLines\ngot:\n%q", got)
 	}
 }
 
@@ -80,7 +90,7 @@ func TestFormatRead_WhenVerboseAgents_ThenWritesFullAgentResult(t *testing.T) {
 	transcriptPath, _ := writeAgentFormatterFixture(t)
 
 	var out bytes.Buffer
-	if err := FormatRead(transcriptPath, 0, FormatOptions{VerboseAgents: true}, &out); err != nil {
+	if err := FormatRead(transcriptPath, 0, 0, FormatOptions{VerboseAgents: true}, &out); err != nil {
 		t.Fatalf("FormatRead returned error: %v", err)
 	}
 
@@ -103,7 +113,7 @@ func TestFormatRead_WhenVerboseThinkingDisabled_ThenOmitsThinkingBlocks(t *testi
 	transcriptPath := writeThinkingFormatterFixture(t)
 
 	var out bytes.Buffer
-	if err := FormatRead(transcriptPath, 0, FormatOptions{}, &out); err != nil {
+	if err := FormatRead(transcriptPath, 0, 0, FormatOptions{}, &out); err != nil {
 		t.Fatalf("FormatRead returned error: %v", err)
 	}
 
@@ -129,7 +139,7 @@ func TestFormatRead_WhenVerboseThinkingEnabled_ThenRendersEachThinkingBlock(t *t
 	transcriptPath := writeThinkingFormatterFixture(t)
 
 	var out bytes.Buffer
-	if err := FormatRead(transcriptPath, 0, FormatOptions{VerboseThinking: true}, &out); err != nil {
+	if err := FormatRead(transcriptPath, 0, 0, FormatOptions{VerboseThinking: true}, &out); err != nil {
 		t.Fatalf("FormatRead returned error: %v", err)
 	}
 
@@ -160,13 +170,13 @@ func TestFormatContextEvents_WhenVerboseThinkingEnabled_ThenRendersThinkingWithC
 	}
 
 	var offOut bytes.Buffer
-	FormatContextEvents(events, nil, FormatOptions{}, &offOut)
+	FormatContextEvents(events, nil, 0, 0, FormatOptions{}, &offOut)
 	if strings.Contains(offOut.String(), thinkingFixtureFirstBlock) {
 		t.Fatalf("default context output must not contain thinking text\ngot:\n%q", offOut.String())
 	}
 
 	var onOut bytes.Buffer
-	FormatContextEvents(events, nil, FormatOptions{VerboseThinking: true}, &onOut)
+	FormatContextEvents(events, nil, 0, 0, FormatOptions{VerboseThinking: true}, &onOut)
 	got := onOut.String()
 	if !strings.Contains(got, "T: "+thinkingFixtureFirstBlock) {
 		t.Fatalf("verbose-thinking context output missing first thinking block\ngot:\n%q", got)
@@ -201,7 +211,7 @@ const commandStdoutContentMarker = "claude-opus · 30k/200k"
 // body, ANSI escapes, nor the caveat — while the real user message survives.
 func TestFormatReadEvents_DefaultDropsCommandBodyKeepsMarker(t *testing.T) {
 	var out bytes.Buffer
-	if err := FormatReadEvents(commandNoiseEvents(), nil, 0, FormatOptions{}, &out); err != nil {
+	if err := FormatReadEvents(commandNoiseEvents(), nil, 0, 0, FormatOptions{}, &out); err != nil {
 		t.Fatalf("FormatReadEvents error: %v", err)
 	}
 	got := out.String()
@@ -228,7 +238,7 @@ func TestFormatReadEvents_DefaultDropsCommandBodyKeepsMarker(t *testing.T) {
 // the caveat remains dropped (zero information even in verbose mode).
 func TestFormatReadEvents_VerboseCommandsShowsAnsiStrippedBody(t *testing.T) {
 	var out bytes.Buffer
-	if err := FormatReadEvents(commandNoiseEvents(), nil, 0, FormatOptions{VerboseCommands: true}, &out); err != nil {
+	if err := FormatReadEvents(commandNoiseEvents(), nil, 0, 0, FormatOptions{VerboseCommands: true}, &out); err != nil {
 		t.Fatalf("FormatReadEvents error: %v", err)
 	}
 	got := out.String()
@@ -255,7 +265,7 @@ func TestFormatReadEvents_VerboseCommandsShowsAnsiStrippedBody(t *testing.T) {
 // assertions for the compact context output ("U:" prefixes).
 func TestFormatContextEvents_DefaultDropsCommandBodyKeepsMarker(t *testing.T) {
 	var out bytes.Buffer
-	if err := FormatContextEvents(commandNoiseEvents(), nil, FormatOptions{}, &out); err != nil {
+	if err := FormatContextEvents(commandNoiseEvents(), nil, 0, 0, FormatOptions{}, &out); err != nil {
 		t.Fatalf("FormatContextEvents error: %v", err)
 	}
 	got := out.String()
@@ -278,7 +288,7 @@ func TestFormatContextEvents_DefaultDropsCommandBodyKeepsMarker(t *testing.T) {
 // context verbose path surfaces the ANSI-stripped body and still drops caveats.
 func TestFormatContextEvents_VerboseCommandsShowsAnsiStrippedBody(t *testing.T) {
 	var out bytes.Buffer
-	if err := FormatContextEvents(commandNoiseEvents(), nil, FormatOptions{VerboseCommands: true}, &out); err != nil {
+	if err := FormatContextEvents(commandNoiseEvents(), nil, 0, 0, FormatOptions{VerboseCommands: true}, &out); err != nil {
 		t.Fatalf("FormatContextEvents error: %v", err)
 	}
 	got := out.String()
@@ -305,7 +315,7 @@ func TestFormatReadEvents_BangCommandMarkerRenderedDefault(t *testing.T) {
 		}},
 	}
 	var out bytes.Buffer
-	if err := FormatReadEvents(events, nil, 0, FormatOptions{}, &out); err != nil {
+	if err := FormatReadEvents(events, nil, 0, 0, FormatOptions{}, &out); err != nil {
 		t.Fatalf("FormatReadEvents error: %v", err)
 	}
 	got := out.String()
@@ -349,7 +359,7 @@ func TestFormatRead_WhenToolResultHasNoPendingTool_ThenStillWritesSummary(t *tes
 	}
 
 	var out bytes.Buffer
-	if err := FormatRead(transcriptPath, 0, FormatOptions{}, &out); err != nil {
+	if err := FormatRead(transcriptPath, 0, 0, FormatOptions{}, &out); err != nil {
 		t.Fatalf("FormatRead returned error: %v", err)
 	}
 
@@ -464,7 +474,7 @@ func TestFormatReadEvents_WhenVerboseBash_ThenShowsFullBashOutput(t *testing.T) 
 		},
 	}
 	var out bytes.Buffer
-	FormatReadEvents(events, nil, 0, FormatOptions{VerboseBash: true}, &out)
+	FormatReadEvents(events, nil, 0, 0, FormatOptions{VerboseBash: true}, &out)
 	got := out.String()
 
 	if !strings.Contains(got, "detail line3") {
@@ -495,7 +505,7 @@ func TestFormatReadEvents_WhenVerboseBash_ThenNonBashToolsStillCompressed(t *tes
 		},
 	}
 	var out bytes.Buffer
-	FormatReadEvents(events, nil, 0, FormatOptions{VerboseBash: true}, &out)
+	FormatReadEvents(events, nil, 0, 0, FormatOptions{VerboseBash: true}, &out)
 	got := out.String()
 
 	// Non-Bash tools should be compressed to one-line summary even with verbose-bash on
@@ -522,7 +532,7 @@ func TestFormatReadEvents_WhenToolResultIsUserAnswer_ThenWritesAnswerBlock(t *te
 		},
 	}
 	var out bytes.Buffer
-	if err := FormatReadEvents(events, nil, 0, FormatOptions{}, &out); err != nil {
+	if err := FormatReadEvents(events, nil, 0, 0, FormatOptions{}, &out); err != nil {
 		t.Fatalf("FormatReadEvents returned error: %v", err)
 	}
 
@@ -549,10 +559,193 @@ func TestFormatContextEvents_WhenVerboseBash_ThenShowsFullBashOutput(t *testing.
 		},
 	}
 	var out bytes.Buffer
-	FormatContextEvents(events, nil, FormatOptions{VerboseBash: true}, &out)
+	FormatContextEvents(events, nil, 0, 0, FormatOptions{VerboseBash: true}, &out)
 	got := out.String()
 
 	if !strings.Contains(got, "ok line2") {
 		t.Fatalf("verbose bash in context should show full output, got:\n%s", got)
+	}
+}
+
+// generateManyEvents produces n user-message events for pagination tests.
+// Each event has a distinct message body so line counts are predictable.
+func generateManyEvents(n int) []session.Event {
+	events := make([]session.Event, n)
+	for i := range events {
+		events[i] = session.Event{
+			Kind:      session.EventUserMessage,
+			Timestamp: "2026-05-28T00:00:00Z",
+			User:      &session.UserMessage{Text: fmt.Sprintf("message %d", i)},
+		}
+	}
+	return events
+}
+
+// TestFormatReadEvents_GivenManyLines_WhenDefaultMaxLines_ThenTruncatesAt200
+// verifies that 250 events produce exactly 200 content lines plus a truncation
+// footer when maxLines=200, offset=0.
+func TestFormatReadEvents_GivenManyLines_WhenDefaultMaxLines_ThenTruncatesAt200(t *testing.T) {
+	// Each user message renders as 3 output lines:
+	//   [05-28 00:00] user:
+	//   message N
+	//   (blank)
+	// 250 messages → 750 total lines. maxLines=200 must cut at line 200.
+	events := generateManyEvents(250)
+	var out bytes.Buffer
+	if err := FormatReadEvents(events, nil, 200, 0, FormatOptions{}, &out); err != nil {
+		t.Fatalf("FormatReadEvents returned error: %v", err)
+	}
+	got := out.String()
+
+	lines := strings.Split(got, "\n")
+	// The last element after split on trailing newline is empty; strip it.
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+
+	// Truncation line is the last line; content lines are everything before the
+	// blank line separating content from the truncation footer.
+	if !strings.Contains(got, "--- truncated at line 200") {
+		t.Fatalf("expected truncation at line 200, got:\n%s", got)
+	}
+	if !strings.Contains(got, "use --offset 200 to continue") {
+		t.Fatalf("expected --offset 200 hint in truncation message, got:\n%s", got)
+	}
+	// The last content line before the truncation block should be exactly line 199
+	// (0-indexed). Line 199 = message 66 (199/3 = 66 rem 1, so it's the body
+	// of the 67th message). Just assert we don't see message 67 or later.
+	if strings.Contains(got, "message 67") {
+		t.Fatalf("output past maxLines boundary — message 67 should not appear:\n%s", got)
+	}
+}
+
+// TestFormatReadEvents_GivenOffset_WhenUnlimited_ThenSkipsFirstNLines
+// verifies that offset=5 drops the first 5 output lines and the rest is intact.
+func TestFormatReadEvents_GivenOffset_WhenUnlimited_ThenSkipsFirstNLines(t *testing.T) {
+	// 5 messages at 3 lines each = 15 output lines.
+	// Lines 0-2: message 0 block; lines 3-5: message 1 block; etc.
+	// Skipping 5 lines means we lose message 0's full block (lines 0-2) and
+	// the first 2 lines of message 1's block, starting at line 5 ("message 1").
+	events := generateManyEvents(5)
+	var full, withOffset bytes.Buffer
+	if err := FormatReadEvents(events, nil, 0, 0, FormatOptions{}, &full); err != nil {
+		t.Fatalf("FormatReadEvents (full) returned error: %v", err)
+	}
+	if err := FormatReadEvents(events, nil, 0, 5, FormatOptions{}, &withOffset); err != nil {
+		t.Fatalf("FormatReadEvents (offset=5) returned error: %v", err)
+	}
+
+	allLines := strings.Split(full.String(), "\n")
+	got := withOffset.String()
+
+	// First line of offset output must equal allLines[5].
+	firstLine := strings.SplitN(got, "\n", 2)[0]
+	if firstLine != allLines[5] {
+		t.Fatalf("offset=5 first line mismatch\nwant: %q\ngot:  %q", allLines[5], firstLine)
+	}
+	// "message 0" is on line 1 (the body of the first block). It must not appear
+	// in the offset output. "message 0" is unique enough to check.
+	if strings.Contains(got, "message 0") {
+		t.Fatalf("offset=5 output must not contain message 0 (line 1):\n%s", got)
+	}
+	// "message 4" (last message) must still be present.
+	if !strings.Contains(got, "message 4") {
+		t.Fatalf("offset=5 output must contain message 4:\n%s", got)
+	}
+}
+
+// TestFormatReadEvents_GivenOffsetAndMaxLines_WhenCombined_ThenWindowsCorrectly
+// verifies that offset=2 + maxLines=3 returns exactly lines 2,3,4 of the
+// full output.
+func TestFormatReadEvents_GivenOffsetAndMaxLines_WhenCombined_ThenWindowsCorrectly(t *testing.T) {
+	events := generateManyEvents(5) // 15 output lines
+	var full, windowed bytes.Buffer
+	if err := FormatReadEvents(events, nil, 0, 0, FormatOptions{}, &full); err != nil {
+		t.Fatalf("FormatReadEvents (full) error: %v", err)
+	}
+	if err := FormatReadEvents(events, nil, 3, 2, FormatOptions{}, &windowed); err != nil {
+		t.Fatalf("FormatReadEvents (windowed) error: %v", err)
+	}
+
+	allLines := strings.Split(full.String(), "\n")
+	windowedLines := strings.Split(windowed.String(), "\n")
+
+	// Strip the trailing blank from the split.
+	if len(windowedLines) > 0 && windowedLines[len(windowedLines)-1] == "" {
+		windowedLines = windowedLines[:len(windowedLines)-1]
+	}
+
+	// Last line is the truncation message; strip it.
+	if len(windowedLines) > 0 && strings.HasPrefix(windowedLines[len(windowedLines)-1], "---") {
+		windowedLines = windowedLines[:len(windowedLines)-1]
+	}
+	// The blank separator before the truncation message.
+	if len(windowedLines) > 0 && windowedLines[len(windowedLines)-1] == "" {
+		windowedLines = windowedLines[:len(windowedLines)-1]
+	}
+
+	// Content lines must be exactly allLines[2:5].
+	if len(windowedLines) != 3 {
+		t.Fatalf("expected 3 content lines, got %d: %q", len(windowedLines), windowedLines)
+	}
+	for i, want := range allLines[2:5] {
+		if windowedLines[i] != want {
+			t.Fatalf("windowed line %d mismatch\nwant: %q\ngot:  %q", i, want, windowedLines[i])
+		}
+	}
+}
+
+// TestFormatReadEvents_GivenZeroOffset_WhenSameAsNoOffset_ThenOutputIdentical
+// verifies that offset=0 is a no-op and produces the same output as the
+// unparameterized baseline.
+func TestFormatReadEvents_GivenZeroOffset_WhenSameAsNoOffset_ThenOutputIdentical(t *testing.T) {
+	events := generateManyEvents(3)
+	var noOffset, zeroOffset bytes.Buffer
+	if err := FormatReadEvents(events, nil, 0, 0, FormatOptions{}, &noOffset); err != nil {
+		t.Fatalf("FormatReadEvents (no offset) error: %v", err)
+	}
+	if err := FormatReadEvents(events, nil, 0, 0, FormatOptions{}, &zeroOffset); err != nil {
+		t.Fatalf("FormatReadEvents (offset=0) error: %v", err)
+	}
+	if noOffset.String() != zeroOffset.String() {
+		t.Fatalf("offset=0 output differs from no-offset output\nno-offset:\n%q\noffset=0:\n%q",
+			noOffset.String(), zeroOffset.String())
+	}
+}
+
+// TestFormatReadEvents_GivenZeroMaxLines_WhenUnlimited_ThenNoTruncationMessage
+// verifies that maxLines=0 emits all content with no truncation footer.
+// This guards backward compatibility: existing callers that pass 0 must keep
+// getting unlimited output.
+func TestFormatReadEvents_GivenZeroMaxLines_WhenUnlimited_ThenNoTruncationMessage(t *testing.T) {
+	events := generateManyEvents(10) // 30 lines
+	var out bytes.Buffer
+	if err := FormatReadEvents(events, nil, 0, 0, FormatOptions{}, &out); err != nil {
+		t.Fatalf("FormatReadEvents returned error: %v", err)
+	}
+	got := out.String()
+	if strings.Contains(got, "truncated") {
+		t.Fatalf("maxLines=0 must not truncate; got truncation message:\n%s", got)
+	}
+	// All 10 messages must appear.
+	for i := 0; i < 10; i++ {
+		if !strings.Contains(got, fmt.Sprintf("message %d", i)) {
+			t.Fatalf("message %d missing in unlimited output:\n%s", i, got)
+		}
+	}
+}
+
+// TestFormatReadEvents_GivenOffsetExceedsTotal_WhenFormatted_ThenEmitsOffsetExceedsMessage
+// verifies that an offset past the end of the content produces a clear message
+// rather than silently emitting empty output.
+func TestFormatReadEvents_GivenOffsetExceedsTotal_WhenFormatted_ThenEmitsOffsetExceedsMessage(t *testing.T) {
+	events := generateManyEvents(2) // 6 lines
+	var out bytes.Buffer
+	if err := FormatReadEvents(events, nil, 0, 9999, FormatOptions{}, &out); err != nil {
+		t.Fatalf("FormatReadEvents returned error: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "offset 9999 exceeds total") {
+		t.Fatalf("expected offset-exceeds message, got:\n%q", got)
 	}
 }

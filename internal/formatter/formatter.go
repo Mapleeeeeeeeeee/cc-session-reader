@@ -2,6 +2,7 @@
 package formatter
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -64,36 +65,38 @@ type pendingTool struct {
 	name    string // e.g. "Bash", "Read", "Edit"
 }
 
-func FormatRead(transcriptPath string, maxLines int, opts FormatOptions, out io.Writer) error {
+func FormatRead(transcriptPath string, maxLines int, offset int, opts FormatOptions, out io.Writer) error {
 	events, agentIDs, err := loadEvents(transcriptPath, opts.VerboseAgents)
 	if err != nil {
 		return err
 	}
-	return FormatReadEvents(events, agentIDs, maxLines, opts, out)
+	return FormatReadEvents(events, agentIDs, maxLines, offset, opts, out)
 }
 
-func FormatReadEvents(events []session.Event, agentIDs map[string]bool, maxLines int, opts FormatOptions, out io.Writer) error {
-	linesOutput := 0
+func FormatReadEvents(events []session.Event, agentIDs map[string]bool, maxLines int, offset int, opts FormatOptions, out io.Writer) error {
+	// Two-pass: format all events into a buffer, then apply offset + maxLines on output lines.
+	var buf bytes.Buffer
+	if err := renderReadEvents(events, agentIDs, opts, &buf); err != nil {
+		return err
+	}
+	return applyPagination(buf.String(), maxLines, offset, out)
+}
+
+// renderReadEvents writes the full formatted timeline to out without any line limits.
+func renderReadEvents(events []session.Event, agentIDs map[string]bool, opts FormatOptions, out io.Writer) error {
 	var pendingTools []pendingTool
 
 	flush := func() {
 		for _, pt := range pendingTools {
 			fmt.Fprintf(out, "  %s\n", pt.summary)
-			linesOutput += strings.Count(pt.summary, "\n") + 1
 		}
 		if len(pendingTools) > 0 {
 			fmt.Fprintln(out)
-			linesOutput++
 		}
 		pendingTools = pendingTools[:0]
 	}
 
 	for _, event := range events {
-		if maxLines > 0 && linesOutput >= maxLines {
-			fmt.Fprintf(out, "\n--- truncated at %d output lines ---\n", maxLines)
-			break
-		}
-
 		switch event.Kind {
 		case session.EventUserMessage:
 			rendered := renderUserMessage(event.User, opts)
@@ -102,7 +105,6 @@ func FormatReadEvents(events []session.Event, agentIDs map[string]bool, maxLines
 			}
 			flush()
 			fmt.Fprintf(out, "[%s] user:\n%s\n\n", parser.FormatTimestamp(event.Timestamp), rendered.body)
-			linesOutput += strings.Count(rendered.body, "\n") + 3
 
 		case session.EventAssistantMessage:
 			if event.Assistant == nil {
@@ -112,7 +114,6 @@ func FormatReadEvents(events []session.Event, agentIDs map[string]bool, maxLines
 				for _, thinking := range event.Assistant.Thinking {
 					flush()
 					fmt.Fprintf(out, "[%s] thinking:\n%s\n\n", parser.FormatTimestamp(event.Timestamp), thinking)
-					linesOutput += strings.Count(thinking, "\n") + 3
 				}
 			}
 			hasText := strings.TrimSpace(event.Assistant.Text) != ""
@@ -120,18 +121,16 @@ func FormatReadEvents(events []session.Event, agentIDs map[string]bool, maxLines
 			if hasText {
 				flush()
 				fmt.Fprintf(out, "[%s] assistant:\n%s\n", parser.FormatTimestamp(event.Timestamp), event.Assistant.Text)
-				linesOutput += strings.Count(event.Assistant.Text, "\n") + 2
 			}
 			for _, tool := range event.Assistant.ToolUses {
 				pendingTools = append(pendingTools, summarizeToolUse(tool))
 			}
 			if hasText && !hasTools {
 				fmt.Fprintln(out)
-				linesOutput++
 			}
 
 		case session.EventToolResult:
-			handleToolResultRead(event, agentIDs, &pendingTools, opts, flush, out, &linesOutput)
+			handleToolResultRead(event, agentIDs, &pendingTools, opts, flush, out)
 		}
 	}
 
@@ -139,17 +138,67 @@ func FormatReadEvents(events []session.Event, agentIDs map[string]bool, maxLines
 	return nil
 }
 
-func FormatContextWithStore(transcriptPath string, sessionID string, opts FormatOptions, out io.Writer, store parser.Store) error {
+// applyPagination slices the formatted output by offset and maxLines, writing
+// the result to out. It appends a truncation message when lines were cut.
+func applyPagination(formatted string, maxLines int, offset int, out io.Writer) error {
+	allLines := strings.Split(formatted, "\n")
+	// strings.Split on a trailing newline produces an empty last element; exclude it
+	// from the count so line math matches what the user sees.
+	totalLines := len(allLines)
+	if totalLines > 0 && allLines[totalLines-1] == "" {
+		totalLines--
+	}
+
+	if offset >= totalLines {
+		if totalLines > 0 {
+			fmt.Fprintf(out, "--- offset %d exceeds total ~%d lines ---\n", offset, totalLines)
+		}
+		return nil
+	}
+
+	visibleLines := allLines[offset:]
+	isTruncated := false
+	if maxLines > 0 && len(visibleLines) > maxLines {
+		visibleLines = visibleLines[:maxLines]
+		isTruncated = true
+	}
+
+	fmt.Fprint(out, strings.Join(visibleLines, "\n"))
+	// Restore the trailing newline that strings.Split consumed, unless the last
+	// visible line is already empty (which would produce a double newline).
+	lastVisible := visibleLines[len(visibleLines)-1]
+	if lastVisible != "" {
+		fmt.Fprintln(out)
+	}
+
+	if isTruncated {
+		resumeAt := offset + maxLines
+		fmt.Fprintf(out, "\n--- truncated at line %d (total ~%d lines) — use --offset %d to continue ---\n", resumeAt, totalLines, resumeAt)
+	}
+	return nil
+}
+
+func FormatContextWithStore(transcriptPath string, sessionID string, maxLines int, offset int, opts FormatOptions, out io.Writer, store parser.Store) error {
 	events, agentIDs, err := loadEvents(transcriptPath, opts.VerboseAgents)
 	if err != nil {
 		return err
 	}
 
 	writeContextHeader(sessionID, out, store)
-	return FormatContextEvents(events, agentIDs, opts, out)
+	return FormatContextEvents(events, agentIDs, maxLines, offset, opts, out)
 }
 
-func FormatContextEvents(events []session.Event, agentIDs map[string]bool, opts FormatOptions, out io.Writer) error {
+func FormatContextEvents(events []session.Event, agentIDs map[string]bool, maxLines int, offset int, opts FormatOptions, out io.Writer) error {
+	// Two-pass: format all events into a buffer, then apply offset + maxLines on output lines.
+	var buf bytes.Buffer
+	if err := renderContextEvents(events, agentIDs, opts, &buf); err != nil {
+		return err
+	}
+	return applyPagination(buf.String(), maxLines, offset, out)
+}
+
+// renderContextEvents writes the full compact context format to out without any line limits.
+func renderContextEvents(events []session.Event, agentIDs map[string]bool, opts FormatOptions, out io.Writer) error {
 	var pendingTools []pendingTool
 
 	flush := func() {
@@ -219,12 +268,10 @@ func handleToolResultRead(
 	opts FormatOptions,
 	flushFn func(),
 	out io.Writer,
-	linesOutput *int,
 ) {
 	if event.User != nil && event.User.IsAnswer {
 		flushFn()
 		fmt.Fprintf(out, "[%s] user (answer):\n%s\n\n", parser.FormatTimestamp(event.Timestamp), event.User.Text)
-		*linesOutput += strings.Count(event.User.Text, "\n") + 3
 		return
 	}
 	if event.Tool == nil {
@@ -233,7 +280,6 @@ func handleToolResultRead(
 	if agentIDs[event.Tool.ToolUseID] && strings.TrimSpace(event.Tool.Text) != "" {
 		flushFn()
 		fmt.Fprintf(out, "[%s] agent result:\n%s\n\n", parser.FormatTimestamp(event.Timestamp), event.Tool.Text)
-		*linesOutput += strings.Count(event.Tool.Text, "\n") + 3
 		return
 	}
 	appendToolResult(event.Tool, pendingTools, opts)

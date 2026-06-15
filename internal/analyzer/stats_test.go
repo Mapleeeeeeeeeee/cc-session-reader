@@ -3,6 +3,7 @@ package analyzer
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
 )
@@ -182,5 +183,119 @@ func assertNotContains(t *testing.T, streamName, stream, unwanted string) {
 	t.Helper()
 	if strings.Contains(stream, unwanted) {
 		t.Fatalf("%s = %q, want it NOT to contain %q", streamName, stream, unwanted)
+	}
+}
+
+// TestComputeStats_GivenMultipleToolTypes_TracksPerToolBreakdown verifies that
+// PerTool accumulates CallCount and InputChars from tool uses and ResultChars
+// from tool results, keyed by tool name, without disturbing category totals.
+func TestComputeStats_GivenMultipleToolTypes_TracksPerToolBreakdown(t *testing.T) {
+	bashInput := session.ToolInput{Raw: map[string]any{"command": "ls"}}
+	readInput := session.ToolInput{Raw: map[string]any{"file_path": "/tmp/x"}}
+	const bashResultText = "file1.txt\nfile2.txt"
+	const readResultText = "contents of file"
+
+	events := []session.Event{
+		{
+			Kind: session.EventAssistantMessage,
+			Assistant: &session.AssistantMessage{
+				ToolUses: []session.ToolUse{
+					{Name: "Bash", Input: bashInput},
+					{Name: "Read", Input: readInput},
+				},
+			},
+		},
+		{
+			Kind: session.EventToolResult,
+			Tool: &session.ToolResult{RawName: "Bash", Success: true, Text: bashResultText},
+		},
+		{
+			Kind: session.EventToolResult,
+			Tool: &session.ToolResult{RawName: "Read", Success: true, Text: readResultText},
+		},
+	}
+
+	result := ComputeStats(events)
+
+	bashInputChars := utf8.RuneCountInString(bashInput.MarshalNoEscape())
+	readInputChars := utf8.RuneCountInString(readInput.MarshalNoEscape())
+
+	if result.PerTool["Bash"] == nil {
+		t.Fatal("PerTool[Bash] is nil, want entry")
+	}
+	if got := result.PerTool["Bash"].CallCount; got != 1 {
+		t.Fatalf("PerTool[Bash].CallCount = %d, want 1", got)
+	}
+	if got := result.PerTool["Bash"].InputChars; got != bashInputChars {
+		t.Fatalf("PerTool[Bash].InputChars = %d, want %d", got, bashInputChars)
+	}
+	if got := result.PerTool["Bash"].ResultChars; got != utf8.RuneCountInString(bashResultText) {
+		t.Fatalf("PerTool[Bash].ResultChars = %d, want %d", got, utf8.RuneCountInString(bashResultText))
+	}
+
+	if result.PerTool["Read"] == nil {
+		t.Fatal("PerTool[Read] is nil, want entry")
+	}
+	if got := result.PerTool["Read"].CallCount; got != 1 {
+		t.Fatalf("PerTool[Read].CallCount = %d, want 1", got)
+	}
+	if got := result.PerTool["Read"].InputChars; got != readInputChars {
+		t.Fatalf("PerTool[Read].InputChars = %d, want %d", got, readInputChars)
+	}
+	if got := result.PerTool["Read"].ResultChars; got != utf8.RuneCountInString(readResultText) {
+		t.Fatalf("PerTool[Read].ResultChars = %d, want %d", got, utf8.RuneCountInString(readResultText))
+	}
+
+	// Category-level totals must be unchanged by per-tool tracking.
+	wantInputRaw := bashInputChars + readInputChars
+	assertCategory(t, result, "tool_input_raw", wantInputRaw)
+	assertCategory(t, result, "tool_result_raw", utf8.RuneCountInString(bashResultText)+utf8.RuneCountInString(readResultText))
+}
+
+// TestComputeStats_GivenNoTools_ReturnsEmptyPerToolMap verifies that sessions
+// without any tool interaction produce an empty PerTool map rather than nil.
+func TestComputeStats_GivenNoTools_ReturnsEmptyPerToolMap(t *testing.T) {
+	events := []session.Event{
+		{
+			Kind: session.EventUserMessage,
+			User: &session.UserMessage{Text: "just a plain message"},
+		},
+	}
+
+	result := ComputeStats(events)
+
+	if result.PerTool == nil {
+		t.Fatal("PerTool is nil, want empty map")
+	}
+	if got := len(result.PerTool); got != 0 {
+		t.Fatalf("len(PerTool) = %d, want 0", got)
+	}
+}
+
+// TestComputeStats_GivenToolResultWithRawName_MatchesResultToToolName verifies
+// that ResultChars are attributed to the tool named by RawName even when there
+// is no corresponding tool use in the same session. CallCount stays zero
+// because call counts are driven by tool uses, not results.
+func TestComputeStats_GivenToolResultWithRawName_MatchesResultToToolName(t *testing.T) {
+	const editResultText = "3 changes applied"
+	events := []session.Event{
+		{
+			Kind: session.EventToolResult,
+			Tool: &session.ToolResult{RawName: "Edit", Success: true, Text: editResultText},
+		},
+	}
+
+	result := ComputeStats(events)
+
+	if result.PerTool["Edit"] == nil {
+		t.Fatal("PerTool[Edit] is nil, want entry")
+	}
+	wantResultChars := utf8.RuneCountInString(editResultText)
+	if got := result.PerTool["Edit"].ResultChars; got != wantResultChars {
+		t.Fatalf("PerTool[Edit].ResultChars = %d, want %d", got, wantResultChars)
+	}
+	// No tool use was present, so CallCount must be zero.
+	if got := result.PerTool["Edit"].CallCount; got != 0 {
+		t.Fatalf("PerTool[Edit].CallCount = %d, want 0 (no tool use, only result)", got)
 	}
 }

@@ -9,12 +9,20 @@ import (
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/summarizer"
 )
 
+// ToolStats tracks per-tool usage metrics accumulated during ComputeStats.
+type ToolStats struct {
+	CallCount   int
+	InputChars  int
+	ResultChars int
+}
+
 type StatsResult struct {
 	RawText       string
 	FilteredText  string
 	RawChars      int
 	FilteredChars int
 	Categories    map[string]int
+	PerTool       map[string]*ToolStats
 }
 
 func ComputeStats(events []session.Event) StatsResult {
@@ -29,6 +37,7 @@ func ComputeStats(events []session.Event) StatsResult {
 		"system_noise":    0,
 		"command_noise":   0,
 	}
+	perTool := map[string]*ToolStats{}
 
 	for _, event := range events {
 		switch event.Kind {
@@ -86,13 +95,23 @@ func ComputeStats(events []session.Event) StatsResult {
 			}
 			for _, tool := range event.Assistant.ToolUses {
 				rawJSON := tool.Input.MarshalNoEscape()
-				categories["tool_input_raw"] += utf8.RuneCountInString(rawJSON)
-				rawParts = append(rawParts, rawJSON)
 
 				name := tool.Name
 				if name == "" {
 					name = "?"
 				}
+
+				categories["tool_input_raw"] += utf8.RuneCountInString(rawJSON)
+				rawParts = append(rawParts, rawJSON)
+
+				ts := perTool[name]
+				if ts == nil {
+					ts = &ToolStats{}
+					perTool[name] = ts
+				}
+				ts.CallCount++
+				ts.InputChars += utf8.RuneCountInString(rawJSON)
+
 				summary := summarizer.SummarizeToolUse(name, tool.Input)
 				categories["tool_summaries"] += utf8.RuneCountInString(summary)
 				filteredParts = append(filteredParts, summary)
@@ -113,6 +132,17 @@ func ComputeStats(events []session.Event) StatsResult {
 			summary := event.Tool.Summary()
 			categories["tool_summaries"] += utf8.RuneCountInString(summary)
 			filteredParts = append(filteredParts, summary)
+
+			toolName := event.Tool.RawName
+			if toolName == "" {
+				toolName = "?"
+			}
+			ts := perTool[toolName]
+			if ts == nil {
+				ts = &ToolStats{}
+				perTool[toolName] = ts
+			}
+			ts.ResultChars += utf8.RuneCountInString(event.Tool.Text)
 		}
 	}
 
@@ -125,5 +155,6 @@ func ComputeStats(events []session.Event) StatsResult {
 		RawChars:      utf8.RuneCountInString(rawText),
 		FilteredChars: utf8.RuneCountInString(filteredText),
 		Categories:    categories,
+		PerTool:       perTool,
 	}
 }

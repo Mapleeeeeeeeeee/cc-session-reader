@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -893,5 +894,296 @@ func writeListMeta(t *testing.T, metaDir string, sid string, projectPath string,
 	meta := `{"session_id":"` + sid + `","project_path":"` + projectPath + `","duration_minutes":1,"user_message_count":1,"assistant_message_count":2,"first_prompt":"` + firstPrompt + `","start_time":"2026-05-28T00:00:00Z"}`
 	if err := os.WriteFile(filepath.Join(metaDir, sid+".json"), []byte(meta), 0o644); err != nil {
 		t.Fatalf("write meta: %v", err)
+	}
+}
+
+func TestRunList_GivenJSONLWithoutMetadata_ThenShowsFallbackSession(t *testing.T) {
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "projects", "-Users-me-proj")
+	metaDir := filepath.Join(root, "session-meta")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+	if err := os.MkdirAll(metaDir, 0o755); err != nil {
+		t.Fatalf("create meta dir: %v", err)
+	}
+	sid := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	transcript := strings.Join([]string{
+		`{"type":"user","timestamp":"2026-06-15T10:00:00+00:00","message":{"role":"user","content":"help me understand channels"}}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(projectDir, sid+".jsonl"), []byte(transcript), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	// Deliberately no metadata file for this session
+
+	var stdout, stderr bytes.Buffer
+	store := parser.Store{
+		ProjectsDir:    filepath.Join(root, "projects"),
+		SessionMetaDir: metaDir,
+	}
+	err := runList(nil, &stdout, &stderr, store)
+	if err != nil {
+		t.Fatalf("runList returned error: %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, sid) {
+		t.Fatalf("stdout missing session ID %s (JSONL fallback session not listed):\n%s", sid, got)
+	}
+	if !strings.Contains(got, "help me understand channels") {
+		t.Fatalf("stdout missing first prompt from JSONL fallback:\n%s", got)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty for JSONL-only session", stderr.String())
+	}
+}
+
+func TestRunList_GivenJSONLAndMeta_ThenMetaWinsAndNoDuplicates(t *testing.T) {
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "projects", "-Users-me-proj")
+	metaDir := filepath.Join(root, "session-meta")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+	if err := os.MkdirAll(metaDir, 0o755); err != nil {
+		t.Fatalf("create meta dir: %v", err)
+	}
+	sid := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
+	// JSONL with a different prompt than the metadata
+	transcript := strings.Join([]string{
+		`{"type":"user","timestamp":"2026-06-15T10:00:00+00:00","message":{"role":"user","content":"jsonl prompt here"}}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(projectDir, sid+".jsonl"), []byte(transcript), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	// Metadata for the same session with canonical values
+	writeListMeta(t, metaDir, sid, "/Users/me/proj", "meta prompt here")
+
+	var stdout, stderr bytes.Buffer
+	store := parser.Store{
+		ProjectsDir:    filepath.Join(root, "projects"),
+		SessionMetaDir: metaDir,
+	}
+	err := runList(nil, &stdout, &stderr, store)
+	if err != nil {
+		t.Fatalf("runList returned error: %v", err)
+	}
+	got := stdout.String()
+	// Should appear exactly once (no duplicate from JSONL fallback)
+	if count := strings.Count(got, sid); count != 1 {
+		t.Fatalf("session ID %s appears %d times in output, want exactly 1:\n%s", sid, count, got)
+	}
+	// Metadata prompt wins over JSONL prompt
+	if !strings.Contains(got, "meta prompt here") {
+		t.Fatalf("stdout missing metadata first_prompt (meta must win over JSONL):\n%s", got)
+	}
+	if strings.Contains(got, "jsonl prompt here") {
+		t.Fatalf("stdout contains JSONL prompt (meta should win):\n%s", got)
+	}
+}
+
+func TestRunList_GivenJSONLOnly_WhenProjectFilterApplied_ThenFiltersCorrectly(t *testing.T) {
+	root := t.TempDir()
+	projectDirMatch := filepath.Join(root, "projects", "-Users-me-myapi")
+	projectDirOther := filepath.Join(root, "projects", "-Users-me-webapp")
+	metaDir := filepath.Join(root, "session-meta")
+	for _, d := range []string{projectDirMatch, projectDirOther, metaDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("create dir %s: %v", d, err)
+		}
+	}
+
+	sidMatch := "cccccccc-cccc-cccc-cccc-cccccccccccc"
+	sidOther := "dddddddd-dddd-dddd-dddd-dddddddddddd"
+	for _, tc := range []struct {
+		sid string
+		dir string
+		prompt string
+	}{
+		{sid: sidMatch, dir: projectDirMatch, prompt: "api question"},
+		{sid: sidOther, dir: projectDirOther, prompt: "web question"},
+	} {
+		transcript := `{"type":"user","timestamp":"2026-06-15T10:00:00+00:00","message":{"role":"user","content":"` + tc.prompt + `"}}` + "\n"
+		if err := os.WriteFile(filepath.Join(tc.dir, tc.sid+".jsonl"), []byte(transcript), 0o644); err != nil {
+			t.Fatalf("write transcript: %v", err)
+		}
+	}
+
+	var stdout, stderr bytes.Buffer
+	store := parser.Store{
+		ProjectsDir:    filepath.Join(root, "projects"),
+		SessionMetaDir: metaDir,
+	}
+	err := runList([]string{"-p", "myapi"}, &stdout, &stderr, store)
+	if err != nil {
+		t.Fatalf("runList returned error: %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "api question") {
+		t.Fatalf("stdout missing matched JSONL session:\n%s", got)
+	}
+	if strings.Contains(got, "web question") {
+		t.Fatalf("stdout includes filtered-out session:\n%s", got)
+	}
+}
+
+// writeLargeCLIFixture creates a session transcript with many user messages
+// so that the default 200-line cap is triggered. Each user message renders as
+// 3 output lines (header, body, blank), so 100 messages = 300 lines > 200.
+func writeLargeCLIFixture(t *testing.T) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	sid := "12345678-1234-1234-1234-123456789abc"
+	projectDir := filepath.Join(root, ".claude", "projects", "proj")
+	metaDir := filepath.Join(root, ".claude", "usage-data", "session-meta")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+	if err := os.MkdirAll(metaDir, 0o755); err != nil {
+		t.Fatalf("create meta dir: %v", err)
+	}
+
+	var lines []string
+	for i := 0; i < 100; i++ {
+		lines = append(lines, `{"type":"user","timestamp":"2026-05-28T00:00:00Z","message":{"role":"user","content":"msg`+strings.Repeat("x", 5)+` `+fmt.Sprintf("%d", i)+`"}}`)
+	}
+	lines = append(lines, "")
+	transcript := strings.Join(lines, "\n")
+	if err := os.WriteFile(filepath.Join(projectDir, sid+".jsonl"), []byte(transcript), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	writeListMeta(t, metaDir, sid, "/tmp/proj", "hello")
+	return root, sid
+}
+
+// TestRunRead_GivenLargeSession_WhenDefaultFlags_ThenTruncatesAt200
+// verifies that runRead with default flags (max-lines=200) clips output at 200
+// lines and adds a truncation message naming the resume offset.
+func TestRunRead_GivenLargeSession_WhenDefaultFlags_ThenTruncatesAt200(t *testing.T) {
+	root, sid := writeLargeCLIFixture(t)
+	store := parser.Store{
+		ProjectsDir:    filepath.Join(root, ".claude", "projects"),
+		SessionMetaDir: filepath.Join(root, ".claude", "usage-data", "session-meta"),
+	}
+	var stdout, stderr bytes.Buffer
+	if err := runRead([]string{sid}, &stdout, &stderr, store); err != nil {
+		t.Fatalf("runRead returned error: %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "--- truncated at line 200") {
+		t.Fatalf("default runRead must truncate at 200 lines:\n%s", got)
+	}
+	if !strings.Contains(got, "use --offset 200 to continue") {
+		t.Fatalf("truncation message must include --offset 200 hint:\n%s", got)
+	}
+}
+
+// TestRunRead_GivenLargeSession_WhenOffsetFlag_ThenSkipsLines
+// verifies that -offset N shifts the output window so lines before N are absent.
+func TestRunRead_GivenLargeSession_WhenOffsetFlag_ThenSkipsLines(t *testing.T) {
+	root, sid := writeLargeCLIFixture(t)
+	store := parser.Store{
+		ProjectsDir:    filepath.Join(root, ".claude", "projects"),
+		SessionMetaDir: filepath.Join(root, ".claude", "usage-data", "session-meta"),
+	}
+	var stdout, stderr bytes.Buffer
+	// -max-lines 0 (unlimited) so we see whether offset works independently.
+	if err := runRead([]string{sid, "-offset", "3", "-max-lines", "0"}, &stdout, &stderr, store); err != nil {
+		t.Fatalf("runRead with -offset 3 returned error: %v", err)
+	}
+	got := stdout.String()
+	// With offset=3 the first message block (lines 0-2: header, body, blank) is
+	// skipped. "msgxxxxx 0" (message body on line 1) must be absent.
+	if strings.Contains(got, "msgxxxxx 0") {
+		t.Fatalf("offset=3 must skip message 0 body; still present:\n%s", got)
+	}
+	// Later messages must still appear.
+	if !strings.Contains(got, "msgxxxxx 5") {
+		t.Fatalf("offset=3 output must include message 5:\n%s", got)
+	}
+}
+
+// TestRunRead_GivenLargeSession_WhenMaxLinesZero_ThenEmitsUnlimitedOutput
+// verifies that -max-lines 0 disables the 200-line default cap.
+func TestRunRead_GivenLargeSession_WhenMaxLinesZero_ThenEmitsUnlimitedOutput(t *testing.T) {
+	root, sid := writeLargeCLIFixture(t)
+	store := parser.Store{
+		ProjectsDir:    filepath.Join(root, ".claude", "projects"),
+		SessionMetaDir: filepath.Join(root, ".claude", "usage-data", "session-meta"),
+	}
+	var stdout, stderr bytes.Buffer
+	if err := runRead([]string{sid, "-max-lines", "0"}, &stdout, &stderr, store); err != nil {
+		t.Fatalf("runRead(-max-lines 0) returned error: %v", err)
+	}
+	got := stdout.String()
+	if strings.Contains(got, "truncated") {
+		t.Fatalf("-max-lines 0 must disable truncation:\n%s", got)
+	}
+	// All 100 messages must appear.
+	if !strings.Contains(got, "msgxxxxx 99") {
+		t.Fatalf("-max-lines 0 must emit all messages including 99:\n%s", got)
+	}
+}
+
+// TestRunContext_GivenLargeSession_WhenDefaultFlags_ThenTruncatesAt200
+// verifies that runContext with default flags clips at 200 lines.
+func TestRunContext_GivenLargeSession_WhenDefaultFlags_ThenTruncatesAt200(t *testing.T) {
+	root, sid := writeLargeCLIFixture(t)
+	store := parser.Store{
+		ProjectsDir:    filepath.Join(root, ".claude", "projects"),
+		SessionMetaDir: filepath.Join(root, ".claude", "usage-data", "session-meta"),
+	}
+	var stdout, stderr bytes.Buffer
+	if err := runContext([]string{sid}, &stdout, &stderr, store); err != nil {
+		t.Fatalf("runContext returned error: %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "--- truncated at line 200") {
+		t.Fatalf("default runContext must truncate at 200 lines:\n%s", got)
+	}
+	if !strings.Contains(got, "use --offset 200 to continue") {
+		t.Fatalf("truncation message must include --offset 200 hint:\n%s", got)
+	}
+}
+
+// TestRunContext_GivenLargeSession_WhenOffsetAndMaxLines_ThenWindowsOutput
+// verifies that -offset and -max-lines combine correctly in context mode.
+func TestRunContext_GivenLargeSession_WhenOffsetAndMaxLines_ThenWindowsOutput(t *testing.T) {
+	root, sid := writeLargeCLIFixture(t)
+	store := parser.Store{
+		ProjectsDir:    filepath.Join(root, ".claude", "projects"),
+		SessionMetaDir: filepath.Join(root, ".claude", "usage-data", "session-meta"),
+	}
+	var stdout, stderr bytes.Buffer
+	if err := runContext([]string{sid, "-offset", "3", "-max-lines", "3"}, &stdout, &stderr, store); err != nil {
+		t.Fatalf("runContext with -offset and -max-lines returned error: %v", err)
+	}
+	got := stdout.String()
+	// offset=3, maxLines=3 → lines 3,4,5 of the context output.
+	// The context header ("# Session ...\n\n") occupies 2 lines, so
+	// the context body starts at line 2 (0-indexed). Line 3 is the first message
+	// body. Whatever appears, the truncation message must cite offset=6.
+	if !strings.Contains(got, "--- truncated at line 6") {
+		t.Fatalf("offset=3+maxLines=3 context must truncate at line 6:\n%s", got)
+	}
+}
+
+// TestRunRead_GivenNegativeOffset_WhenCalled_ThenReturnsValidationError
+// verifies that a negative offset is rejected before any session lookup.
+func TestRunRead_GivenNegativeOffset_WhenCalled_ThenReturnsValidationError(t *testing.T) {
+	root, sid := writeCLIFixture(t)
+	store := parser.Store{
+		ProjectsDir:    filepath.Join(root, ".claude", "projects"),
+		SessionMetaDir: filepath.Join(root, ".claude", "usage-data", "session-meta"),
+	}
+	var stdout, stderr bytes.Buffer
+	err := runRead([]string{sid, "-offset", "-1"}, &stdout, &stderr, store)
+	if err == nil {
+		t.Fatal("runRead(-offset -1) returned nil error, want validation error")
+	}
+	if !strings.Contains(err.Error(), "-offset") {
+		t.Fatalf("error = %v, want -offset validation message", err)
 	}
 }

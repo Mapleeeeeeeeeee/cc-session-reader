@@ -3,12 +3,12 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -77,59 +77,38 @@ func runList(args []string, out io.Writer, errOut io.Writer, store parser.Store)
 		return fmt.Errorf("-n must be a positive integer")
 	}
 
-	metaFiles, err := store.ListSessionMetaFiles()
-	if err != nil {
-		return fmt.Errorf("list sessions: %w", err)
-	}
-
 	projectFilter := ""
 	if *project != "" {
 		projectFilter = strings.ToLower(*project)
 	}
 
+	entries, warnings := store.ListAllSessions()
+	for _, w := range warnings {
+		fmt.Fprintln(errOut, w)
+	}
+
 	printed := 0
-	for _, mf := range metaFiles {
+	for _, entry := range entries {
 		if printed >= *limit {
 			break
 		}
 
-		data, err := os.ReadFile(mf.Path)
-		if err != nil {
-			fmt.Fprintf(errOut, "warning: skipping unreadable metadata %s: %v\n", mf.Path, err)
-			continue
-		}
-		var meta listSessionMeta
-		if err := json.Unmarshal(data, &meta); err != nil {
-			fmt.Fprintf(errOut, "warning: skipping invalid metadata %s: %v\n", mf.Path, err)
-			continue
-		}
-
 		projectName := "?"
-		if meta.ProjectPath != "" {
-			projectName = filepath.Base(meta.ProjectPath)
+		if entry.ProjectPath != "" {
+			projectName = filepath.Base(entry.ProjectPath)
 		}
 
 		if projectFilter != "" && !strings.Contains(strings.ToLower(projectName), projectFilter) {
 			continue
 		}
 
-		sid := meta.SessionID
-		if sid == "" {
-			sid = strings.TrimSuffix(filepath.Base(mf.Path), ".json")
-		}
-		firstPrompt := meta.FirstPrompt
-		runes := []rune(firstPrompt)
-		if len(runes) > 80 {
-			firstPrompt = string(runes[:77]) + "..."
-		}
-
 		dateStr := "??-??"
-		if meta.StartTime != "" {
-			dateStr = parser.FormatTimestamp(meta.StartTime)
+		if entry.StartTime != "" {
+			dateStr = parser.FormatTimestamp(entry.StartTime)
 		}
 
 		fmt.Fprintf(out, "%s  %s  %-20s  %3dm  u:%d a:%d  %s\n",
-			sid, dateStr, projectName, meta.DurationMinutes, meta.UserMessageCount, meta.AssistantMessageCount, firstPrompt)
+			entry.SessionID, dateStr, projectName, entry.DurationMinutes, entry.UserMessageCount, entry.AssistantMessageCount, entry.FirstPrompt)
 		printed++
 	}
 
@@ -137,16 +116,6 @@ func runList(args []string, out io.Writer, errOut io.Writer, store parser.Store)
 		fmt.Fprintln(errOut, "No sessions found.")
 	}
 	return nil
-}
-
-type listSessionMeta struct {
-	SessionID             string `json:"session_id"`
-	ProjectPath           string `json:"project_path"`
-	StartTime             string `json:"start_time"`
-	DurationMinutes       int    `json:"duration_minutes"`
-	UserMessageCount      int    `json:"user_message_count"`
-	AssistantMessageCount int    `json:"assistant_message_count"`
-	FirstPrompt           string `json:"first_prompt"`
 }
 
 func cmdRead(args []string) {
@@ -159,7 +128,8 @@ func cmdRead(args []string) {
 func runRead(args []string, out io.Writer, errOut io.Writer, store parser.Store) error {
 	fs := flag.NewFlagSet("read", flag.ContinueOnError)
 	fs.SetOutput(errOut)
-	maxLines := fs.Int("max-lines", 0, "max output lines (0=unlimited)")
+	maxLines := fs.Int("max-lines", 200, "max output lines (0=unlimited)")
+	offset := fs.Int("offset", 0, "skip first N output lines")
 	isVerboseAgents := fs.Bool("verbose-agents", false, "show full agent results")
 	isVerboseBash := fs.Bool("verbose-bash", false, "show full Bash tool stdout/stderr")
 	isVerboseThinking := fs.Bool("verbose-thinking", false, "show assistant thinking blocks")
@@ -172,6 +142,9 @@ func runRead(args []string, out io.Writer, errOut io.Writer, store parser.Store)
 	if *maxLines < 0 {
 		return fmt.Errorf("-max-lines must be zero (unlimited) or a positive integer")
 	}
+	if *offset < 0 {
+		return fmt.Errorf("-offset must be zero or a positive integer")
+	}
 
 	resolved, err := resolveSession(fs, store)
 	if err != nil {
@@ -179,7 +152,7 @@ func runRead(args []string, out io.Writer, errOut io.Writer, store parser.Store)
 	}
 
 	opts := formatter.FormatOptions{VerboseAgents: *isVerboseAgents, VerboseBash: *isVerboseBash, VerboseThinking: *isVerboseThinking, VerboseCommands: *isVerboseCommands}
-	return formatter.FormatRead(resolved.Path, *maxLines, opts, out)
+	return formatter.FormatRead(resolved.Path, *maxLines, *offset, opts, out)
 }
 
 func cmdContext(args []string) {
@@ -192,12 +165,20 @@ func cmdContext(args []string) {
 func runContext(args []string, out io.Writer, errOut io.Writer, store parser.Store) error {
 	fs := flag.NewFlagSet("context", flag.ContinueOnError)
 	fs.SetOutput(errOut)
+	maxLines := fs.Int("max-lines", 200, "max output lines (0=unlimited)")
+	offset := fs.Int("offset", 0, "skip first N output lines")
 	isVerboseAgents := fs.Bool("verbose-agents", false, "show full agent results")
 	isVerboseBash := fs.Bool("verbose-bash", false, "show full Bash tool stdout/stderr")
 	isVerboseThinking := fs.Bool("verbose-thinking", false, "show assistant thinking blocks")
 	isVerboseCommands := fs.Bool("verbose-commands", false, "show full slash/bash command output")
 	if err := fs.Parse(reorderArgs(args)); err != nil {
 		return err
+	}
+	if *maxLines < 0 {
+		return fmt.Errorf("-max-lines must be zero (unlimited) or a positive integer")
+	}
+	if *offset < 0 {
+		return fmt.Errorf("-offset must be zero or a positive integer")
 	}
 
 	resolved, err := resolveSession(fs, store)
@@ -206,7 +187,7 @@ func runContext(args []string, out io.Writer, errOut io.Writer, store parser.Sto
 	}
 
 	opts := formatter.FormatOptions{VerboseAgents: *isVerboseAgents, VerboseBash: *isVerboseBash, VerboseThinking: *isVerboseThinking, VerboseCommands: *isVerboseCommands}
-	return formatter.FormatContextWithStore(resolved.Path, resolved.ID, opts, out, store)
+	return formatter.FormatContextWithStore(resolved.Path, resolved.ID, *maxLines, *offset, opts, out, store)
 }
 
 func cmdStats(args []string) {
@@ -266,6 +247,42 @@ func runStats(args []string, out io.Writer, errOut io.Writer, store parser.Store
 		{"CUT   command noise:    ", "command_noise"},
 	} {
 		fmt.Fprintf(out, "  %s %10s\n", bl.label, formatNumber(result.Categories[bl.key]))
+	}
+
+	if len(result.PerTool) > 0 {
+		// Sort tools by total chars (input + result) descending; tie-break alphabetically.
+		type toolEntry struct {
+			name  string
+			stats *analyzer.ToolStats
+		}
+		var entries []toolEntry
+		for name, ts := range result.PerTool {
+			entries = append(entries, toolEntry{name, ts})
+		}
+		sort.Slice(entries, func(i, j int) bool {
+			ti := entries[i].stats.InputChars + entries[i].stats.ResultChars
+			tj := entries[j].stats.InputChars + entries[j].stats.ResultChars
+			if ti != tj {
+				return ti > tj
+			}
+			return entries[i].name < entries[j].name
+		})
+
+		fmt.Fprintln(out, "\n=== Per-tool ===")
+		maxNameLen := 0
+		for _, e := range entries {
+			if len(e.name) > maxNameLen {
+				maxNameLen = len(e.name)
+			}
+		}
+		for _, e := range entries {
+			fmt.Fprintf(out, "  %-*s  %5s calls  %10s input  %10s result\n",
+				maxNameLen, e.name,
+				formatNumber(e.stats.CallCount),
+				formatNumber(e.stats.InputChars),
+				formatNumber(e.stats.ResultChars),
+			)
+		}
 	}
 
 	if *isNoTokens {
