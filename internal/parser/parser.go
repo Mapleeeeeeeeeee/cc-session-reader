@@ -254,6 +254,27 @@ func repairTruncatedJSON(data []byte) []byte {
 		}
 	}
 
+	// Try the full remaining data as a candidate (captures complete final
+	// values that appear after the last comma but before truncation, e.g.
+	// {"a":"b","c":5  →  best from comma is just {"a":"b"} but closing at
+	// len(data) gives {"a":"b","c":5} which is valid once braces are added).
+	if !inString && len(stack) >= 1 {
+		endCandidate := safePoint{end: len(data), stack: snapshotStack()}
+		trial := make([]byte, endCandidate.end, endCandidate.end+len(endCandidate.stack))
+		copy(trial, data[:endCandidate.end])
+		for j := len(endCandidate.stack) - 1; j >= 0; j-- {
+			switch endCandidate.stack[j] {
+			case '{':
+				trial = append(trial, '}')
+			case '[':
+				trial = append(trial, ']')
+			}
+		}
+		if json.Valid(trial) {
+			return trial
+		}
+	}
+
 	// No safe truncation point found; nothing to salvage.
 	if best.end == 0 {
 		return data

@@ -184,8 +184,12 @@ func FormatContextWithStore(transcriptPath string, sessionID string, maxLines in
 		return err
 	}
 
-	writeContextHeader(sessionID, out, store)
-	return FormatContextEvents(events, agentIDs, maxLines, offset, opts, out)
+	var buf bytes.Buffer
+	writeContextHeader(sessionID, &buf, store)
+	if err := renderContextEvents(events, agentIDs, opts, &buf); err != nil {
+		return err
+	}
+	return applyPagination(buf.String(), maxLines, offset, out)
 }
 
 func FormatContextEvents(events []session.Event, agentIDs map[string]bool, maxLines int, offset int, opts FormatOptions, out io.Writer) error {

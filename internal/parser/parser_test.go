@@ -368,6 +368,9 @@ func TestSanitizeMetaJSON_GivenTruncatedMissingClosingBrace_WhenSanitized_ThenRe
 	if meta["session_id"] != "abc123" {
 		t.Fatalf("session_id = %#v, want \"abc123\"", meta["session_id"])
 	}
+	if dur, ok := meta["duration_minutes"].(float64); !ok || dur != 5 {
+		t.Fatalf("duration_minutes = %#v, want 5", meta["duration_minutes"])
+	}
 }
 
 func TestSanitizeMetaJSON_GivenAllNullBytes_WhenSanitized_ThenReturnsEmptySlice(t *testing.T) {
