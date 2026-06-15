@@ -4,3 +4,4 @@ __pycache__/
 bin/
 /sessions
 coverage.out
+dist/
