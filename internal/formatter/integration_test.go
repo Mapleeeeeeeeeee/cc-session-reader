@@ -2,11 +2,15 @@ package formatter
 
 import (
 	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/analyzer"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/claudecodec"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/parser"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
 )
 
@@ -211,6 +215,76 @@ func readIntegrationFixture(t *testing.T) ([]session.Event, map[string]bool) {
 		t.Fatalf("read integration fixture: %v", err)
 	}
 	return events, map[string]bool{}
+}
+
+// TestIntegration_LocalSession_GivenConfiguredSession_WhenFormatted_ThenProducesNonEmptyOutput
+// runs the full pipeline against a real local session specified in config.json.
+// Skips if no integration_test_session is configured.
+func TestIntegration_LocalSession_GivenConfiguredSession_WhenFormatted_ThenProducesNonEmptyOutput(t *testing.T) {
+	sid := loadLocalSessionID()
+	if sid == "" {
+		t.Skip("no integration_test_session in ~/.claude/skills/sessions/config.json")
+	}
+
+	store := parser.DefaultStore()
+	resolved, err := store.ResolveSession(sid)
+	if err != nil {
+		t.Fatalf("resolve session %q: %v", sid, err)
+	}
+
+	codec := claudecodec.Codec{}
+	events, err := codec.ReadAll(resolved.Path)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("local session has 0 events")
+	}
+
+	agentIDs := session.CollectAgentToolIDs(events)
+	var out bytes.Buffer
+	if err := FormatReadEvents(events, agentIDs, 0, 0, FormatOptions{}, &out); err != nil {
+		t.Fatalf("FormatReadEvents: %v", err)
+	}
+	if out.Len() == 0 {
+		t.Fatal("formatted output is empty for local session")
+	}
+
+	got := out.String()
+
+	// Verify no raw harness boilerplate leaked through
+	if strings.Contains(got, "Base directory for this skill:") {
+		t.Error("skill injection not compressed in local session")
+	}
+	if strings.Contains(got, "IMPORTANT: This is NOT from your user") {
+		t.Error("teammate warning boilerplate not stripped in local session")
+	}
+	if strings.Contains(got, "<command-name>") {
+		t.Error("command injection XML not stripped in local session")
+	}
+	if strings.Contains(got, "## Context Usage") && strings.Contains(got, "Estimated usage by category") {
+		t.Error("context usage block not stripped in local session")
+	}
+
+	t.Logf("local session %s: %d events → %d chars formatted", sid, len(events), out.Len())
+}
+
+func loadLocalSessionID() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".claude", "skills", "sessions", "config.json"))
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		IntegrationTestSession string `json:"integration_test_session"`
+	}
+	if json.Unmarshal(data, &cfg) != nil {
+		return ""
+	}
+	return cfg.IntegrationTestSession
 }
 
 // extractEventText returns the primary text content of an event for comparison.
