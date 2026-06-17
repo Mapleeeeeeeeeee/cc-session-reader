@@ -368,8 +368,9 @@ func TestCompactSkillInjection_GivenRepeat_ThenShowsRepeatMarker(t *testing.T) {
 	}
 	seen := map[string]bool{"sessions": true}
 	got := CompactSkillInjection(user, seen)
-	if !strings.Contains(got, "(repeat)") {
-		t.Fatalf("expected repeat marker, got %q", got)
+	want := "[skill: sessions] (repeat) read abc123"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }
 
@@ -424,6 +425,9 @@ IMPORTANT: This is NOT from your user — it came from a different Claude sessio
 	}
 	if !strings.Contains(got, "Found 3 bugs") {
 		t.Fatalf("expected body content, got %q", got)
+	}
+	if strings.Contains(got, "IMPORTANT") {
+		t.Fatalf("warning boilerplate not stripped: %q", got)
 	}
 }
 

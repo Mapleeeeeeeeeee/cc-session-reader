@@ -533,6 +533,9 @@ func TestParseLine_GivenSystemReminder_ThenSetsFlag(t *testing.T) {
 	if !event.User.IsSystemReminder {
 		t.Fatal("expected IsSystemReminder=true")
 	}
+	if event.User.Text != "" {
+		t.Fatalf("expected Text stripped for system-reminder, got %q", event.User.Text)
+	}
 }
 
 func TestParseLine_GivenTeammateWithWarning_ThenSetsFlag(t *testing.T) {
@@ -548,6 +551,9 @@ func TestParseLine_GivenContextUsage_ThenSetsFlag(t *testing.T) {
 	event := parseLineWithText(t, text)
 	if !event.User.IsContextUsage {
 		t.Fatal("expected IsContextUsage=true")
+	}
+	if event.User.Text != "" {
+		t.Fatalf("expected Text stripped for context-usage, got %q", event.User.Text)
 	}
 }
 
