@@ -416,9 +416,10 @@ func TestRunStats_WhenTokenAPIUnavailable_ThenFallsBackToEstimate(t *testing.T) 
 	writeListMeta(t, metaDir, sid, "/tmp/proj", "hello")
 	store := parser.Store{ProjectsDir: filepath.Join(root, ".claude", "projects"), SessionMetaDir: metaDir}
 
-	// Empty key => CountTokensAPI returns an error before any network call,
-	// so both goroutines fail and runStats takes the estimate branch.
+	// Empty key + no config.json => CountTokensAPI returns an error before
+	// any network call, so both goroutines fail and runStats takes the estimate branch.
 	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("HOME", root)
 
 	var stdout, stderr bytes.Buffer
 	// No --no-tokens: we want the token-counting path to actually run.
@@ -434,11 +435,11 @@ func TestRunStats_WhenTokenAPIUnavailable_ThenFallsBackToEstimate(t *testing.T) 
 	// UX: the fallback must explain itself on stderr so the user knows why they
 	// got an estimate. The diagnostic belongs on stderr, never in the stdout
 	// payload — assert both. A mutation that drops the warning turns this red.
-	if !strings.Contains(stderr.String(), "warning: token API unavailable") {
-		t.Fatalf("stderr missing token-API fallback warning:\n%s", stderr.String())
+	if !strings.Contains(stderr.String(), "hint: to see token counts") {
+		t.Fatalf("stderr missing config hint:\n%s", stderr.String())
 	}
-	if strings.Contains(got, "warning: token API unavailable") {
-		t.Fatalf("fallback warning leaked into stdout payload:\n%s", got)
+	if strings.Contains(got, "hint:") {
+		t.Fatalf("hint leaked into stdout payload:\n%s", got)
 	}
 	if strings.Contains(got, "=== Tokens (Anthropic API) ===") {
 		t.Fatalf("stdout unexpectedly took the API branch:\n%s", got)
@@ -998,8 +999,8 @@ func TestRunList_GivenJSONLOnly_WhenProjectFilterApplied_ThenFiltersCorrectly(t 
 	sidMatch := "cccccccc-cccc-cccc-cccc-cccccccccccc"
 	sidOther := "dddddddd-dddd-dddd-dddd-dddddddddddd"
 	for _, tc := range []struct {
-		sid string
-		dir string
+		sid    string
+		dir    string
 		prompt string
 	}{
 		{sid: sidMatch, dir: projectDirMatch, prompt: "api question"},

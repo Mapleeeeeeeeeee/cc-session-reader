@@ -295,54 +295,69 @@ func runStats(args []string, out io.Writer, errOut io.Writer, store parser.Store
 		}
 	}
 
+	if result.APICallCount > 0 {
+		fmt.Fprintln(out, "\n=== Model Context (from API usage) ===")
+		fmt.Fprintf(out, "  Last turn context:    %10s\n", formatNumber(result.LastContextTokens))
+		fmt.Fprintf(out, "  Total output:         %10s\n", formatNumber(result.TotalOutputTokens))
+		fmt.Fprintf(out, "  API calls:            %10s\n", formatNumber(result.APICallCount))
+	}
+
 	if *isNoTokens {
 		return nil
 	}
 
 	fmt.Fprintln(out)
-	// Count raw and filtered tokens concurrently: the two API calls are
-	// independent, so running them in parallel roughly halves wall-clock time.
-	var (
-		rawAPI, filtAPI int
-		errRaw, errFilt error
-		wg              sync.WaitGroup
-	)
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		rawAPI, errRaw = countTokensFn(result.RawText)
-	}()
-	go func() {
-		defer wg.Done()
-		filtAPI, errFilt = countTokensFn(result.FilteredText)
-	}()
-	wg.Wait()
-	if errRaw == nil && errFilt == nil {
-		saved := rawAPI - filtAPI
-		fmt.Fprintln(out, "=== Tokens (Anthropic API) ===")
-		fmt.Fprintf(out, "  Raw:      %10s\n", formatNumber(rawAPI))
-		fmt.Fprintf(out, "  Filtered: %10s\n", formatNumber(filtAPI))
-		if rawAPI > 0 {
-			pct := float64(saved) * 100.0 / float64(rawAPI)
-			fmt.Fprintf(out, "  Saved:    %10s (%.1f%%)\n", formatNumber(saved), pct)
+	if result.APICallCount > 0 {
+		filtAPI, errFilt := countTokensFn(result.FilteredText)
+		if errFilt == nil {
+			saved := result.LastContextTokens - filtAPI
+			fmt.Fprintln(out, "=== Token Savings ===")
+			fmt.Fprintf(out, "  Original context: %10s\n", formatNumber(result.LastContextTokens))
+			fmt.Fprintf(out, "  CLI filtered:     %10s\n", formatNumber(filtAPI))
+			if result.LastContextTokens > 0 {
+				pct := float64(saved) * 100.0 / float64(result.LastContextTokens)
+				fmt.Fprintf(out, "  Saved:            %10s (%.1f%%)\n", formatNumber(saved), pct)
+			}
+		} else {
+			printConfigHint(errOut)
 		}
 	} else {
-		// Surface why the user is getting an estimate instead of API counts.
-		// Diagnostics go to stderr so the stdout payload stays machine-clean.
-		apiErr := errRaw
-		if apiErr == nil {
-			apiErr = errFilt
-		}
-		fmt.Fprintf(errOut, "warning: token API unavailable (%v), using estimate\n", apiErr)
-		rawEst := tokens.EstimateTokens(result.RawText)
-		filtEst := tokens.EstimateTokens(result.FilteredText)
-		savedEst := rawEst - filtEst
-		fmt.Fprintln(out, "=== Tokens (estimated) ===")
-		fmt.Fprintf(out, "  Raw:      %10s ~\n", formatNumber(rawEst))
-		fmt.Fprintf(out, "  Filtered: %10s ~\n", formatNumber(filtEst))
-		if rawEst > 0 {
-			pct := float64(savedEst) * 100.0 / float64(rawEst)
-			fmt.Fprintf(out, "  Saved:    %10s ~ (%.1f%%)\n", formatNumber(savedEst), pct)
+		var (
+			rawAPI, filtAPI int
+			errRaw, errFilt error
+			wg              sync.WaitGroup
+		)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			rawAPI, errRaw = countTokensFn(result.RawText)
+		}()
+		go func() {
+			defer wg.Done()
+			filtAPI, errFilt = countTokensFn(result.FilteredText)
+		}()
+		wg.Wait()
+		if errRaw == nil && errFilt == nil {
+			saved := rawAPI - filtAPI
+			fmt.Fprintln(out, "=== Tokens (Anthropic API) ===")
+			fmt.Fprintf(out, "  Raw:      %10s\n", formatNumber(rawAPI))
+			fmt.Fprintf(out, "  Filtered: %10s\n", formatNumber(filtAPI))
+			if rawAPI > 0 {
+				pct := float64(saved) * 100.0 / float64(rawAPI)
+				fmt.Fprintf(out, "  Saved:    %10s (%.1f%%)\n", formatNumber(saved), pct)
+			}
+		} else {
+			printConfigHint(errOut)
+			rawEst := tokens.EstimateTokens(result.RawText)
+			filtEst := tokens.EstimateTokens(result.FilteredText)
+			savedEst := rawEst - filtEst
+			fmt.Fprintln(out, "=== Tokens (estimated) ===")
+			fmt.Fprintf(out, "  Raw:      %10s ~\n", formatNumber(rawEst))
+			fmt.Fprintf(out, "  Filtered: %10s ~\n", formatNumber(filtEst))
+			if rawEst > 0 {
+				pct := float64(savedEst) * 100.0 / float64(rawEst)
+				fmt.Fprintf(out, "  Saved:    %10s ~ (%.1f%%)\n", formatNumber(savedEst), pct)
+			}
 		}
 	}
 	return nil
@@ -631,6 +646,11 @@ func resolveSession(fs *flag.FlagSet, store parser.Store) (parser.ResolvedSessio
 		return parser.ResolvedSession{}, fmt.Errorf("transcript not found: %s", resolved.ID)
 	}
 	return resolved, nil
+}
+
+func printConfigHint(w io.Writer) {
+	fmt.Fprintln(w, "hint: to see token counts, create ~/.claude/skills/sessions/config.json:")
+	fmt.Fprintln(w, `  {"anthropic_api_key_file": "~/.config/anthropic/.env"}`)
 }
 
 func formatNumber(n int) string {

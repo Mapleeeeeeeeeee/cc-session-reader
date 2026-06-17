@@ -299,3 +299,172 @@ func TestComputeStats_GivenToolResultWithRawName_MatchesResultToToolName(t *test
 		t.Fatalf("PerTool[Edit].CallCount = %d, want 0 (no tool use, only result)", got)
 	}
 }
+
+// TestComputeStats_GivenUsageData_ComputesModelBaseline verifies that usage
+// fields on assistant messages are aggregated into LastContextTokens (last turn),
+// TotalOutputTokens (sum), and APICallCount.
+func TestComputeStats_GivenUsageData_ComputesModelBaseline(t *testing.T) {
+	events := []session.Event{
+		{
+			Kind: session.EventAssistantMessage,
+			Assistant: &session.AssistantMessage{
+				Text: "first reply",
+				Usage: &session.Usage{
+					InputTokens:              100,
+					CacheCreationInputTokens: 200,
+					CacheReadInputTokens:     300,
+					OutputTokens:             50,
+				},
+			},
+		},
+		{
+			Kind: session.EventAssistantMessage,
+			Assistant: &session.AssistantMessage{
+				Text: "second reply",
+				Usage: &session.Usage{
+					InputTokens:              500,
+					CacheCreationInputTokens: 0,
+					CacheReadInputTokens:     800,
+					OutputTokens:             120,
+				},
+			},
+		},
+		{
+			Kind: session.EventAssistantMessage,
+			Assistant: &session.AssistantMessage{
+				Text: "third reply",
+				Usage: &session.Usage{
+					InputTokens:              50,
+					CacheCreationInputTokens: 10,
+					CacheReadInputTokens:     20,
+					OutputTokens:             30,
+				},
+			},
+		},
+	}
+
+	result := ComputeStats(events)
+
+	// Turn 1 context: 100+200+300 = 600
+	// Turn 2 context: 500+0+800   = 1300
+	// Turn 3 context: 50+10+20    = 80   <- last turn
+	if got := result.LastContextTokens; got != 80 {
+		t.Fatalf("LastContextTokens = %d, want 80 (last turn)", got)
+	}
+	// Total output: 50+120+30 = 200
+	if got := result.TotalOutputTokens; got != 200 {
+		t.Fatalf("TotalOutputTokens = %d, want 200", got)
+	}
+	if got := result.APICallCount; got != 3 {
+		t.Fatalf("APICallCount = %d, want 3", got)
+	}
+}
+
+// Guards against the double-counting bug: Claude Code writes two JSONL entries
+// per assistant turn (streaming partial + completion) with identical usage.
+// Consecutive entries with equal usage must be counted only once.
+func TestComputeStats_GivenConsecutiveDuplicateUsage_ThenCountsOnce(t *testing.T) {
+	dup := &session.Usage{
+		InputTokens:              10,
+		CacheCreationInputTokens: 500,
+		CacheReadInputTokens:     200,
+		OutputTokens:             80,
+	}
+	events := []session.Event{
+		{
+			Kind:      session.EventAssistantMessage,
+			Assistant: &session.AssistantMessage{Text: "partial", Usage: dup},
+		},
+		{
+			Kind:      session.EventAssistantMessage,
+			Assistant: &session.AssistantMessage{Text: "full reply", Usage: dup},
+		},
+		{
+			Kind: session.EventAssistantMessage,
+			Assistant: &session.AssistantMessage{
+				Text: "different turn",
+				Usage: &session.Usage{
+					InputTokens:              20,
+					CacheCreationInputTokens: 100,
+					CacheReadInputTokens:     600,
+					OutputTokens:             50,
+				},
+			},
+		},
+	}
+
+	result := ComputeStats(events)
+
+	if result.APICallCount != 2 {
+		t.Fatalf("APICallCount = %d, want 2 (duplicate pair counted once + one distinct)", result.APICallCount)
+	}
+	if result.TotalOutputTokens != 130 {
+		t.Fatalf("TotalOutputTokens = %d, want 130 (80 + 50)", result.TotalOutputTokens)
+	}
+	if result.LastContextTokens != 720 {
+		t.Fatalf("LastContextTokens = %d, want 720 (20+100+600)", result.LastContextTokens)
+	}
+}
+
+// Guards against synthetic model entries inflating counts: entries with
+// all-zero usage (ContextTokens()==0) should be excluded.
+func TestComputeStats_GivenZeroTokenUsage_ThenExcludedFromBaseline(t *testing.T) {
+	events := []session.Event{
+		{
+			Kind: session.EventAssistantMessage,
+			Assistant: &session.AssistantMessage{
+				Text:  "synthetic",
+				Usage: &session.Usage{InputTokens: 0, CacheCreationInputTokens: 0, CacheReadInputTokens: 0, OutputTokens: 0},
+			},
+		},
+		{
+			Kind: session.EventAssistantMessage,
+			Assistant: &session.AssistantMessage{
+				Text: "real",
+				Usage: &session.Usage{
+					InputTokens:              5,
+					CacheCreationInputTokens: 100,
+					CacheReadInputTokens:     200,
+					OutputTokens:             30,
+				},
+			},
+		},
+	}
+
+	result := ComputeStats(events)
+
+	if result.APICallCount != 1 {
+		t.Fatalf("APICallCount = %d, want 1 (zero-token entry excluded)", result.APICallCount)
+	}
+	if result.TotalOutputTokens != 30 {
+		t.Fatalf("TotalOutputTokens = %d, want 30 (zero-token entry excluded)", result.TotalOutputTokens)
+	}
+}
+
+// TestComputeStats_GivenNoUsageData_ZeroModelBaseline guards backward
+// compatibility: sessions from before usage fields were recorded must produce
+// zero model baseline values rather than panicking or returning garbage.
+func TestComputeStats_GivenNoUsageData_ZeroModelBaseline(t *testing.T) {
+	events := []session.Event{
+		{
+			Kind:      session.EventAssistantMessage,
+			Assistant: &session.AssistantMessage{Text: "reply without usage"},
+		},
+		{
+			Kind: session.EventUserMessage,
+			User: &session.UserMessage{Text: "hello"},
+		},
+	}
+
+	result := ComputeStats(events)
+
+	if result.LastContextTokens != 0 {
+		t.Fatalf("LastContextTokens = %d, want 0 (no usage data)", result.LastContextTokens)
+	}
+	if result.TotalOutputTokens != 0 {
+		t.Fatalf("TotalOutputTokens = %d, want 0 (no usage data)", result.TotalOutputTokens)
+	}
+	if result.APICallCount != 0 {
+		t.Fatalf("APICallCount = %d, want 0 (no usage data)", result.APICallCount)
+	}
+}

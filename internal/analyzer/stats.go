@@ -23,6 +23,13 @@ type StatsResult struct {
 	FilteredChars int
 	Categories    map[string]int
 	PerTool       map[string]*ToolStats
+
+	// Model context baseline derived from API usage fields in the transcript.
+	// Model context baseline from API usage fields in the transcript.
+	// Zero values mean no usage data was present (older sessions).
+	LastContextTokens int
+	TotalOutputTokens int
+	APICallCount      int
 }
 
 func ComputeStats(events []session.Event) StatsResult {
@@ -38,6 +45,8 @@ func ComputeStats(events []session.Event) StatsResult {
 		"command_noise":   0,
 	}
 	perTool := map[string]*ToolStats{}
+	var lastContextTokens, totalOutputTokens, apiCallCount int
+	var prevUsage *session.Usage
 
 	for _, event := range events {
 		switch event.Kind {
@@ -87,6 +96,12 @@ func ComputeStats(events []session.Event) StatsResult {
 		case session.EventAssistantMessage:
 			if event.Assistant == nil {
 				continue
+			}
+			if u := event.Assistant.Usage; u != nil && u.ContextTokens() > 0 && !u.Equal(prevUsage) {
+				lastContextTokens = u.ContextTokens()
+				totalOutputTokens += u.OutputTokens
+				apiCallCount++
+				prevUsage = u
 			}
 			if strings.TrimSpace(event.Assistant.Text) != "" {
 				categories["assistant_text"] += utf8.RuneCountInString(event.Assistant.Text)
@@ -150,11 +165,14 @@ func ComputeStats(events []session.Event) StatsResult {
 	filteredText := strings.Join(filteredParts, "\n")
 
 	return StatsResult{
-		RawText:       rawText,
-		FilteredText:  filteredText,
-		RawChars:      utf8.RuneCountInString(rawText),
-		FilteredChars: utf8.RuneCountInString(filteredText),
-		Categories:    categories,
-		PerTool:       perTool,
+		RawText:           rawText,
+		FilteredText:      filteredText,
+		RawChars:          utf8.RuneCountInString(rawText),
+		FilteredChars:     utf8.RuneCountInString(filteredText),
+		Categories:        categories,
+		PerTool:           perTool,
+		LastContextTokens: lastContextTokens,
+		TotalOutputTokens: totalOutputTokens,
+		APICallCount:      apiCallCount,
 	}
 }

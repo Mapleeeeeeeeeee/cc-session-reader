@@ -112,18 +112,28 @@ type rawMessage struct {
 	TextContent string
 	Blocks      []rawContentBlock
 	RawContent  string
+	Usage       *rawUsage
+}
+
+type rawUsage struct {
+	InputTokens              int `json:"input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
 }
 
 func (m *rawMessage) UnmarshalJSON(data []byte) error {
 	var aux struct {
 		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
+		Usage   *rawUsage       `json:"usage"`
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
 	m.Role = aux.Role
 	m.Content = aux.Content
+	m.Usage = aux.Usage
 	if len(aux.Content) == 0 {
 		return nil
 	}
@@ -174,11 +184,20 @@ func (m rawMessage) Assistant() session.AssistantMessage {
 			})
 		}
 	}
-	return session.AssistantMessage{
+	msg := session.AssistantMessage{
 		Text:     m.Text(),
 		Thinking: thinking,
 		ToolUses: toolUses,
 	}
+	if m.Usage != nil {
+		msg.Usage = &session.Usage{
+			InputTokens:              m.Usage.InputTokens,
+			CacheCreationInputTokens: m.Usage.CacheCreationInputTokens,
+			CacheReadInputTokens:     m.Usage.CacheReadInputTokens,
+			OutputTokens:             m.Usage.OutputTokens,
+		}
+	}
+	return msg
 }
 
 type rawContentBlock struct {

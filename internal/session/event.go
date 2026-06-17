@@ -77,10 +77,34 @@ type UserMessage struct {
 	IsCaveat bool
 }
 
+type Usage struct {
+	InputTokens              int
+	CacheCreationInputTokens int
+	CacheReadInputTokens     int
+	OutputTokens             int
+}
+
+// ContextTokens returns the total context window size for this API call:
+// direct input plus both cache layers.
+func (u Usage) ContextTokens() int {
+	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
+}
+
+func (u *Usage) Equal(other *Usage) bool {
+	if u == nil || other == nil {
+		return u == other
+	}
+	return u.InputTokens == other.InputTokens &&
+		u.CacheCreationInputTokens == other.CacheCreationInputTokens &&
+		u.CacheReadInputTokens == other.CacheReadInputTokens &&
+		u.OutputTokens == other.OutputTokens
+}
+
 type AssistantMessage struct {
 	Text     string
 	Thinking []string
 	ToolUses []ToolUse
+	Usage    *Usage
 }
 
 type ToolUse struct {
