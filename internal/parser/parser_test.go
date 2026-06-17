@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/claudecodec"
 )
 
 func TestFormatTimestamp(t *testing.T) {
@@ -461,7 +463,7 @@ func TestScanTranscriptHeaders_GivenValidJSONL_ThenExtractsHeaderInfo(t *testing
 	transcript := `{"type":"user","timestamp":"2026-06-15T10:00:00+00:00","message":{"role":"user","content":"what is the capital of France?"}}` + "\n"
 	writeFile(t, filepath.Join(projectDir, sid+".jsonl"), transcript)
 
-	store := Store{ProjectsDir: filepath.Join(root, "projects")}
+	store := Store{ProjectsDir: filepath.Join(root, "projects"), HeaderScanner: claudecodec.Codec{}}
 	entries := store.ScanTranscriptHeaders()
 
 	if len(entries) != 1 {
@@ -495,7 +497,7 @@ func TestScanTranscriptHeaders_GivenNoUserMessage_ThenFirstPromptIsEmpty(t *test
 	transcript := `{"type":"assistant","timestamp":"2026-06-15T10:00:00+00:00","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]}}` + "\n"
 	writeFile(t, filepath.Join(projectDir, sid+".jsonl"), transcript)
 
-	store := Store{ProjectsDir: filepath.Join(root, "projects")}
+	store := Store{ProjectsDir: filepath.Join(root, "projects"), HeaderScanner: claudecodec.Codec{}}
 	entries := store.ScanTranscriptHeaders()
 
 	if len(entries) != 1 {
@@ -520,7 +522,7 @@ func TestScanTranscriptHeaders_GivenCommandMessage_ThenSkipsToNextUserMessage(t 
 	}
 	writeFile(t, filepath.Join(projectDir, sid+".jsonl"), strings.Join(lines, "\n"))
 
-	store := Store{ProjectsDir: filepath.Join(root, "projects")}
+	store := Store{ProjectsDir: filepath.Join(root, "projects"), HeaderScanner: claudecodec.Codec{}}
 	entries := store.ScanTranscriptHeaders()
 
 	if len(entries) != 1 {
@@ -546,7 +548,7 @@ func TestScanTranscriptHeaders_GivenDuplicateUUID_ThenDeduplicates(t *testing.T)
 	writeFile(t, filepath.Join(projA, sid+".jsonl"), transcript)
 	writeFile(t, filepath.Join(projB, sid+".jsonl"), transcript)
 
-	store := Store{ProjectsDir: filepath.Join(root, "projects")}
+	store := Store{ProjectsDir: filepath.Join(root, "projects"), HeaderScanner: claudecodec.Codec{}}
 	entries := store.ScanTranscriptHeaders()
 
 	if len(entries) != 1 {
@@ -577,7 +579,7 @@ func TestListAllSessions_GivenMetaAndJSONL_ThenMergesWithMetaPriority(t *testing
 	writeFile(t, filepath.Join(metaDir, sid+".json"),
 		`{"session_id":"`+sid+`","project_path":"/Users/me/proj","start_time":"2026-06-15T10:00:00+00:00","duration_minutes":5,"user_message_count":3,"assistant_message_count":4,"first_prompt":"meta prompt"}`)
 
-	store := Store{ProjectsDir: filepath.Join(root, "projects"), SessionMetaDir: metaDir}
+	store := Store{ProjectsDir: filepath.Join(root, "projects"), SessionMetaDir: metaDir, HeaderScanner: claudecodec.Codec{}}
 	entries, warnings := store.ListAllSessions()
 
 	if len(warnings) != 0 {
@@ -613,7 +615,7 @@ func TestListAllSessions_GivenJSONLOnly_ThenIncludesInResults(t *testing.T) {
 	writeFile(t, filepath.Join(projectDir, sid+".jsonl"), transcript)
 	// No metadata file for this session
 
-	store := Store{ProjectsDir: filepath.Join(root, "projects"), SessionMetaDir: metaDir}
+	store := Store{ProjectsDir: filepath.Join(root, "projects"), SessionMetaDir: metaDir, HeaderScanner: claudecodec.Codec{}}
 	entries, warnings := store.ListAllSessions()
 
 	if len(warnings) != 0 {
@@ -655,7 +657,7 @@ func TestListAllSessions_GivenBothSources_ThenSortsByStartTimeDesc(t *testing.T)
 	transcript := `{"type":"user","timestamp":"2026-06-15T09:00:00+00:00","message":{"role":"user","content":"new session"}}` + "\n"
 	writeFile(t, filepath.Join(projectDir, sidNew+".jsonl"), transcript)
 
-	store := Store{ProjectsDir: filepath.Join(root, "projects"), SessionMetaDir: metaDir}
+	store := Store{ProjectsDir: filepath.Join(root, "projects"), SessionMetaDir: metaDir, HeaderScanner: claudecodec.Codec{}}
 	entries, _ := store.ListAllSessions()
 
 	if len(entries) != 2 {

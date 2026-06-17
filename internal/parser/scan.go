@@ -1,7 +1,6 @@
 package parser
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -24,35 +23,14 @@ type SessionListEntry struct {
 	FromMeta              bool // true if from metadata, false if from JSONL fallback
 }
 
-// commandTagPrefixes are JSONL user message content prefixes that indicate
-// tool/command noise rather than real user prompts. Filtered when extracting
-// FirstPrompt from transcripts.
-var commandTagPrefixes = []string{
-	"<command-name>",
-	"<local-command-stdout>",
-	"<bash-input>",
-	"<bash-stdout>",
-	"<bash-stderr>",
-	"<local-command-caveat>",
-}
-
-// jsonlHeaderEntry is a minimal struct for parsing the first lines of a JSONL
-// transcript. Avoids importing claudecodec to keep dependency graph simple.
-type jsonlHeaderEntry struct {
-	Type      string `json:"type"`
-	Timestamp string `json:"timestamp"`
-	Message   *struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
-	} `json:"message"`
-}
-
 // ScanTranscriptHeaders walks ProjectsDir for .jsonl files and extracts a
-// SessionListEntry from the first 20 lines of each file. Files that cannot be
-// opened or parsed are silently skipped. Sessions with the same UUID in multiple
-// project directories are deduplicated (first walk hit wins).
+// SessionListEntry from the first 20 lines of each file via the Store's
+// HeaderScanner. Files that cannot be opened or parsed are silently skipped.
+// Sessions with the same UUID in multiple project directories are deduplicated
+// (first walk hit wins). Returns nil when ProjectsDir is empty or no
+// HeaderScanner is configured.
 func (s Store) ScanTranscriptHeaders() []SessionListEntry {
-	if s.ProjectsDir == "" {
+	if s.ProjectsDir == "" || s.HeaderScanner == nil {
 		return nil
 	}
 
@@ -69,9 +47,27 @@ func (s Store) ScanTranscriptHeaders() []SessionListEntry {
 			return nil
 		}
 
-		entry, ok := scanJSONLHeader(path, sessionID, filepath.Base(filepath.Dir(path)))
-		if !ok {
+		header, scanErr := s.HeaderScanner.ScanHeader(path)
+		if scanErr != nil {
 			return nil
+		}
+
+		entry := SessionListEntry{
+			SessionID:   sessionID,
+			ProjectPath: filepath.Base(filepath.Dir(path)),
+			FromMeta:    false,
+		}
+
+		if header.Timestamp != "" {
+			ts := strings.Replace(header.Timestamp, "Z", "+00:00", 1)
+			entry.StartTime = header.Timestamp
+			if t, err := parseISO(ts); err == nil {
+				entry.StartTimeParsed = t
+			}
+		}
+
+		if header.FirstUserPrompt != "" {
+			entry.FirstPrompt = truncateRunes(header.FirstUserPrompt, 80)
 		}
 
 		seen[sessionID] = true
@@ -80,72 +76,6 @@ func (s Store) ScanTranscriptHeaders() []SessionListEntry {
 	})
 
 	return entries
-}
-
-// scanJSONLHeader reads up to 20 lines of a JSONL file and extracts timestamp
-// and first user prompt. Returns (entry, true) on success, (zero, false) if the
-// file cannot be opened.
-func scanJSONLHeader(path, sessionID, projectDir string) (SessionListEntry, bool) {
-	f, err := os.Open(path)
-	if err != nil {
-		return SessionListEntry{}, false
-	}
-	defer f.Close()
-
-	entry := SessionListEntry{
-		SessionID:   sessionID,
-		ProjectPath: projectDir,
-		FromMeta:    false,
-	}
-
-	scanner := bufio.NewScanner(f)
-	linesRead := 0
-	for scanner.Scan() && linesRead < 20 {
-		linesRead++
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-
-		var h jsonlHeaderEntry
-		if err := json.Unmarshal(line, &h); err != nil {
-			continue
-		}
-
-		if entry.StartTime == "" && h.Timestamp != "" {
-			ts := strings.Replace(h.Timestamp, "Z", "+00:00", 1)
-			entry.StartTime = h.Timestamp
-			if t, err := parseISO(ts); err == nil {
-				entry.StartTimeParsed = t
-			}
-		}
-
-		if entry.FirstPrompt == "" && h.Message != nil && h.Message.Role == "user" && h.Type == "user" {
-			var text string
-			if err := json.Unmarshal(h.Message.Content, &text); err == nil {
-				if !hasCommandTagPrefix(text) {
-					entry.FirstPrompt = truncateRunes(text, 80)
-				}
-			}
-		}
-
-		if entry.StartTime != "" && entry.FirstPrompt != "" {
-			break
-		}
-	}
-
-	return entry, true
-}
-
-// hasCommandTagPrefix reports whether s begins with any of the known command
-// noise prefixes that should not be surfaced as FirstPrompt.
-func hasCommandTagPrefix(s string) bool {
-	for _, prefix := range commandTagPrefixes {
-		if strings.HasPrefix(s, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 // truncateRunes truncates s to at most maxRunes runes, appending "..." if truncation occurs.

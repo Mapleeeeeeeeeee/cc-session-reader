@@ -150,3 +150,75 @@ type Codec struct{}
 func (Codec) ReadAll(path string) ([]session.Event, error) {
 	return ReadAll(path)
 }
+
+// commandTagPrefixes are JSONL user message content prefixes that indicate
+// tool/command noise rather than real user prompts.
+var commandTagPrefixes = []string{
+	"<command-name>",
+	"<local-command-stdout>",
+	"<bash-input>",
+	"<bash-stdout>",
+	"<bash-stderr>",
+	"<local-command-caveat>",
+}
+
+// ScanHeader reads up to 20 lines of a JSONL transcript and returns the first
+// timestamp and first real user prompt found. Implements session.HeaderScanner.
+func (Codec) ScanHeader(path string) (*session.HeaderInfo, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	info := &session.HeaderInfo{}
+	scanner := bufio.NewScanner(f)
+	linesRead := 0
+	for scanner.Scan() && linesRead < 20 {
+		linesRead++
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+
+		var h struct {
+			Type      string `json:"type"`
+			Timestamp string `json:"timestamp"`
+			Message   *struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal(line, &h); err != nil {
+			continue
+		}
+
+		if info.Timestamp == "" && h.Timestamp != "" {
+			info.Timestamp = h.Timestamp
+		}
+
+		if info.FirstUserPrompt == "" && h.Message != nil && h.Message.Role == "user" && h.Type == "user" {
+			var text string
+			if err := json.Unmarshal(h.Message.Content, &text); err == nil {
+				if !hasCommandTagPrefix(text) {
+					info.FirstUserPrompt = text
+				}
+			}
+		}
+
+		if info.Timestamp != "" && info.FirstUserPrompt != "" {
+			break
+		}
+	}
+
+	return info, nil
+}
+
+func hasCommandTagPrefix(s string) bool {
+	for _, prefix := range commandTagPrefixes {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return false
+}

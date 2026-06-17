@@ -925,6 +925,7 @@ func TestRunList_GivenJSONLWithoutMetadata_ThenShowsFallbackSession(t *testing.T
 	store := parser.Store{
 		ProjectsDir:    filepath.Join(root, "projects"),
 		SessionMetaDir: metaDir,
+		HeaderScanner:  claudecodec.Codec{},
 	}
 	err := runList(nil, &stdout, &stderr, store)
 	if err != nil {
@@ -969,6 +970,7 @@ func TestRunList_GivenJSONLAndMeta_ThenMetaWinsAndNoDuplicates(t *testing.T) {
 	store := parser.Store{
 		ProjectsDir:    filepath.Join(root, "projects"),
 		SessionMetaDir: metaDir,
+		HeaderScanner:  claudecodec.Codec{},
 	}
 	err := runList(nil, &stdout, &stderr, store)
 	if err != nil {
@@ -1019,6 +1021,7 @@ func TestRunList_GivenJSONLOnly_WhenProjectFilterApplied_ThenFiltersCorrectly(t 
 	store := parser.Store{
 		ProjectsDir:    filepath.Join(root, "projects"),
 		SessionMetaDir: metaDir,
+		HeaderScanner:  claudecodec.Codec{},
 	}
 	err := runList([]string{"-p", "myapi"}, &stdout, &stderr, store)
 	if err != nil {
