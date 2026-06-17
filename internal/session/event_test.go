@@ -1,6 +1,7 @@
 package session
 
 import (
+	"strings"
 	"testing"
 	"unicode/utf8"
 )
@@ -289,5 +290,53 @@ func TestToolResultSummary(t *testing.T) {
 				t.Fatalf("Summary() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCompactTaskNotification_GivenFullNotification_ThenKeepsSummaryAndResult(t *testing.T) {
+	input := `<task-notification>
+<task-id>ad4760fe24f754e27</task-id>
+<tool-use-id>toolu_01XYfH8em2hJFSRtguEyqKXN</tool-use-id>
+<output-file>/private/tmp/claude-501/tasks/ad4760fe24f754e27.output</output-file>
+<status>completed</status>
+<summary>Agent "Review test quality" completed</summary>
+<result>Found 3 blockers in the test suite.</result>
+</task-notification>`
+
+	got, ok := CompactTaskNotification(input)
+	if !ok {
+		t.Fatal("CompactTaskNotification returned false, want true")
+	}
+	if !strings.Contains(got, `[Agent "Review test quality" completed]`) {
+		t.Fatalf("missing summary line in: %q", got)
+	}
+	if !strings.Contains(got, "Found 3 blockers") {
+		t.Fatalf("missing result content in: %q", got)
+	}
+	if strings.Contains(got, "task-id") || strings.Contains(got, "output-file") || strings.Contains(got, "tool-use-id") {
+		t.Fatalf("XML metadata not stripped: %q", got)
+	}
+}
+
+func TestCompactTaskNotification_GivenNonNotification_ThenReturnsFalse(t *testing.T) {
+	_, ok := CompactTaskNotification("just a normal user message")
+	if ok {
+		t.Fatal("CompactTaskNotification returned true for non-notification")
+	}
+}
+
+func TestCompactTaskNotification_GivenNotificationWithoutResult_ThenReturnsSummaryOnly(t *testing.T) {
+	input := `<task-notification>
+<task-id>abc123</task-id>
+<status>completed</status>
+<summary>Agent finished</summary>
+</task-notification>`
+
+	got, ok := CompactTaskNotification(input)
+	if !ok {
+		t.Fatal("CompactTaskNotification returned false")
+	}
+	if got != "[Agent finished]" {
+		t.Fatalf("got %q, want %q", got, "[Agent finished]")
 	}
 }
