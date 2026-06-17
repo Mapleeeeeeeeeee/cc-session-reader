@@ -252,7 +252,11 @@ func TestIntegration_LocalSession_GivenConfiguredSession_WhenFormatted_ThenProdu
 
 	got := out.String()
 
-	// Verify no raw harness boilerplate leaked through
+	// Verify no raw harness boilerplate leaked through.
+	// NOTE: these are negative checks — they only catch regressions if the
+	// configured session actually contains the corresponding boilerplate types
+	// (skill injection, teammate messages, etc). Choose a session that exercises
+	// multiple harness features for maximum coverage.
 	if strings.Contains(got, "Base directory for this skill:") {
 		t.Error("skill injection not compressed in local session")
 	}
@@ -262,8 +266,11 @@ func TestIntegration_LocalSession_GivenConfiguredSession_WhenFormatted_ThenProdu
 	if strings.Contains(got, "<command-name>") {
 		t.Error("command injection XML not stripped in local session")
 	}
-	if strings.Contains(got, "## Context Usage") && strings.Contains(got, "Estimated usage by category") {
-		t.Error("context usage block not stripped in local session")
+	if strings.Contains(got, "## Context Usage") {
+		t.Error("context usage header not stripped in local session")
+	}
+	if strings.Contains(got, "Estimated usage by category") {
+		t.Error("context usage body not stripped in local session")
 	}
 
 	t.Logf("local session %s: %d events → %d chars formatted", sid, len(events), out.Len())
