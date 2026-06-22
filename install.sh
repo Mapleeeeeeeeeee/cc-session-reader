@@ -87,28 +87,29 @@ fetch_latest_version() {
 
 # ── binary download & install ─────────────────────────────────────────────────
 
+TMPDIR_CLEANUP=""
+trap '[ -n "$TMPDIR_CLEANUP" ] && rm -rf "$TMPDIR_CLEANUP"' EXIT
+
 install_binary() {
   local version="$1"
   local platform="$2"
   local version_bare="${version#v}"
 
   local download_url="https://github.com/${REPO}/releases/download/${version}/cc-session-reader_${version_bare}_${platform}.tar.gz"
-  local tmpdir
-  tmpdir=$(mktemp -d)
-  trap 'rm -rf "$tmpdir"' EXIT
+  TMPDIR_CLEANUP=$(mktemp -d)
 
   echo "Downloading cc-session ${version} for ${platform}..."
 
   if command -v curl &>/dev/null; then
-    curl -fsSL "$download_url" -o "$tmpdir/archive.tar.gz"
+    curl -fsSL "$download_url" -o "$TMPDIR_CLEANUP/archive.tar.gz"
   else
-    wget -qO "$tmpdir/archive.tar.gz" "$download_url"
+    wget -qO "$TMPDIR_CLEANUP/archive.tar.gz" "$download_url"
   fi
 
-  tar -xzf "$tmpdir/archive.tar.gz" -C "$tmpdir"
+  tar -xzf "$TMPDIR_CLEANUP/archive.tar.gz" -C "$TMPDIR_CLEANUP"
 
   mkdir -p "$INSTALL_DIR"
-  mv "$tmpdir/cc-session" "$INSTALL_DIR/cc-session"
+  mv "$TMPDIR_CLEANUP/cc-session" "$INSTALL_DIR/cc-session"
   chmod +x "$INSTALL_DIR/cc-session"
 
   echo "Installed cc-session to $INSTALL_DIR/cc-session"
