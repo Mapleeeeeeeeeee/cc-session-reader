@@ -11,7 +11,7 @@ import (
 
 func TestCLI_WhenSessionExists_ThenListReadContextAndAuditWorkEndToEnd(t *testing.T) {
 	root := t.TempDir()
-	bin := filepath.Join(root, "sessions")
+	bin := filepath.Join(root, "cc-session")
 	build := exec.Command("go", "build", "-o", bin, ".")
 	build.Dir = "."
 	if out, err := build.CombinedOutput(); err != nil {
@@ -112,7 +112,7 @@ func TestCLI_WhenSessionExists_ThenListReadContextAndAuditWorkEndToEnd(t *testin
 // non-zero, this turns red.
 func TestCLI_WhenSubcommandFails_ThenPrintsErrorPrefixAndExitsNonZero(t *testing.T) {
 	root := t.TempDir()
-	bin := filepath.Join(root, "sessions")
+	bin := filepath.Join(root, "cc-session")
 	build := exec.Command("go", "build", "-o", bin, ".")
 	build.Dir = "."
 	if out, err := build.CombinedOutput(); err != nil {

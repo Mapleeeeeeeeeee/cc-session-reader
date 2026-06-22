@@ -26,7 +26,7 @@ func DefaultLogPath() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".claude", "skills", "sessions", "usage.jsonl")
+	return filepath.Join(home, ".claude", "skills", "cc-session", "usage.jsonl")
 }
 
 // LogUsage appends entry to the default log path.

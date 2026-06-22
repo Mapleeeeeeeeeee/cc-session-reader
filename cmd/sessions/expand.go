@@ -16,7 +16,7 @@ func cmdExpand(args []string, reader session.TranscriptReader) {
 
 func runExpand(args []string, out io.Writer, errOut io.Writer, store parser.Store, reader session.TranscriptReader) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: sessions expand <session-id> <tool-id> [tool-id...]")
+		return fmt.Errorf("usage: cc-session expand <session-id> <tool-id> [tool-id...]")
 	}
 
 	sessionPrefix := args[0]
@@ -88,7 +88,7 @@ func runExpand(args []string, out io.Writer, errOut io.Writer, store parser.Stor
 	}
 
 	if found == 0 {
-		return fmt.Errorf("no matching tool IDs found. Use 'sessions read <session-id>' to see available IDs")
+		return fmt.Errorf("no matching tool IDs found. Use 'cc-session read <session-id>' to see available IDs")
 	}
 	return nil
 }

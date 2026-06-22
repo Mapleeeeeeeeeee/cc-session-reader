@@ -59,11 +59,11 @@ func EstimateTokens(text string) int {
 
 // CountTokensAPI calls the Anthropic count_tokens endpoint.
 // Resolves the API key from: env ANTHROPIC_API_KEY → config file path in
-// ~/.claude/skills/sessions/config.json → error.
+// ~/.claude/skills/cc-session/config.json → error.
 func CountTokensAPI(text string) (int, error) {
 	apiKey := resolveAPIKey()
 	if apiKey == "" {
-		return 0, fmt.Errorf("ANTHROPIC_API_KEY not set (set env var or configure anthropic_api_key_file in ~/.claude/skills/sessions/config.json)")
+		return 0, fmt.Errorf("ANTHROPIC_API_KEY not set (set env var or configure anthropic_api_key_file in ~/.claude/skills/cc-session/config.json)")
 	}
 	return countTokens(text, apiKey, countTokensURL, &http.Client{})
 }
@@ -80,7 +80,7 @@ func readKeyFromConfig() string {
 	if err != nil {
 		return ""
 	}
-	configPath := filepath.Join(home, ".claude", "skills", "sessions", "config.json")
+	configPath := filepath.Join(home, ".claude", "skills", "cc-session", "config.json")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return ""

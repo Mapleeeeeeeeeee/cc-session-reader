@@ -346,29 +346,29 @@ func TestCompactTaskNotification_GivenNotificationWithoutResult_ThenReturnsSumma
 func TestCompactSkillInjection_GivenFirstOccurrence_ThenShowsSkillAndArgs(t *testing.T) {
 	user := &UserMessage{
 		IsSkillInjection: true,
-		SkillName:        "sessions",
+		SkillName:        "cc-session",
 		SkillArgs:        "去了解一下這個 e61060b1",
 	}
 	seen := map[string]bool{}
 	got := CompactSkillInjection(user, seen)
-	want := "[skill: sessions] 去了解一下這個 e61060b1"
+	want := "[skill: cc-session] 去了解一下這個 e61060b1"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
-	if !seen["sessions"] {
-		t.Fatal("expected sessions to be marked as seen")
+	if !seen["cc-session"] {
+		t.Fatal("expected cc-session to be marked as seen")
 	}
 }
 
 func TestCompactSkillInjection_GivenRepeat_ThenShowsRepeatMarker(t *testing.T) {
 	user := &UserMessage{
 		IsSkillInjection: true,
-		SkillName:        "sessions",
+		SkillName:        "cc-session",
 		SkillArgs:        "read abc123",
 	}
-	seen := map[string]bool{"sessions": true}
+	seen := map[string]bool{"cc-session": true}
 	got := CompactSkillInjection(user, seen)
-	want := "[skill: sessions] (repeat) read abc123"
+	want := "[skill: cc-session] (repeat) read abc123"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}

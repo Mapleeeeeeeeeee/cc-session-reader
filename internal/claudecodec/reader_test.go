@@ -500,13 +500,13 @@ func TestParseLine_EmbeddedCommandTagMidMessageIsNotClassified(t *testing.T) {
 // --- classifyHarnessUserMessage detection tests ---
 
 func TestParseLine_GivenSkillInjection_ThenSetsSkillFields(t *testing.T) {
-	text := "Base directory for this skill: /Users/maple/.claude/skills/sessions\n\n# Session Reader\n\n## Commands\n...\n\nARGUMENTS: read abc123"
+	text := "Base directory for this skill: /Users/maple/.claude/skills/cc-session\n\n# Session Reader\n\n## Commands\n...\n\nARGUMENTS: read abc123"
 	event := parseLineWithText(t, text)
 	if !event.User.IsSkillInjection {
 		t.Fatal("expected IsSkillInjection=true")
 	}
-	if event.User.SkillName != "sessions" {
-		t.Fatalf("SkillName = %q, want %q", event.User.SkillName, "sessions")
+	if event.User.SkillName != "cc-session" {
+		t.Fatalf("SkillName = %q, want %q", event.User.SkillName, "cc-session")
 	}
 	if event.User.SkillArgs != "read abc123" {
 		t.Fatalf("SkillArgs = %q, want %q", event.User.SkillArgs, "read abc123")

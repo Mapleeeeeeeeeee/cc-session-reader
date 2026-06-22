@@ -1,7 +1,7 @@
 ---
-name: sessions
+name: cc-session
 description: |
-  用 sessions CLI 讀取過去的 Claude Code session，取代直接讀 JSONL。
+  用 cc-session CLI 讀取過去的 Claude Code session，取代直接讀 JSONL。
   CLI 在 context 外完成過濾，原始 300K 壓到 30-50K，只保留對話和 tool call 一行摘要。
   使用者想回顧、引用、分析過去的對話時使用。
 allowed-tools:
@@ -11,14 +11,21 @@ allowed-tools:
 
 # Session Reader
 
+## 前置檢查
+
+如果 `cc-session` 不在 PATH 中，先告知使用者安裝方式：
+```bash
+curl -fsSL https://raw.githubusercontent.com/Mapleeeeeeeeeee/cc-session-reader/main/install.sh | bash
+```
+
 ## 呼叫方式
 
-`sessions` 是安裝在 PATH 中的 compiled binary，像 `git` 或 `curl` 一樣直接呼叫：
+`cc-session` 是安裝在 PATH 中的 compiled binary，像 `git` 或 `curl` 一樣直接呼叫：
 
 ```bash
-sessions read <id>
-sessions list -p <project>
-sessions stats <id>
+cc-session read <id>
+cc-session list -p <project>
+cc-session stats <id>
 ```
 
 在任何工作目錄都能執行，由 Bash 工具呼叫。
@@ -29,14 +36,14 @@ sessions stats <id>
 
 | 意圖 | 命令 |
 |------|------|
-| 找目標 session | `sessions list` — 列出最近 session，`-p` 過濾專案 |
-| 讀對話內容 | `sessions read <id>` — 對話全文 + tool call 一行摘要 |
-| 注入為 context | `sessions context <id>` — 同 read 但更緊湊，帶 metadata header |
-| 分析 token 消耗 | `sessions stats <id>` — 字元分佈、壓縮比、per-tool 明細 |
-| 檢查過濾遺漏 | `sessions audit <id>` — 從被過濾內容取樣檢視 |
-| 展開特定 tool call | `sessions expand <id> <tool-id>` — read 輸出的 #xxxx 即 tool-id |
-| 分頁注入 context | `sessions inject <id>` — 每頁 ≤20K chars，自動分頁，重複呼叫推進下一頁 |
-| 查看 CLI 使用紀錄 | `sessions usage` — 列出哪些 session 曾呼叫此 CLI |
+| 找目標 session | `cc-session list` — 列出最近 session，`-p` 過濾專案 |
+| 讀對話內容 | `cc-session read <id>` — 對話全文 + tool call 一行摘要 |
+| 注入為 context | `cc-session context <id>` — 同 read 但更緊湊，帶 metadata header |
+| 分析 token 消耗 | `cc-session stats <id>` — 字元分佈、壓縮比、per-tool 明細 |
+| 檢查過濾遺漏 | `cc-session audit <id>` — 從被過濾內容取樣檢視 |
+| 展開特定 tool call | `cc-session expand <id> <tool-id>` — read 輸出的 #xxxx 即 tool-id |
+| 分頁注入 context | `cc-session inject <id>` — 每頁 ≤20K chars，自動分頁，重複呼叫推進下一頁 |
+| 查看 CLI 使用紀錄 | `cc-session usage` — 列出哪些 session 曾呼叫此 CLI |
 
 Session ID 支援 prefix match，前 8 碼通常就夠。
 
@@ -49,8 +56,8 @@ Session ID 支援 prefix match，前 8 碼通常就夠。
 截斷時印出總行數和建議的下一段 offset。
 
 讀取流程：
-1. `sessions read <id>` → 前 200 行 + 總行數提示
-2. `sessions read <id> -offset 180 -max-lines 200` → 第 180-380 行（overlap 前頁尾部 20 行銜接上下文）
+1. `cc-session read <id>` → 前 200 行 + 總行數提示
+2. `cc-session read <id> -offset 180 -max-lines 200` → 第 180-380 行（overlap 前頁尾部 20 行銜接上下文）
 3. 重複直到讀完或已取得所需資訊
 
 全文輸出用 `-max-lines 0`。只在確認輸出行數可控時使用。
@@ -111,7 +118,7 @@ CLI 對特定 injection 類型做額外壓縮，減少 context 噪音：
 
 ## Stats 輸出說明
 
-`sessions stats <id>` 顯示的資訊包含：
+`cc-session stats <id>` 顯示的資訊包含：
 
 - **Last turn context**：從 JSONL 中 API usage 欄位讀取的實際 token 數（最後一輪）
 - **Token savings**：CLI filtered 輸出 vs 原始 context 的 token 節省對比
@@ -122,7 +129,7 @@ CLI 對特定 injection 類型做額外壓縮，減少 context 噪音：
 
 ## Config 設定
 
-`~/.claude/skills/sessions/config.json` 支援以下欄位：
+`~/.claude/skills/cc-session/config.json` 支援以下欄位：
 
 ```json
 {

@@ -141,8 +141,8 @@ func classifyHarnessUserMessage(text string) *session.UserMessage {
 }
 
 func extractSkillName(text string) string {
-	// "Base directory for this skill: /Users/maple/.claude/skills/sessions"
-	// → "sessions"
+	// "Base directory for this skill: /Users/maple/.claude/skills/cc-session"
+	// → "cc-session"
 	prefix := skillInjectionPrefix
 	idx := strings.Index(text, prefix)
 	if idx < 0 {

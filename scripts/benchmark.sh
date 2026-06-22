@@ -11,12 +11,12 @@ MIN_SIZE="${2:-10}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-GO_BIN="$ROOT_DIR/bin/sessions"
+GO_BIN="$ROOT_DIR/bin/cc-session"
 PY_BIN="$SCRIPT_DIR/sessions.py"
 CLAUDE_PROJECTS="$HOME/.claude/projects"
 
 if [ ! -x "$GO_BIN" ]; then
-    echo "Go binary not found at $GO_BIN — run 'go build -o bin/sessions ./cmd/sessions/' first"
+    echo "Go binary not found at $GO_BIN — run 'go build -o bin/cc-session ./cmd/sessions/' first"
     exit 1
 fi
 

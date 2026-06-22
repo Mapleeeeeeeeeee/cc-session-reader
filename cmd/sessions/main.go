@@ -54,7 +54,7 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Fprintln(os.Stderr, "Usage: sessions <command> [options]")
+	fmt.Fprintln(os.Stderr, "Usage: cc-session <command> [options]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  list      列出最近的 session")
@@ -66,5 +66,5 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  usage     CLI 使用紀錄")
 	fmt.Fprintln(os.Stderr, "  inject    分頁注入 session 到 context")
 	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "Run 'sessions <command> -h' for command-specific flags.")
+	fmt.Fprintln(os.Stderr, "Run 'cc-session <command> -h' for command-specific flags.")
 }

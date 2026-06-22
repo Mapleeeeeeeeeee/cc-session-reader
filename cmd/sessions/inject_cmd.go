@@ -25,7 +25,7 @@ func runInject(args []string, out io.Writer, errOut io.Writer, store parser.Stor
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("usage: sessions inject <session-id> [--page N] [--reset]")
+		return fmt.Errorf("usage: cc-session inject <session-id> [--page N] [--reset]")
 	}
 
 	sessionPrefix := fs.Arg(0)
