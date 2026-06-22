@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/skillpath"
 )
 
 // RenderOptions holds optional token/API data for RenderStats.
@@ -137,7 +139,7 @@ func RenderStats(out io.Writer, errOut io.Writer, result StatsResult, opts Rende
 
 // PrintConfigHint writes the API key setup hint to w.
 func PrintConfigHint(w io.Writer) {
-	fmt.Fprintln(w, "hint: to see token counts, create ~/.claude/skills/cc-session/config.json:")
+	fmt.Fprintf(w, "hint: to see token counts, create %s/config.json:\n", skillpath.SkillDir())
 	fmt.Fprintln(w, `  {"anthropic_api_key_file": "~/.config/anthropic/.env"}`)
 }
 

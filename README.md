@@ -18,28 +18,43 @@ curl -fsSL https://raw.githubusercontent.com/Mapleeeeeeeeeee/cc-session-reader/m
 腳本會自動下載對應平台的 binary 並放到 `~/.local/bin/cc-session`（可透過 `INSTALL_DIR` 環境變數覆蓋），
 安裝完成後也會詢問是否一併安裝 Claude Code Skill。
 
-### go install（替代方案）
-
+非互動模式下加 `--with-skill` 自動安裝 Skill：
 ```bash
-go install github.com/Mapleeeeeeeeeee/cc-session-reader/cmd/sessions@latest
+curl -fsSL https://raw.githubusercontent.com/Mapleeeeeeeeeee/cc-session-reader/main/install.sh | bash -s -- --with-skill
 ```
 
-> 注意：`go install` 依照目錄名稱命名 binary，安裝的 binary 名稱為 `sessions`（而非 `cc-session`）。
-> 建議使用安裝腳本或手動下載 release binary 以取得正確的 `cc-session` binary 名稱。
+### 下載 Binary（不需 Go 環境）
+
+從 [GitHub Releases](https://github.com/Mapleeeeeeeeeee/cc-session-reader/releases) 下載對應平台的 binary，解壓後放到 PATH：
+
+```bash
+# macOS ARM64 範例
+curl -L https://github.com/Mapleeeeeeeeeee/cc-session-reader/releases/latest/download/cc-session-reader_darwin_arm64.tar.gz | tar xz
+mv cc-session /usr/local/bin/
+```
+
+### go install
+
+```bash
+go install github.com/Mapleeeeeeeeeee/cc-session-reader/cmd/cc-session@latest
+```
+
+安裝後 `cc-session` binary 會放在 `$GOPATH/bin`（確保該路徑在 PATH 中）。
+
 > 如果 `@latest` 遇到 module path 衝突，用 `GOPROXY=direct go install ...@latest`。
 
-### 作為 Claude Code Skill 使用
+### 作為 Claude Code / Agent Skill 使用
 
-安裝腳本執行時會詢問是否安裝 Skill，選擇是即可自動完成設定。
-也可以手動將 SKILL.md 放到 `~/.claude/skills/cc-session/` 目錄下：
+將 `SKILL.md` 放到 `~/.claude/skills/cc-session/` (或 `~/.gemini/config/skills/cc-session/`) 目錄下：
 
 ```bash
+# 建立目錄並下載 SKILL.md
 mkdir -p ~/.claude/skills/cc-session
 curl -o ~/.claude/skills/cc-session/SKILL.md \
-  https://raw.githubusercontent.com/Mapleeeeeeeeeee/cc-session-reader/main/skill/SKILL.md
+  https://raw.githubusercontent.com/Mapleeeeeeeeeee/cc-session-reader/main/SKILL.md
 ```
 
-之後在 Claude Code 中輸入 `/cc-session` 即可觸發。
+之後即可在 Agent 工具中自動載入與使用。
 
 ## 子命令
 
@@ -166,24 +181,34 @@ CLI 對特定 injection 類型做額外壓縮，減少 context 噪音：
 
 ## Config 設定
 
-`~/.claude/skills/cc-session/config.json` 支援以下欄位：
+> 💡 **提示**：此設定檔為**選擇性（Optional）**。若未配置，僅會影響 `stats` 子命令的精確 Token 計算（會自動改用字元估算），其他讀取、過濾與注入等核心功能均不受影響。
+
+若需要精確 Token 統計，可在 `~/.claude/skills/cc-session/config.json` 進行配置。您可以使用專案根目錄的 `config.json.template` 作為範本建立設定：
+
+```bash
+mkdir -p ~/.claude/skills/cc-session
+curl -o ~/.claude/skills/cc-session/config.json \
+  https://raw.githubusercontent.com/Mapleeeeeeeeeee/cc-session-reader/main/config.json.template
+```
+
+該設定檔支援以下欄位：
 
 ```json
 {
-  "anthropic_api_key_file": "/path/to/api-key-file",
+  "anthropic_api_key_file": "~/.config/anthropic/.env",
   "integration_test_session": "<session-id>"
 }
 ```
 
 | 欄位 | 用途 |
 |------|------|
-| `anthropic_api_key_file` | 指向含 ANTHROPIC_API_KEY 的檔案路徑，啟用精確 token 計算 |
+| `anthropic_api_key_file` | 指向含 `ANTHROPIC_API_KEY` 的檔案路徑，啟用精確 token 計算 |
 | `integration_test_session` | 本地 integration test 使用的 session ID |
 
 ## 架構
 
 ```
-cmd/sessions/         CLI 入口，子命令路由（binary 名稱為 cc-session）
+cmd/cc-session/       CLI 入口，子命令路由
 internal/
   claudecodec/        JSONL 讀取、noise 過濾、raw→event 解析（TranscriptReader / HeaderScanner 介面）
   session/            Domain model（Event, ToolUse, ToolResult, ToolInput）

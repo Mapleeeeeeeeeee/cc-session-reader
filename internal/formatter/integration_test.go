@@ -28,10 +28,10 @@ func TestIntegration_FullPipeline_GivenRepeatedSkillInjection_WhenFormatted_Then
 	}
 	got := out.String()
 
-	if !strings.Contains(got, "[skill: sessions] read abc123") {
+	if !strings.Contains(got, "[skill: cc-session] read abc123") {
 		t.Errorf("first skill injection missing compact form\ngot:\n%s", got)
 	}
-	if !strings.Contains(got, "[skill: sessions] (repeat) read def456") {
+	if !strings.Contains(got, "[skill: cc-session] (repeat) read def456") {
 		t.Errorf("second skill injection missing (repeat) marker\ngot:\n%s", got)
 	}
 	if strings.Contains(got, "Base directory for this skill") {

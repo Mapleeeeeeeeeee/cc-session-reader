@@ -14,6 +14,7 @@ import (
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/formatter"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/skillpath"
 )
 
 const maxPageChars = 20_000
@@ -27,11 +28,7 @@ type State struct {
 }
 
 func stateDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("home dir: %w", err)
-	}
-	dir := filepath.Join(home, ".claude", "skills", "cc-session", "inject-state")
+	dir := filepath.Join(skillpath.SkillDir(), "inject-state")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("create state dir: %w", err)
 	}

@@ -16,7 +16,7 @@ PY_BIN="$SCRIPT_DIR/sessions.py"
 CLAUDE_PROJECTS="$HOME/.claude/projects"
 
 if [ ! -x "$GO_BIN" ]; then
-    echo "Go binary not found at $GO_BIN — run 'go build -o bin/cc-session ./cmd/sessions/' first"
+    echo "Go binary not found at $GO_BIN — run 'go build -o bin/cc-session ./cmd/cc-session/' first"
     exit 1
 fi
 

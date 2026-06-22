@@ -9,6 +9,13 @@ allowed-tools:
   - Read
 ---
 
+## 前置檢查
+
+先執行 `cc-session --help` 確認 CLI 可用。如果 command not found，提示使用者安裝：
+```bash
+curl -fsSL https://raw.githubusercontent.com/Mapleeeeeeeeeee/cc-session-reader/main/install.sh | bash
+```
+
 # Session Reader
 
 ## 前置檢查

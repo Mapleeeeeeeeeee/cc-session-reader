@@ -441,15 +441,15 @@ func TestCompactTeammateMessage_GivenNonTeammate_ThenReturnsFalse(t *testing.T) 
 // --- CompactCommandInjection tests ---
 
 func TestCompactCommandInjection_GivenCommandXML_ThenReturnsOneLine(t *testing.T) {
-	input := `<command-message>sessions</command-message>
-<command-name>/sessions</command-name>
+	input := `<command-message>cc-session</command-message>
+<command-name>/cc-session</command-name>
 <command-args>去了解一下這個 e61060b1-324d-47d9-b798-3df532054f14</command-args>`
 
 	got, ok := CompactCommandInjection(input)
 	if !ok {
 		t.Fatal("CompactCommandInjection returned false")
 	}
-	want := "/sessions 去了解一下這個 e61060b1-324d-47d9-b798-3df532054f14"
+	want := "/cc-session 去了解一下這個 e61060b1-324d-47d9-b798-3df532054f14"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}

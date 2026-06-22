@@ -1,7 +1,7 @@
 version: 2
 
 builds:
-  - main: ./cmd/sessions/
+  - main: ./cmd/cc-session/
     binary: cc-session
     env:
       - CGO_ENABLED=0

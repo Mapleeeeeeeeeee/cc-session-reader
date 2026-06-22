@@ -558,7 +558,7 @@ func TestParseLine_GivenContextUsage_ThenSetsFlag(t *testing.T) {
 }
 
 func TestParseLine_GivenCommandInjectionXML_ThenSetsFlag(t *testing.T) {
-	text := "<command-message>sessions</command-message>\n<command-name>/sessions</command-name>\n<command-args>read abc</command-args>"
+	text := "<command-message>cc-session</command-message>\n<command-name>/cc-session</command-name>\n<command-args>read abc</command-args>"
 	event := parseLineWithText(t, text)
 	if !event.User.IsCommandInjection {
 		t.Fatal("expected IsCommandInjection=true")

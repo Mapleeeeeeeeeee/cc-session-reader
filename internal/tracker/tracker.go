@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/skillpath"
 )
 
 // UsageEntry holds metadata about a single CLI invocation.
@@ -22,11 +24,7 @@ type UsageEntry struct {
 
 // DefaultLogPath returns the canonical path for the usage log.
 func DefaultLogPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".claude", "skills", "cc-session", "usage.jsonl")
+	return filepath.Join(skillpath.SkillDir(), "usage.jsonl")
 }
 
 // LogUsage appends entry to the default log path.
