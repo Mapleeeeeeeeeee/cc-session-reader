@@ -9,7 +9,9 @@ $ErrorActionPreference = 'Stop'
 function Read-HostOrDefault {
     param([string]$Prompt, [string]$Default)
     try {
-        return (Read-Host $Prompt)
+        $result = Read-Host $Prompt
+        if ([string]::IsNullOrEmpty($result)) { return $Default }
+        return $result
     } catch {
         Write-Host "(non-interactive: using default '$Default')"
         return $Default
