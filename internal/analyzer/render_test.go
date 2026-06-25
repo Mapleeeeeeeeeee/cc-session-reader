@@ -109,8 +109,8 @@ func TestRenderStats_GivenFullData_WhenRendered_ThenCharactersSectionPresent(t *
 	body := out.String()
 
 	assertOutputContains(t, body, "=== Characters ===")
-	assertOutputContains(t, body, "1,000") // RawChars
-	assertOutputContains(t, body, "600")   // FilteredChars
+	assertOutputLineContaining(t, body, "Raw:", "1,000")    // RawChars anchored to label
+	assertOutputLineContaining(t, body, "Filtered:", "600") // FilteredChars anchored to label
 	assertOutputContains(t, body, "40.0%") // (1000-600)/1000 = 40%
 }
 
@@ -165,9 +165,9 @@ func TestRenderStats_GivenAPICallCount_WhenRendered_ThenModelContextSectionPrese
 	body := out.String()
 
 	assertOutputContains(t, body, "=== Model Context (from API usage) ===")
-	assertOutputContains(t, body, "2,000") // LastContextTokens
-	assertOutputContains(t, body, "500")   // TotalOutputTokens
-	assertOutputContains(t, body, "8")     // APICallCount
+	assertOutputLineContaining(t, body, "Last turn context:", "2,000")
+	assertOutputLineContaining(t, body, "Total output:", "500")
+	assertOutputLineContaining(t, body, "API calls:", "8") // APICallCount anchored to label
 }
 
 func TestRenderStats_GivenZeroAPICallCount_WhenRendered_ThenModelContextSectionAbsent(t *testing.T) {
@@ -264,6 +264,22 @@ func TestRenderStats_GivenSessionID_WhenRendered_ThenHeaderContainsSessionIDAndT
 
 	assertOutputContains(t, body, "Session: session-abc")
 	assertOutputContains(t, body, "Transcript: 42.5KB")
+}
+
+// assertOutputLineContaining finds the first line in s containing lineLabel and
+// fails the test if that line does not also contain value. This prevents false
+// positives where value appears in unrelated fields on other lines.
+func assertOutputLineContaining(t *testing.T, s, lineLabel, value string) {
+	t.Helper()
+	for _, line := range strings.Split(s, "\n") {
+		if strings.Contains(line, lineLabel) {
+			if !strings.Contains(line, value) {
+				t.Errorf("line containing %q should also contain %q, got: %s", lineLabel, value, line)
+			}
+			return
+		}
+	}
+	t.Errorf("no line containing %q found in output:\n%s", lineLabel, s)
 }
 
 // assertOutputContains fails the test if substr is not found in s.

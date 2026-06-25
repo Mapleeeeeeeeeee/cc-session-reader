@@ -59,9 +59,8 @@ func (s Store) ScanTranscriptHeaders() []SessionListEntry {
 		}
 
 		if header.Timestamp != "" {
-			ts := strings.Replace(header.Timestamp, "Z", "+00:00", 1)
 			entry.StartTime = header.Timestamp
-			if t, err := parseISO(ts); err == nil {
+			if t, err := parseISO(header.Timestamp); err == nil {
 				entry.StartTimeParsed = t
 			}
 		}
@@ -122,9 +121,8 @@ func (s Store) ListAllSessions() ([]SessionListEntry, []string) {
 			sid = strings.TrimSuffix(filepath.Base(mf.Path), ".json")
 		}
 
-		ts := strings.Replace(m.StartTime, "Z", "+00:00", 1)
 		var startParsed time.Time
-		if t, err := parseISO(ts); err == nil {
+		if t, err := parseISO(m.StartTime); err == nil {
 			startParsed = t
 		}
 

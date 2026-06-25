@@ -17,7 +17,7 @@ import (
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/skillpath"
 )
 
-const maxPageChars = 20_000
+const maxPageBytes = 20_000
 
 // State tracks pagination progress for one session.
 type State struct {
@@ -28,7 +28,11 @@ type State struct {
 }
 
 func stateDir() (string, error) {
-	dir := filepath.Join(skillpath.SkillDir(), "inject-state")
+	skillDir, err := skillpath.SkillDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(skillDir, "inject-state")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("create state dir: %w", err)
 	}
@@ -89,7 +93,7 @@ func ClearState(sessionID string) error {
 	return nil
 }
 
-// SplitPages divides lines into pages whose char count stays under maxPageChars.
+// SplitPages divides lines into pages whose byte count stays under maxPageBytes.
 // Page breaks always fall on line boundaries.
 func SplitPages(lines []string) [][]string {
 	if len(lines) == 0 {
@@ -97,17 +101,17 @@ func SplitPages(lines []string) [][]string {
 	}
 	var pages [][]string
 	var current []string
-	currentChars := 0
+	currentBytes := 0
 
 	for _, line := range lines {
-		lineChars := len(line) + 1 // +1 for newline
-		if currentChars+lineChars > maxPageChars && len(current) > 0 {
+		lineBytes := len(line) + 1 // +1 for newline
+		if currentBytes+lineBytes > maxPageBytes && len(current) > 0 {
 			pages = append(pages, current)
 			current = nil
-			currentChars = 0
+			currentBytes = 0
 		}
 		current = append(current, line)
-		currentChars += lineChars
+		currentBytes += lineBytes
 	}
 	if len(current) > 0 {
 		pages = append(pages, current)

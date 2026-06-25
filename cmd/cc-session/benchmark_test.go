@@ -456,12 +456,15 @@ func TestRunBenchmark_GivenNoAPIFlagAndToolUse_ThenToolIOPerCallUsesCharsPerToke
 		t.Fatalf("create meta dir: %v", err)
 	}
 
-	// transcript with one Bash tool_use: input JSON has 100 chars, result has 100 chars
-	// totalToolChars = 200, totalToolCalls = 1 → toolIOPerCall = 200 / 1 / charsPerToken = 100
+	// two Bash tool_uses in a single user turn: each input JSON = 1000 chars, each result = 1000 chars
+	// totalToolChars = 4000, totalToolCalls = 2 -> toolIOPerCall = 4000 / 2 / charsPerToken = 1000
+	// K = APICallCount / UserTurnCount = 2 / 1 = 2, so toolIOPerTurn = toolIO*(K-1) != 0
 	transcript := strings.Join([]string{
 		`{"type":"user","timestamp":"2026-05-28T00:00:00Z","message":{"role":"user","content":"hello"}}`,
-		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"ok"},{"type":"tool_use","name":"Bash","id":"toolu_1","input":{"command":"` + strings.Repeat("x", 88) + `"}}],"usage":{"input_tokens":100000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1000}}}`,
-		`{"type":"user","timestamp":"2026-05-28T00:00:02Z","toolUseResult":{"success":true,"commandName":"Bash"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"` + strings.Repeat("y", 100) + `"}]}}`,
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"ok"},{"type":"tool_use","name":"Bash","id":"toolu_1","input":{"command":"` + strings.Repeat("x", 986) + `"}}],"usage":{"input_tokens":50000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":500}}}`,
+		`{"type":"user","timestamp":"2026-05-28T00:00:02Z","toolUseResult":{"success":true,"commandName":"Bash"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"` + strings.Repeat("y", 1000) + `"}]}}`,
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:03Z","message":{"role":"assistant","content":[{"type":"text","text":"done"},{"type":"tool_use","name":"Bash","id":"toolu_2","input":{"command":"` + strings.Repeat("x", 986) + `"}}],"usage":{"input_tokens":51000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":500}}}`,
+		`{"type":"user","timestamp":"2026-05-28T00:00:04Z","toolUseResult":{"success":true,"commandName":"Bash"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"` + strings.Repeat("y", 1000) + `"}]}}`,
 		"",
 	}, "\n")
 	transcriptPath := filepath.Join(projectDir, sid+".jsonl")
@@ -506,8 +509,14 @@ func TestRunBenchmark_GivenNoAPIFlagAndToolUse_ThenToolIOPerCallUsesCharsPerToke
 	if got == "" {
 		t.Fatal("runBenchmark produced no output")
 	}
-	if !strings.Contains(got, "22222222") {
-		t.Fatalf("benchmark output should include session 22222222:\n%s", got)
+	// K=2 is visible in the cost row; ensures toolIOPerTurn = toolIO*(K-1) != 0
+	costSection := outputSection(got, "=== Cost Savings Per Session")
+	row := outputLineContaining(costSection, "22222222")
+	if !strings.Contains(row, "2.0") {
+		t.Fatalf("cost row K should show 2.0 (APICallCount=2, UserTurnCount=1), got row: %s\nfull output:\n%s", row, got)
+	}
+	if !strings.Contains(row, "turn ") {
+		t.Fatalf("cost row break-even should be a finite turn with expectedToolIO=%d, got row: %s\nfull output:\n%s", expectedToolIO, row, got)
 	}
 }
 

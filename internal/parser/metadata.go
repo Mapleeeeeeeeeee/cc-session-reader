@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -199,6 +200,7 @@ func (s Store) ListSessionMetaFiles() ([]SessionMetaFile, error) {
 }
 
 func parseISO(s string) (time.Time, error) {
+	s = strings.Replace(s, "Z", "+00:00", 1)
 	formats := []string{
 		"2006-01-02T15:04:05-07:00",
 		"2006-01-02T15:04:05.000-07:00",

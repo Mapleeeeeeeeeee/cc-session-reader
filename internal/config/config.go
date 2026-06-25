@@ -42,7 +42,10 @@ var (
 // Get returns the singleton Config, loading it on first call.
 func Get() Config {
 	once.Do(func() {
-		instance = LoadFromPath(filepath.Join(skillpath.SkillDir(), "config.json"))
+		dir, err := skillpath.SkillDir()
+		if err == nil {
+			instance = LoadFromPath(filepath.Join(dir, "config.json"))
+		}
 	})
 	return instance
 }

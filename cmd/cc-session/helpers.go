@@ -18,6 +18,7 @@ func exitOnError(err error) {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	waitUsageLog()
 	os.Exit(1)
 }
 

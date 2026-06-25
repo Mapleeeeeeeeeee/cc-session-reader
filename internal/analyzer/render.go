@@ -129,7 +129,11 @@ func RenderStats(out io.Writer, errOut io.Writer, result StatsResult, opts Rende
 
 // PrintConfigHint writes the API key setup hint to w.
 func PrintConfigHint(w io.Writer) {
-	fmt.Fprintf(w, "hint: to see token counts, create %s:\n", filepath.Join(skillpath.SkillDir(), "config.json"))
+	configPath := filepath.Join("~", ".claude", "skills", skillpath.SkillDirName, "config.json")
+	if dir, err := skillpath.SkillDir(); err == nil {
+		configPath = filepath.Join(dir, "config.json")
+	}
+	fmt.Fprintf(w, "hint: to see token counts, create %s:\n", configPath)
 	fmt.Fprintln(w, `  {"anthropic_api_key_file": "~/.config/anthropic/.env"}`)
 }
 

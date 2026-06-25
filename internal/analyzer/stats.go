@@ -48,6 +48,7 @@ func ComputeStats(events []session.Event) StatsResult {
 		"command_noise":   0,
 	}
 	perTool := map[string]*ToolStats{}
+	toolUseNames := map[string]string{}
 	seenSkills := map[string]bool{}
 	var lastContextTokens, totalOutputTokens, apiCallCount, compactCount, userTurnCount int
 	var prevUsage *session.Usage
@@ -158,6 +159,7 @@ func ComputeStats(events []session.Event) StatsResult {
 				if name == "" {
 					name = "?"
 				}
+				toolUseNames[tool.ID] = name
 
 				categories["tool_input_raw"] += utf8.RuneCountInString(rawJSON)
 				rawParts = append(rawParts, rawJSON)
@@ -191,7 +193,13 @@ func ComputeStats(events []session.Event) StatsResult {
 			categories["tool_summaries"] += utf8.RuneCountInString(summary)
 			filteredParts = append(filteredParts, summary)
 
-			toolName := event.Tool.RawName
+			toolName := ""
+			if event.Tool.ToolUseID != "" {
+				toolName = toolUseNames[event.Tool.ToolUseID]
+			}
+			if toolName == "" {
+				toolName = event.Tool.RawName
+			}
 			if toolName == "" {
 				toolName = "?"
 			}

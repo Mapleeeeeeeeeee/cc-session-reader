@@ -23,13 +23,23 @@ type UsageEntry struct {
 }
 
 // DefaultLogPath returns the canonical path for the usage log.
-func DefaultLogPath() string {
-	return filepath.Join(skillpath.SkillDir(), "usage.jsonl")
+// Returns an empty string and an error if the home directory is unavailable.
+func DefaultLogPath() (string, error) {
+	dir, err := skillpath.SkillDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "usage.jsonl"), nil
 }
 
 // LogUsage appends entry to the default log path.
+// Returns nil silently if the home directory is unavailable.
 func LogUsage(entry UsageEntry) error {
-	return LogUsageToPath(entry, DefaultLogPath())
+	path, err := DefaultLogPath()
+	if err != nil {
+		return nil
+	}
+	return LogUsageToPath(entry, path)
 }
 
 // LogUsageToPath appends entry as a JSON line to path, creating the directory
@@ -54,10 +64,15 @@ func LogUsageToPath(entry UsageEntry, path string) error {
 }
 
 // ReadUsageLog reads entries from the default log path.
+// Returns an empty slice silently if the home directory is unavailable.
 // limit <= 0 means no limit. cmdFilter is an exact match on the Command field;
 // empty string returns all entries.
 func ReadUsageLog(limit int, cmdFilter string) ([]UsageEntry, error) {
-	return ReadUsageLogFromPath(limit, cmdFilter, DefaultLogPath())
+	path, err := DefaultLogPath()
+	if err != nil {
+		return []UsageEntry{}, nil
+	}
+	return ReadUsageLogFromPath(limit, cmdFilter, path)
 }
 
 // ReadUsageLogFromPath reads and parses the JSONL file at path.
