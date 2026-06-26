@@ -52,6 +52,7 @@ type Result struct {
 	ToolIOPerCall    int // derived from actual PerTool data
 	AvgResponse      int // derived from TotalOutputTokens / APICallCount
 	Prompt           int // derived from context growth, or fallback perTurnPrompt
+	InjectPages      int // pages needed by cc-session inject; <=1 keeps one-shot setup
 	BreakEven        int
 	Saving10Pct      float64
 	Saving100Pct     float64

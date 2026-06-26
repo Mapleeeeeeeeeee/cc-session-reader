@@ -6,10 +6,12 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/analyzer"
 	bm "github.com/Mapleeeeeeeeeee/cc-session-reader/internal/benchmark"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/inject"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/parser"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
 )
@@ -129,6 +131,11 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 			}
 		}
 		newContextToks := overheadToks + filteredToks
+		fullText, err := inject.RenderFullOutput(c.path, reader)
+		if err != nil {
+			return fmt.Errorf("render inject output for %s: %w", session.ShortID(c.entry.SessionID, 8), err)
+		}
+		injectPages := countInjectPages(fullText)
 
 		savedPct := float64(contextToks-newContextToks) * 100.0 / float64(contextToks)
 
@@ -185,6 +192,7 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 			ToolIOPerCall:    toolIO,
 			AvgResponse:      avgResp,
 			Prompt:           prompt,
+			InjectPages:      injectPages,
 		}
 		bm.ComputeCostMetrics(&br, overheadToks, p)
 		results = append(results, br)
@@ -202,4 +210,12 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 	bm.PrintWarmCostSummary(out, results, p, *model)
 
 	return nil
+}
+
+func countInjectPages(fullText string) int {
+	allLines := strings.Split(fullText, "\n")
+	if len(allLines) > 0 && allLines[len(allLines)-1] == "" {
+		allLines = allLines[:len(allLines)-1]
+	}
+	return len(inject.SplitPages(allLines))
 }

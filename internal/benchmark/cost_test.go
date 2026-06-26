@@ -301,6 +301,21 @@ func Test_CumulativeCostB(t *testing.T) {
 	}
 }
 
+func Test_CumulativeCostBWithInjectPages_GivenMultiplePages_ThenSetupCostsMoreThanOneShot(t *testing.T) {
+	oneShot := CumulativeCostBWithInjectPages(0, 100000, 50000, 1, testParams, PricingOpus)
+	multiPage := CumulativeCostBWithInjectPages(0, 100000, 50000, 5, testParams, PricingOpus)
+
+	if !approxEqual(oneShot, 0.5625) {
+		t.Fatalf("one-page setup cost = %.10f, want historical one-shot cost 0.5625", oneShot)
+	}
+	if !approxEqual(multiPage, 0.7125) {
+		t.Fatalf("five-page setup cost = %.10f, want 0.7125", multiPage)
+	}
+	if multiPage <= oneShot {
+		t.Fatalf("multi-page setup cost %.10f must exceed one-shot setup cost %.10f", multiPage, oneShot)
+	}
+}
+
 func Test_CumulativeCostAWarm_GivenAnyTurns_AlwaysCheaperThanColdCostA(t *testing.T) {
 	x := 100000
 	for turns := 1; turns <= 20; turns++ {
@@ -363,6 +378,36 @@ func Test_CumulativeCostB_GivenNoCompression_ThenNeverCheaperThanCostA(t *testin
 			t.Errorf("turns=%d: CostB (%.10f) < CostA (%.10f) with no compression; setup cost should never be recovered", turns, costB, costA)
 			return
 		}
+	}
+}
+
+func Test_ComputeCostMetrics_GivenMultiPageInject_ThenBreakEvenLaterAndSavingsLower(t *testing.T) {
+	oneShot := Result{
+		ContextTokens:  100000,
+		FilteredTokens: 50000,
+		CallsPerTurn:   1.0,
+		ToolIOPerCall:  3000,
+		AvgResponse:    2000,
+		Prompt:         10000,
+		InjectPages:    1,
+	}
+	multiPage := oneShot
+	multiPage.InjectPages = 5
+
+	ComputeCostMetrics(&oneShot, 40000, PricingOpus)
+	ComputeCostMetrics(&multiPage, 40000, PricingOpus)
+
+	if oneShot.BreakEven <= 0 {
+		t.Fatalf("one-shot fixture must have finite break-even, got %d", oneShot.BreakEven)
+	}
+	if multiPage.BreakEven <= oneShot.BreakEven {
+		t.Fatalf("multi-page break-even = %d, want later than one-shot break-even %d", multiPage.BreakEven, oneShot.BreakEven)
+	}
+	if multiPage.Saving10Pct >= oneShot.Saving10Pct {
+		t.Fatalf("multi-page 10-turn saving = %.10f, want less than one-shot %.10f", multiPage.Saving10Pct, oneShot.Saving10Pct)
+	}
+	if multiPage.Saving100Pct >= oneShot.Saving100Pct {
+		t.Fatalf("multi-page 100-turn saving = %.10f, want less than one-shot %.10f", multiPage.Saving100Pct, oneShot.Saving100Pct)
 	}
 }
 

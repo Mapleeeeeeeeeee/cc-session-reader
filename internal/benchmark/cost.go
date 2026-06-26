@@ -141,7 +141,8 @@ func CumulativeCostAWarm(turns int, x int, sp CostParams, p Pricing) float64 {
 	return total
 }
 
-// CumulativeCostB models opening a new session and injecting compressed history.
+// CumulativeCostB models opening a new session and injecting compressed history
+// as a single setup request.
 //
 // Setup: cache write (base) — one-time cost of injecting cc-session output.
 //
@@ -152,8 +153,22 @@ func CumulativeCostAWarm(turns int, x int, sp CostParams, p Pricing) float64 {
 //
 // Turn N (N>=2): same structure as A but with smaller base, cross-turn write = growth.
 func CumulativeCostB(turns int, x int, filteredTokens int, sp CostParams, p Pricing) float64 {
+	return CumulativeCostBWithInjectPages(turns, x, filteredTokens, 1, sp, p)
+}
+
+// CumulativeCostBWithInjectPages models opening a new session and injecting
+// compressed history with cc-session inject pagination.
+//
+// For one page, setup keeps the historical one-shot model. For multiple pages,
+// setup is modeled as repeated API requests:
+//
+//	initial overhead cache write
+//	each page: read(overhead + previous page tokens) + write(page tokens)
+//
+// The active conversation after setup is still overhead + filteredTokens.
+func CumulativeCostBWithInjectPages(turns int, x int, filteredTokens int, injectPages int, sp CostParams, p Pricing) float64 {
 	base := sp.Overhead + filteredTokens
-	total := float64(base) * p.CacheWrite / 1e6
+	total := newSessionSetupCost(filteredTokens, injectPages, sp, p)
 	extraCalls := extraCallsPerTurn(sp.K)
 	s := sp.ToolIOPerCall
 	g := sp.Growth
@@ -172,6 +187,22 @@ func CumulativeCostB(turns int, x int, filteredTokens int, sp CostParams, p Pric
 		total += intraTurnToolCost(prefixFromPrev+float64(crossTurnWrite), extraCalls, s, p)
 	}
 	return total
+}
+
+func newSessionSetupCost(filteredTokens int, injectPages int, sp CostParams, p Pricing) float64 {
+	base := sp.Overhead + filteredTokens
+	if injectPages <= 1 {
+		return float64(base) * p.CacheWrite / 1e6
+	}
+
+	pageTokens := float64(filteredTokens) / float64(injectPages)
+	readTokens := 0.0
+	for page := 0; page < injectPages; page++ {
+		readTokens += float64(sp.Overhead) + float64(page)*pageTokens
+	}
+	writeTokens := float64(sp.Overhead) + float64(filteredTokens)
+
+	return readTokens*p.CachedRead/1e6 + writeTokens*p.CacheWrite/1e6
 }
 
 func extraCallsPerTurn(k float64) float64 {
@@ -204,27 +235,27 @@ func ComputeCostMetrics(r *Result, overheadTokens int, p Pricing) {
 	sp := NewCostParams(*r, overheadTokens)
 	r.BreakEven = -1
 	for n := 1; n <= 200; n++ {
-		if CumulativeCostB(n, r.ContextTokens, r.FilteredTokens, sp, p) < CumulativeCostA(n, r.ContextTokens, sp, p) {
+		if CumulativeCostBWithInjectPages(n, r.ContextTokens, r.FilteredTokens, r.InjectPages, sp, p) < CumulativeCostA(n, r.ContextTokens, sp, p) {
 			r.BreakEven = n
 			break
 		}
 	}
 
 	cost10A := CumulativeCostA(10, r.ContextTokens, sp, p)
-	cost10B := CumulativeCostB(10, r.ContextTokens, r.FilteredTokens, sp, p)
+	cost10B := CumulativeCostBWithInjectPages(10, r.ContextTokens, r.FilteredTokens, r.InjectPages, sp, p)
 	if cost10A > 0 {
 		r.Saving10Pct = (cost10A - cost10B) * 100.0 / cost10A
 	}
 
 	cost100A := CumulativeCostA(100, r.ContextTokens, sp, p)
-	cost100B := CumulativeCostB(100, r.ContextTokens, r.FilteredTokens, sp, p)
+	cost100B := CumulativeCostBWithInjectPages(100, r.ContextTokens, r.FilteredTokens, r.InjectPages, sp, p)
 	if cost100A > 0 {
 		r.Saving100Pct = (cost100A - cost100B) * 100.0 / cost100A
 	}
 
 	r.WarmBreakEven = -1
 	for n := 1; n <= 200; n++ {
-		if CumulativeCostB(n, r.ContextTokens, r.FilteredTokens, sp, p) < CumulativeCostAWarm(n, r.ContextTokens, sp, p) {
+		if CumulativeCostBWithInjectPages(n, r.ContextTokens, r.FilteredTokens, r.InjectPages, sp, p) < CumulativeCostAWarm(n, r.ContextTokens, sp, p) {
 			r.WarmBreakEven = n
 			break
 		}

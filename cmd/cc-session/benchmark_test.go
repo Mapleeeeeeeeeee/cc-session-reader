@@ -520,6 +520,16 @@ func TestRunBenchmark_GivenNoAPIFlagAndToolUse_ThenToolIOPerCallUsesCharsPerToke
 	}
 }
 
+func TestCountInjectPages_GivenTextExceedingInjectLimit_ThenUsesInjectPagination(t *testing.T) {
+	fullText := strings.Repeat("x\n", 20_001)
+
+	got := countInjectPages(fullText)
+
+	if got <= 1 {
+		t.Fatalf("countInjectPages() = %d, want multiple pages for text over inject page size", got)
+	}
+}
+
 func outputLineContaining(output string, needle string) string {
 	for _, line := range strings.Split(output, "\n") {
 		if strings.Contains(line, needle) {
