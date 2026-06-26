@@ -116,7 +116,17 @@ Turn N (N≥2):
 **Scenario B** (new session + cc-session):
 
 ```
-Setup: base × CacheWrite       where base = overhead + filteredTokens
+Setup:
+  If injectPages <= 1:
+    (overhead + C) × CacheWrite
+
+  If injectPages > 1:
+    overhead × CacheWrite
+    For each inject page i:
+      (overhead + previousPageTokens) × CachedRead
+      + pageTokens × CacheWrite
+
+  where pageTokens ≈ C / injectPages
 
 Turn 1:
   Call 1: base × CachedRead + P × CacheWrite
@@ -133,20 +143,26 @@ Turn N (N≥2): same as A but with smaller base
 | C | Anthropic token counting API on `filteredText`, using the selected `--model` family | cc-session compressed history size |
 | overhead | `--overhead` flag (user-measured) | System + tools + CLAUDE.md |
 | NewCtx | `overhead + C` | New session total context after injecting cc-session output |
+| injectPages | `inject.SplitPages(inject.RenderFullOutput(...))` | Number of `cc-session inject` pages needed to load the compressed history |
 | K | `APICallCount / UserTurnCount` | API calls per user turn |
-| toolIOPerCall (s) | `Σ(PerTool.InputChars + ResultChars) / Σ(CallCount) / 4` | Avg tool I/O per API call |
+| toolIOPerCall (s) | `Σ(PerTool.InputChars + ResultChars) / Σ(CallCount) / 2` | Avg tool I/O per API call |
 | avgResponse | `TotalOutputTokens / APICallCount` | Avg output tokens per API call |
 | prompt (P) | `(LastContext - overhead) / turns - avgResp - toolIO×(K-1)` | Avg user prompt per turn |
 | growth | `avgResponse + prompt` | Cross-turn cache write (R + P) |
 
 The compression table compares total context to total context: `X` vs `NewCtx`.
-Cost simulation still keeps `C` and `overhead` separate because cache setup writes
-the new session base as `overhead + C`. `X` comes from transcript API usage and
-`C` comes from the Anthropic token counting API. The `--model` flag controls both
-pricing and the tokenizer used by the token counting API. `opus` is an alias for
-`opus-4-8`; explicit Opus versions map to `claude-opus-4-6`,
-`claude-opus-4-7`, or `claude-opus-4-8`; `sonnet` maps to
-`claude-sonnet-4-6`. Opus 4.6, 4.7, and 4.8 use the same Opus pricing rates.
+Cost simulation still keeps `C`, `overhead`, and `injectPages` separate because
+`NewCtx` is the final context size after injection, not necessarily the cost of
+a single request. `cc-session inject` is paginated at ≤20K bytes per page, and
+each page is modeled as its own API request: the request reads the prefix loaded
+so far and writes the next page. For a one-page injection, the setup model keeps
+the historical one-shot `NewCtx × CacheWrite` behavior.
+
+`X` comes from transcript API usage and `C` comes from the Anthropic token
+counting API. The `--model` flag controls both pricing and the tokenizer used by
+the token counting API. `opus` is an alias for `opus-4-8`; explicit Opus versions
+map to `claude-opus-4-6`, `claude-opus-4-7`, or `claude-opus-4-8`; `sonnet` maps
+to `claude-sonnet-4-6`. Opus 4.6, 4.7, and 4.8 use the same Opus pricing rates.
 Fallback constants are used only for behavior that cannot be read directly from
 transcript usage, such as sparse tool I/O data.
 
@@ -193,8 +209,15 @@ transcript usage, such as sparse tool I/O data.
          │
          ▼
 ┌─────────────────────┐
-│  Derive per-session │  K, toolIOPerCall, avgResponse, prompt, growth
+│  inject.RenderFull  │  Render the exact text used by `cc-session inject`,
+│  + SplitPages       │  then count pages with the same ≤20K byte pagination.
+└────────┬────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│  Derive per-session │  K, toolIOPerCall, avgResponse, prompt, growth,
 │  cost params        │  — all from the stats above
+│                     │  plus injectPages from the rendered inject output
 └────────┬────────────┘
          │
          ▼
