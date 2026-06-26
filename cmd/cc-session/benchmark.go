@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"sort"
 	"time"
@@ -169,7 +168,7 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 		prompt := bm.PerTurnPrompt // fallback
 		if stats.UserTurnCount > 0 && contextToks > overheadToks {
 			growthPerTurn := (contextToks - overheadToks) / stats.UserTurnCount
-			toolIOPerTurn := toolIO * (int(math.Round(cpt)) - 1)
+			toolIOPerTurn := int(float64(toolIO) * (cpt - 1))
 			derived := growthPerTurn - avgResp - toolIOPerTurn
 			if derived > 0 {
 				prompt = derived

@@ -1,7 +1,5 @@
 package benchmark
 
-import "math"
-
 // Cost model.
 //
 // Pricing: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
@@ -99,24 +97,18 @@ func NewCostParams(r Result, overheadTokens int) CostParams {
 // from previous turns stays in the conversation history.
 func CumulativeCostA(turns int, x int, sp CostParams, p Pricing) float64 {
 	total := 0.0
-	ki := int(math.Round(sp.K))
+	extraCalls := extraCallsPerTurn(sp.K)
 	s := sp.ToolIOPerCall
 	g := sp.Growth
-	toolIOPerTurn := s * (ki - 1)
+	toolIOPerTurn := float64(s) * extraCalls
 	for n := 1; n <= turns; n++ {
 		if n == 1 {
 			total += float64(x+sp.Prompt) * p.CacheWrite / 1e6
-			for c := 2; c <= ki; c++ {
-				prefix := float64(x + sp.Prompt + s*(c-2))
-				total += prefix*p.CachedRead/1e6 + float64(s)*p.CacheWrite/1e6
-			}
+			total += intraTurnToolCost(float64(x+sp.Prompt), extraCalls, s, p)
 		} else {
-			prefixFromPrev := float64(x+sp.Prompt) + float64(n-1)*float64(toolIOPerTurn) + float64(n-2)*float64(g)
+			prefixFromPrev := float64(x+sp.Prompt) + float64(n-1)*toolIOPerTurn + float64(n-2)*float64(g)
 			total += prefixFromPrev*p.CachedRead/1e6 + float64(g)*p.CacheWrite/1e6
-			for c := 2; c <= ki; c++ {
-				prefix := prefixFromPrev + float64(g) + float64(s*(c-2))
-				total += prefix*p.CachedRead/1e6 + float64(s)*p.CacheWrite/1e6
-			}
+			total += intraTurnToolCost(prefixFromPrev+float64(g), extraCalls, s, p)
 		}
 	}
 	return total
@@ -135,19 +127,16 @@ func CumulativeCostA(turns int, x int, sp CostParams, p Pricing) float64 {
 //	Calls 2..K: cache read (growing prefix) + cache write (tool I/O)
 func CumulativeCostAWarm(turns int, x int, sp CostParams, p Pricing) float64 {
 	total := 0.0
-	ki := int(math.Round(sp.K))
+	extraCalls := extraCallsPerTurn(sp.K)
 	s := sp.ToolIOPerCall
 	g := sp.Growth
-	toolIOPerTurn := s * (ki - 1)
+	toolIOPerTurn := float64(s) * extraCalls
 	for n := 1; n <= turns; n++ {
 		// n=1: prefixFromPrev = X (fully cached); growth shifts by 1 vs cold because
 		// the previous turn's R is already in cache before our counting starts.
-		prefixFromPrev := float64(x) + float64(n-1)*float64(toolIOPerTurn) + float64(n-1)*float64(g)
+		prefixFromPrev := float64(x) + float64(n-1)*toolIOPerTurn + float64(n-1)*float64(g)
 		total += prefixFromPrev*p.CachedRead/1e6 + float64(g)*p.CacheWrite/1e6
-		for c := 2; c <= ki; c++ {
-			prefix := prefixFromPrev + float64(g) + float64(s*(c-2))
-			total += prefix*p.CachedRead/1e6 + float64(s)*p.CacheWrite/1e6
-		}
+		total += intraTurnToolCost(prefixFromPrev+float64(g), extraCalls, s, p)
 	}
 	return total
 }
@@ -165,10 +154,10 @@ func CumulativeCostAWarm(turns int, x int, sp CostParams, p Pricing) float64 {
 func CumulativeCostB(turns int, x int, filteredTokens int, sp CostParams, p Pricing) float64 {
 	base := sp.Overhead + filteredTokens
 	total := float64(base) * p.CacheWrite / 1e6
-	ki := int(math.Round(sp.K))
+	extraCalls := extraCallsPerTurn(sp.K)
 	s := sp.ToolIOPerCall
 	g := sp.Growth
-	toolIOPerTurn := s * (ki - 1)
+	toolIOPerTurn := float64(s) * extraCalls
 	for n := 1; n <= turns; n++ {
 		var prefixFromPrev float64
 		var crossTurnWrite int
@@ -176,16 +165,38 @@ func CumulativeCostB(turns int, x int, filteredTokens int, sp CostParams, p Pric
 			prefixFromPrev = float64(base)
 			crossTurnWrite = sp.Prompt // setup response negligible
 		} else {
-			prefixFromPrev = float64(base+sp.Prompt) + float64(n-1)*float64(toolIOPerTurn) + float64(n-2)*float64(g)
+			prefixFromPrev = float64(base+sp.Prompt) + float64(n-1)*toolIOPerTurn + float64(n-2)*float64(g)
 			crossTurnWrite = g // R + P, same as Scenario A
 		}
 		total += prefixFromPrev*p.CachedRead/1e6 + float64(crossTurnWrite)*p.CacheWrite/1e6
-		for j := 2; j <= ki; j++ {
-			prefix := prefixFromPrev + float64(crossTurnWrite) + float64(s*(j-2))
-			total += prefix*p.CachedRead/1e6 + float64(s)*p.CacheWrite/1e6
-		}
+		total += intraTurnToolCost(prefixFromPrev+float64(crossTurnWrite), extraCalls, s, p)
 	}
 	return total
+}
+
+func extraCallsPerTurn(k float64) float64 {
+	if k <= 1 {
+		return 0
+	}
+	return k - 1
+}
+
+func intraTurnToolCost(firstPrefix float64, extraCalls float64, toolIOPerCall int, p Pricing) float64 {
+	if extraCalls <= 0 {
+		return 0
+	}
+
+	fullCalls := int(extraCalls)
+	fractionalCall := extraCalls - float64(fullCalls)
+	toolIO := float64(toolIOPerCall)
+
+	readTokens := float64(fullCalls)*firstPrefix + toolIO*float64(fullCalls*(fullCalls-1))/2
+	if fractionalCall > 0 {
+		readTokens += fractionalCall * (firstPrefix + toolIO*float64(fullCalls))
+	}
+	writeTokens := extraCalls * toolIO
+
+	return readTokens*p.CachedRead/1e6 + writeTokens*p.CacheWrite/1e6
 }
 
 // ComputeCostMetrics populates the cost-related fields of r.

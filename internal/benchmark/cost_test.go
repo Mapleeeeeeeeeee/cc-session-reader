@@ -31,6 +31,15 @@ var testParamsK2 = CostParams{
 	Overhead:      40000,
 }
 
+var testParamsK4478 = CostParams{
+	K:             4.478,
+	ToolIOPerCall: 3000,
+	AvgResponse:   2000,
+	Prompt:        10000,
+	Growth:        12000,
+	Overhead:      40000,
+}
+
 func Test_NewCostParams_GivenResult_ThenGrowthEqualsAvgResponsePlusPrompt(t *testing.T) {
 	r := Result{
 		CallsPerTurn:  1.6,
@@ -57,6 +66,40 @@ func Test_NewCostParams_GivenResult_ThenGrowthEqualsAvgResponsePlusPrompt(t *tes
 	}
 	if sp.Overhead != 40000 {
 		t.Errorf("Overhead = %d, want 40000", sp.Overhead)
+	}
+}
+
+func Test_CumulativeCosts_GivenFractionalK_ThenUseFractionalCallsPerTurn(t *testing.T) {
+	// Regression guard: K=4.478 is displayed as 4.5 in the CLI, but math.Round(K)
+	// silently modeled only 4 calls per turn.
+	tests := []struct {
+		name string
+		got  float64
+		want float64
+	}{
+		{
+			name: "ColdExistingSession",
+			got:  CumulativeCostA(1, 100000, testParamsK4478, PricingOpus),
+			want: 0.9506535,
+		},
+		{
+			name: "WarmExistingSession",
+			got:  CumulativeCostAWarm(1, 100000, testParamsK4478, PricingOpus),
+			want: 0.3916315,
+		},
+		{
+			name: "NewSession",
+			got:  CumulativeCostB(1, 100000, 50000, testParamsK4478, PricingOpus),
+			want: 0.9157635,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !approxEqual(tt.got, tt.want) {
+				t.Fatalf("cost with K=4.478 = %.10f, want %.10f", tt.got, tt.want)
+			}
+		})
 	}
 }
 
