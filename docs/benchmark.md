@@ -97,6 +97,8 @@ From [tool-use-with-prompt-caching](https://platform.claude.com/docs/en/agents-a
 - Server-side tools get automatic breakpoints (not applicable to Claude Code's client tools)
 
 Each user turn with K tool calls = K separate API requests, each paying cache read on the full prefix.
+When `K` is fractional, benchmark interpolation uses all full extra calls plus
+a proportional fractional next call. It does not round `K` to an integer.
 
 ### Formulas
 
@@ -123,7 +125,7 @@ Setup:
   If injectPages > 1:
     overhead × CacheWrite
     For each inject page i:
-      (overhead + previousPageTokens) × CachedRead
+      (overhead + tokensFromPriorInjectedPages) × CachedRead
       + pageTokens × CacheWrite
 
   where pageTokens ≈ C / injectPages
@@ -223,7 +225,7 @@ transcript usage, such as sparse tool I/O data.
          ▼
 ┌─────────────────────┐
 │  cumulativeCostA()  │  Simulate N turns × K API calls, sum:
-│  cumulativeCostB()  │  cache_read + cache_write per call
+│  costBWithPages()   │  cache_read + cache_write per call
 └────────┬────────────┘
          │
          ▼
