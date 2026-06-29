@@ -182,6 +182,7 @@ func TestCallerSessionIDsFromPath_GivenMixedEntries_WhenRead_ThenReturnsOnlyCall
 	writeEntry(t, path, UsageEntry{Command: "read", Target: "session-b", Caller: ""})
 	writeEntry(t, path, UsageEntry{Command: "stats", Target: "session-c", Caller: "caller-uuid-2"})
 	writeEntry(t, path, UsageEntry{Command: "read", Target: "session-d", Caller: "caller-uuid-1"})
+	writeEntry(t, path, UsageEntry{Command: "list", Target: "", Caller: "caller-uuid-3"})
 
 	got := CallerSessionIDsFromPath(path)
 
@@ -193,6 +194,9 @@ func TestCallerSessionIDsFromPath_GivenMixedEntries_WhenRead_ThenReturnsOnlyCall
 	}
 	if got[""] {
 		t.Errorf("empty string should not be in result")
+	}
+	if got["caller-uuid-3"] {
+		t.Errorf("caller with empty target should not be in result")
 	}
 	if len(got) != 2 {
 		t.Errorf("result length = %d, want 2", len(got))

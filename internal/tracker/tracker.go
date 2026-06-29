@@ -150,7 +150,7 @@ func CallerSessionIDsFromPath(path string) map[string]bool {
 		if err := json.Unmarshal([]byte(line), &e); err != nil {
 			continue
 		}
-		if e.Caller != "" {
+		if e.Caller != "" && e.Target != "" {
 			result[e.Caller] = true
 		}
 	}

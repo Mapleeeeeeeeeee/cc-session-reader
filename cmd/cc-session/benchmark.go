@@ -36,6 +36,9 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 	if err := fs.Parse(reorderArgs(args)); err != nil {
 		return err
 	}
+	if *maxN < 1 {
+		return fmt.Errorf("-n must be a positive integer")
+	}
 
 	logUsageAsync("benchmark", "")
 
@@ -56,9 +59,8 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 	cutoff := time.Now().AddDate(0, 0, -*days)
 
 	type candidate struct {
-		entry    parser.SessionListEntry
-		fileSize int64
-		path     string
+		entry parser.SessionListEntry
+		path  string
 	}
 
 	var candidates []candidate
@@ -78,7 +80,7 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 		if sizeKB < int64(*minKB) {
 			continue
 		}
-		candidates = append(candidates, candidate{entry: entry, fileSize: info.Size(), path: resolved.Path})
+		candidates = append(candidates, candidate{entry: entry, path: resolved.Path})
 	}
 
 	if len(candidates) == 0 {
