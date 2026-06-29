@@ -31,7 +31,7 @@ inject 記住讀取進度，重複呼叫同一個命令即自動翻頁：
 
 | 意圖 | 命令 |
 |------|------|
-| 找目標 session | `cc-session list` — 列出最近 session，`-p` 過濾專案 |
+| 找目標 session | `cc-session list` — 列出最近 session，`-p` 過濾專案，用過 cc-session 的標 `[refs]` |
 | 讀 session（預設） | `cc-session inject <id>` — 分頁載入，重複呼叫翻頁 |
 | 查特定片段 | `cc-session read <id>` — 預設 200 行，`-offset` 跳讀 |
 | 緊湊單次輸出 | `cc-session context <id>` — 同 read 但更緊湊，帶 metadata header |
@@ -42,6 +42,13 @@ inject 記住讀取進度，重複呼叫同一個命令即自動翻頁：
 | 查看 CLI 使用紀錄 | `cc-session usage` |
 
 Session ID 支援 prefix match，前 8 碼通常就夠。各子命令的 flags 用 `-h` 查看。
+
+## 輸出行為
+
+- 當 session 內有 `cc-session inject/read/context` 呼叫時，連續的同 session 呼叫會被壓成一行：
+  `(cc-session#Y1dg: injected session 16d06326 here, 1320 lines omitted)`
+- tool ID（`#Y1dg`）保留，可用 `cc-session expand` 查看原始內容
+- `-verbose-bash` 會跳過此壓縮，顯示完整 Bash 輸出
 
 ## 回饋
 
