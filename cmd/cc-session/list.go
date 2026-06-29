@@ -10,6 +10,7 @@ import (
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/parser"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/tracker"
 )
 
 func cmdList(args []string, scanner session.HeaderScanner) {
@@ -38,6 +39,7 @@ func runList(args []string, out io.Writer, errOut io.Writer, store parser.Store)
 	for _, w := range warnings {
 		fmt.Fprintln(errOut, w)
 	}
+	callerIDs := tracker.CallerSessionIDs()
 
 	printed := 0
 	for _, entry := range entries {
@@ -63,8 +65,12 @@ func runList(args []string, out io.Writer, errOut io.Writer, store parser.Store)
 		if entry.UserMessageCount == 0 && entry.AssistantMessageCount == 0 {
 			countStr = "       "
 		}
-		fmt.Fprintf(out, "%s  %s  %-20s  %3dm  %s  %s\n",
-			entry.SessionID, dateStr, projectName, entry.DurationMinutes, countStr, entry.FirstPrompt)
+		refMarker := ""
+		if callerIDs[entry.SessionID] {
+			refMarker = " [refs]"
+		}
+		fmt.Fprintf(out, "%s  %s  %-20s  %3dm  %s%s  %s\n",
+			entry.SessionID, dateStr, projectName, entry.DurationMinutes, countStr, refMarker, entry.FirstPrompt)
 		printed++
 	}
 

@@ -176,6 +176,39 @@ func TestReadUsageLogFromPath_GivenMissingFile_WhenRead_ThenReturnsEmptySlice(t 
 	}
 }
 
+func TestCallerSessionIDsFromPath_GivenMixedEntries_WhenRead_ThenReturnsOnlyCallerIDs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	writeEntry(t, path, UsageEntry{Command: "read", Target: "session-a", Caller: "caller-uuid-1"})
+	writeEntry(t, path, UsageEntry{Command: "read", Target: "session-b", Caller: ""})
+	writeEntry(t, path, UsageEntry{Command: "stats", Target: "session-c", Caller: "caller-uuid-2"})
+	writeEntry(t, path, UsageEntry{Command: "read", Target: "session-d", Caller: "caller-uuid-1"})
+
+	got := CallerSessionIDsFromPath(path)
+
+	if !got["caller-uuid-1"] {
+		t.Errorf("expected caller-uuid-1 in result")
+	}
+	if !got["caller-uuid-2"] {
+		t.Errorf("expected caller-uuid-2 in result")
+	}
+	if got[""] {
+		t.Errorf("empty string should not be in result")
+	}
+	if len(got) != 2 {
+		t.Errorf("result length = %d, want 2", len(got))
+	}
+}
+
+func TestCallerSessionIDsFromPath_GivenMissingFile_WhenRead_ThenReturnsEmptyMap(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nonexistent.jsonl")
+
+	got := CallerSessionIDsFromPath(path)
+
+	if len(got) != 0 {
+		t.Errorf("result length = %d, want 0 for missing file", len(got))
+	}
+}
+
 func TestDetectCallerSessionWithBase_GivenMissingDir_WhenDetected_ThenReturnsEmptyString(t *testing.T) {
 	projectsDir := filepath.Join(t.TempDir(), "no-such-projects")
 

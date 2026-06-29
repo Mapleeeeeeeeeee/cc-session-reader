@@ -824,3 +824,308 @@ func TestFormatReadEvents_GivenOffsetExceedsTotal_WhenFormatted_ThenEmitsOffsetE
 		t.Fatalf("expected offset-exceeds message, got:\n%q", got)
 	}
 }
+
+func TestParseCCSessionCommand(t *testing.T) {
+	tests := []struct {
+		name        string
+		cmd         string
+		wantSub     string
+		wantSession string
+	}{
+		{
+			name:        "given inject with full uuid then returns inject and 8-char prefix",
+			cmd:         "cc-session inject 16d06326-977b-4c82-a38f-9b2358aa80ca",
+			wantSub:     "inject",
+			wantSession: "16d06326",
+		},
+		{
+			name:        "given read with full uuid then returns read and 8-char prefix",
+			cmd:         "cc-session read 16d06326-977b-4c82-a38f-9b2358aa80ca",
+			wantSub:     "read",
+			wantSession: "16d06326",
+		},
+		{
+			name:        "given context with full uuid then returns context and 8-char prefix",
+			cmd:         "cc-session context 16d06326-977b-4c82-a38f-9b2358aa80ca",
+			wantSub:     "context",
+			wantSession: "16d06326",
+		},
+		{
+			name:        "given short session id then returns full id",
+			cmd:         "cc-session inject abc",
+			wantSub:     "inject",
+			wantSession: "abc",
+		},
+		{
+			name:        "given non cc-session command then returns empty",
+			cmd:         "go build ./...",
+			wantSub:     "",
+			wantSession: "",
+		},
+		{
+			name:        "given cc-session with unknown subcommand then returns empty",
+			cmd:         "cc-session benchmark 16d06326-977b-4c82-a38f-9b2358aa80ca",
+			wantSub:     "",
+			wantSession: "",
+		},
+		{
+			name:        "given cc-session with trailing args then still parses",
+			cmd:         "cc-session inject 16d06326-977b-4c82-a38f-9b2358aa80ca --flag",
+			wantSub:     "inject",
+			wantSession: "16d06326",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotSub, gotSession := parseCCSessionCommand(tt.cmd)
+			if gotSub != tt.wantSub || gotSession != tt.wantSession {
+				t.Fatalf("parseCCSessionCommand(%q) = (%q, %q), want (%q, %q)",
+					tt.cmd, gotSub, gotSession, tt.wantSub, tt.wantSession)
+			}
+		})
+	}
+}
+
+func TestParseTotalLines(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want int
+	}{
+		{
+			name: "given inject result with page marker then extracts total",
+			text: "ok: [page 1/4 | lines 1-377 of 1320]",
+			want: 1320,
+		},
+		{
+			name: "given last page marker then extracts total",
+			text: "ok: [page 4/4 | lines 1052-1320 of 1320]",
+			want: 1320,
+		},
+		{
+			name: "given text without page marker then returns zero",
+			text: "ok",
+			want: 0,
+		},
+		{
+			name: "given empty text then returns zero",
+			text: "",
+			want: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseTotalLines(tt.text); got != tt.want {
+				t.Fatalf("parseTotalLines(%q) = %d, want %d", tt.text, got, tt.want)
+			}
+		})
+	}
+}
+
+func makeInjectEvents(sessionID string, pages int) []session.Event {
+	events := make([]session.Event, 0, pages*2)
+	for p := 1; p <= pages; p++ {
+		toolID := fmt.Sprintf("inject-tool-%d", p)
+		events = append(events,
+			session.Event{
+				Kind:      session.EventAssistantMessage,
+				Timestamp: "2026-05-28T00:00:00Z",
+				Assistant: &session.AssistantMessage{
+					ToolUses: []session.ToolUse{
+						{
+							ID:   toolID,
+							Name: "Bash",
+							Input: session.ToolInput{Raw: map[string]any{
+								"command":     "cc-session inject " + sessionID,
+								"description": "Inject session",
+							}},
+						},
+					},
+				},
+			},
+			session.Event{
+				Kind: session.EventToolResult,
+				Tool: &session.ToolResult{
+					ToolUseID: toolID,
+					Success:   true,
+					Text:      fmt.Sprintf("ok: [page %d/%d | lines 1-100 of 400]", p, pages),
+				},
+			},
+		)
+	}
+	return events
+}
+
+func TestFormatReadEvents_GivenConsecutiveInjectCalls_WhenRendered_ThenCollapsesIntoOneLine(t *testing.T) {
+	sessionID := "16d06326-977b-4c82-a38f-9b2358aa80ca"
+	events := makeInjectEvents(sessionID, 4)
+
+	var out bytes.Buffer
+	if err := FormatReadEvents(events, nil, 0, 0, FormatOptions{}, &out); err != nil {
+		t.Fatalf("FormatReadEvents returned error: %v", err)
+	}
+	got := out.String()
+
+	want := "(cc-session#ol-1: injected session 16d06326 here, 400 lines omitted)"
+	if !strings.Contains(got, want) {
+		t.Fatalf("expected collapsed inject line\nwant substring: %q\ngot:\n%s", want, got)
+	}
+	if strings.Contains(got, "[Bash") {
+		t.Fatalf("individual inject Bash entries must not appear in output\ngot:\n%s", got)
+	}
+	if strings.Count(got, "cc-session#") > 1 {
+		t.Fatalf("must collapse to exactly one inject summary line\ngot:\n%s", got)
+	}
+}
+
+func TestFormatReadEvents_GivenMixedToolsWithInject_WhenRendered_ThenOnlyCollapsesInjectOnes(t *testing.T) {
+	sessionID := "16d06326-977b-4c82-a38f-9b2358aa80ca"
+	injectEvents := makeInjectEvents(sessionID, 2)
+	mixed := []session.Event{
+		{
+			Kind:      session.EventAssistantMessage,
+			Timestamp: "2026-05-28T00:00:00Z",
+			Assistant: &session.AssistantMessage{
+				Text: "starting",
+				ToolUses: []session.ToolUse{
+					{ID: "read-1", Name: "Read", Input: session.ToolInput{Raw: map[string]any{"file_path": "/foo/bar.go"}}},
+				},
+			},
+		},
+		{Kind: session.EventToolResult, Tool: &session.ToolResult{ToolUseID: "read-1", Success: true, Text: "content"}},
+	}
+	mixed = append(mixed, injectEvents...)
+
+	var out bytes.Buffer
+	if err := FormatReadEvents(mixed, nil, 0, 0, FormatOptions{}, &out); err != nil {
+		t.Fatalf("FormatReadEvents returned error: %v", err)
+	}
+	got := out.String()
+
+	if !strings.Contains(got, "[Read") {
+		t.Fatalf("Read tool summary must still appear\ngot:\n%s", got)
+	}
+	if !strings.Contains(got, "(cc-session#ol-1: injected session 16d06326 here") {
+		t.Fatalf("inject calls must be collapsed\ngot:\n%s", got)
+	}
+	if strings.Count(got, "cc-session#") > 1 {
+		t.Fatalf("inject calls must collapse to one line\ngot:\n%s", got)
+	}
+}
+
+func TestFormatContextEvents_GivenConsecutiveInjectCalls_WhenRendered_ThenCollapsesIntoOneLine(t *testing.T) {
+	sessionID := "16d06326-977b-4c82-a38f-9b2358aa80ca"
+	events := makeInjectEvents(sessionID, 4)
+
+	var out bytes.Buffer
+	if err := FormatContextEvents(events, nil, 0, 0, FormatOptions{}, &out); err != nil {
+		t.Fatalf("FormatContextEvents returned error: %v", err)
+	}
+	got := out.String()
+
+	want := "(cc-session#ol-1: injected session 16d06326 here, 400 lines omitted)"
+	if !strings.Contains(got, want) {
+		t.Fatalf("expected collapsed inject line in context output\nwant substring: %q\ngot:\n%s", want, got)
+	}
+	if strings.Count(got, "cc-session#") > 1 {
+		t.Fatalf("must collapse to exactly one inject summary line\ngot:\n%s", got)
+	}
+}
+
+func TestFormatReadEvents_GivenCCSessionRead_WhenRendered_ThenCollapsesWithLoadedVerb(t *testing.T) {
+	sessionID := "abcdef12-0000-0000-0000-000000000000"
+	toolID := "read-tool-1"
+	events := []session.Event{
+		{
+			Kind:      session.EventAssistantMessage,
+			Timestamp: "2026-05-28T00:00:00Z",
+			Assistant: &session.AssistantMessage{
+				ToolUses: []session.ToolUse{
+					{
+						ID:   toolID,
+						Name: "Bash",
+						Input: session.ToolInput{Raw: map[string]any{
+							"command":     "cc-session read " + sessionID,
+							"description": "Read session",
+						}},
+					},
+				},
+			},
+		},
+		{Kind: session.EventToolResult, Tool: &session.ToolResult{ToolUseID: toolID, Success: true, Text: "session content"}},
+	}
+
+	var out bytes.Buffer
+	if err := FormatReadEvents(events, nil, 0, 0, FormatOptions{}, &out); err != nil {
+		t.Fatalf("FormatReadEvents returned error: %v", err)
+	}
+	got := out.String()
+
+	want := "(cc-session#ol-1: loaded session abcdef12 here)"
+	if !strings.Contains(got, want) {
+		t.Fatalf("cc-session read must use 'loaded' verb\nwant substring: %q\ngot:\n%s", want, got)
+	}
+}
+
+func TestFormatReadEvents_GivenFailedInjectCall_WhenRendered_ThenShowsNormalBashLine(t *testing.T) {
+	// Guards against failed inject being collapsed into a "(cc-session: injected ...)"
+	// success summary — a failed call must render as a normal [Bash#...] failure line.
+	sessionID := "16d06326-977b-4c82-a38f-9b2358aa80ca"
+	toolID := "inject-tool-1"
+	events := []session.Event{
+		{
+			Kind:      session.EventAssistantMessage,
+			Timestamp: "2026-05-28T00:00:00Z",
+			Assistant: &session.AssistantMessage{
+				ToolUses: []session.ToolUse{
+					{
+						ID:   toolID,
+						Name: "Bash",
+						Input: session.ToolInput{Raw: map[string]any{
+							"command":     "cc-session inject " + sessionID,
+							"description": "Inject session",
+						}},
+					},
+				},
+			},
+		},
+		{
+			Kind: session.EventToolResult,
+			Tool: &session.ToolResult{ToolUseID: toolID, Success: false, Text: "command not found: cc-session"},
+		},
+	}
+
+	var out bytes.Buffer
+	if err := FormatReadEvents(events, nil, 0, 0, FormatOptions{}, &out); err != nil {
+		t.Fatalf("FormatReadEvents returned error: %v", err)
+	}
+	got := out.String()
+
+	if strings.Contains(got, "(cc-session") {
+		t.Fatalf("failed inject must not be collapsed into cc-session summary\ngot:\n%s", got)
+	}
+	if !strings.Contains(got, "[Bash") {
+		t.Fatalf("failed inject must render as a normal Bash line\ngot:\n%s", got)
+	}
+}
+
+func TestFormatReadEvents_GivenVerboseBash_WhenInjectCalls_ThenSkipsCollapse(t *testing.T) {
+	// Guards against -verbose-bash being bypassed: collapseCCSessionTools must not
+	// run when VerboseBash is set, so the full Bash output built by appendToolResult
+	// is preserved instead of being discarded by the collapse.
+	sessionID := "16d06326-977b-4c82-a38f-9b2358aa80ca"
+	events := makeInjectEvents(sessionID, 2)
+
+	var out bytes.Buffer
+	if err := FormatReadEvents(events, nil, 0, 0, FormatOptions{VerboseBash: true}, &out); err != nil {
+		t.Fatalf("FormatReadEvents returned error: %v", err)
+	}
+	got := out.String()
+
+	if strings.Contains(got, "(cc-session") {
+		t.Fatalf("verbose-bash must not collapse inject calls\ngot:\n%s", got)
+	}
+	if !strings.Contains(got, "[Bash") {
+		t.Fatalf("verbose-bash must render individual Bash lines\ngot:\n%s", got)
+	}
+}

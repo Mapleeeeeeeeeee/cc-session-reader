@@ -120,6 +120,43 @@ func ReadUsageLogFromPath(limit int, cmdFilter string, path string) ([]UsageEntr
 	return entries, nil
 }
 
+// CallerSessionIDs reads the usage log and returns a set of caller session IDs
+// that have invoked cc-session (i.e., sessions that reference other sessions).
+// The returned map keys are full caller UUIDs. Returns an empty map on any error.
+func CallerSessionIDs() map[string]bool {
+	path, err := DefaultLogPath()
+	if err != nil {
+		return map[string]bool{}
+	}
+	return CallerSessionIDsFromPath(path)
+}
+
+// CallerSessionIDsFromPath is the testable variant.
+func CallerSessionIDsFromPath(path string) map[string]bool {
+	result := make(map[string]bool)
+	f, err := os.Open(path)
+	if err != nil {
+		return result
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var e UsageEntry
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			continue
+		}
+		if e.Caller != "" {
+			result[e.Caller] = true
+		}
+	}
+	return result
+}
+
 // DetectCallerSession maps cwd to the most recently modified session JSONL in
 // the matching Claude Code project directory. Returns an empty string if the
 // directory does not exist, contains no JSONL files, or any other error occurs.

@@ -3,6 +3,7 @@ package formatter
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
@@ -79,9 +80,12 @@ func renderUserMessage(user *session.UserMessage, opts FormatOptions, seenSkills
 }
 
 type pendingTool struct {
-	toolUseID string
-	summary   string
-	name      string // e.g. "Bash", "Read", "Edit"
+	toolUseID        string
+	summary          string
+	name             string // e.g. "Bash", "Read", "Edit"
+	injectSessionID  string // non-empty when this is a cc-session inject/read/context call
+	injectTotalLines int    // total lines from the last page marker
+	ccSubcommand     string // "inject", "read", or "context"
 }
 
 func loadEvents(transcriptPath string, isVerboseAgents bool, reader session.TranscriptReader) ([]session.Event, map[string]bool, error) {
@@ -101,6 +105,12 @@ func appendToolResult(result *session.ToolResult, pendingTools *[]pendingTool, o
 		for i := range *pendingTools {
 			pt := &(*pendingTools)[i]
 			if pt.toolUseID == result.ToolUseID {
+				if !result.Success {
+					pt.injectSessionID = ""
+				}
+				if pt.injectSessionID != "" {
+					pt.injectTotalLines = parseTotalLines(result.Text)
+				}
 				if opts.VerboseBash && pt.name == session.ToolBash {
 					pt.summary += formatVerboseBashResult(result)
 					return
@@ -112,6 +122,12 @@ func appendToolResult(result *session.ToolResult, pendingTools *[]pendingTool, o
 	}
 	if len(*pendingTools) > 0 {
 		last := &(*pendingTools)[len(*pendingTools)-1]
+		if !result.Success {
+			last.injectSessionID = ""
+		}
+		if last.injectSessionID != "" {
+			last.injectTotalLines = parseTotalLines(result.Text)
+		}
 		if opts.VerboseBash && last.name == session.ToolBash {
 			last.summary += formatVerboseBashResult(result)
 			return
@@ -163,11 +179,19 @@ func summarizeToolUse(tool session.ToolUse) pendingTool {
 	// so "[Bash] cmd" becomes "[Bash#ol-1] cmd" and
 	// "[Agent(general)] desc" becomes "[Agent(general)#ol-1] desc".
 	tagged := injectShortID(summary, shortID)
-	return pendingTool{
+	pt := pendingTool{
 		toolUseID: tool.ID,
 		summary:   tagged,
 		name:      name,
 	}
+	if name == session.ToolBash {
+		cmd := tool.Input.String("command")
+		if sub, sessionPrefix := parseCCSessionCommand(cmd); sessionPrefix != "" {
+			pt.injectSessionID = sessionPrefix
+			pt.ccSubcommand = sub
+		}
+	}
+	return pt
 }
 
 // injectShortID inserts "#id" before the first ']' in summary.
@@ -182,6 +206,88 @@ func injectShortID(summary string, shortID string) string {
 		return summary
 	}
 	return summary[:idx] + "#" + shortID + summary[idx:]
+}
+
+// parseCCSessionCommand checks if cmd is a cc-session inject/read/context command
+// and returns the subcommand and session ID prefix (first 8 chars).
+// Returns ("", "") if not a cc-session command.
+func parseCCSessionCommand(cmd string) (subcommand string, sessionID string) {
+	fields := strings.Fields(strings.TrimSpace(cmd))
+	if len(fields) < 3 || fields[0] != "cc-session" {
+		return "", ""
+	}
+	switch fields[1] {
+	case "inject", "read", "context":
+	default:
+		return "", ""
+	}
+	id := fields[2]
+	if strings.HasPrefix(id, "-") {
+		return "", ""
+	}
+	if len(id) >= 8 {
+		return fields[1], id[:8]
+	}
+	return fields[1], id
+}
+
+// parseTotalLines extracts the total line count from a cc-session page marker
+// like "ok: [page 1/4 | lines 1-377 of 1320]". Returns 0 if not found.
+func parseTotalLines(text string) int {
+	firstLine := text
+	if nl := strings.IndexByte(text, '\n'); nl >= 0 {
+		firstLine = text[:nl]
+	}
+	const marker = " of "
+	idx := strings.LastIndex(firstLine, marker)
+	if idx < 0 {
+		return 0
+	}
+	rest := firstLine[idx+len(marker):]
+	end := strings.IndexByte(rest, ']')
+	if end < 0 {
+		return 0
+	}
+	n, err := strconv.Atoi(rest[:end])
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// collapseCCSessionTools collapses consecutive pendingTools that share the same
+// non-empty injectSessionID into a single summary line.
+func collapseCCSessionTools(tools []pendingTool) []pendingTool {
+	if len(tools) == 0 {
+		return tools
+	}
+	result := make([]pendingTool, 0, len(tools))
+	for i := 0; i < len(tools); i++ {
+		pt := tools[i]
+		if pt.injectSessionID == "" {
+			result = append(result, pt)
+			continue
+		}
+		first := tools[i]
+		j := i + 1
+		for j < len(tools) && tools[j].injectSessionID == pt.injectSessionID {
+			j++
+		}
+		last := tools[j-1]
+		verb := "loaded"
+		if last.ccSubcommand == "inject" {
+			verb = "injected"
+		}
+		shortID := session.ToolShortID(first.toolUseID)
+		if last.injectTotalLines > 0 {
+			last.summary = fmt.Sprintf("(cc-session#%s: %s session %s here, %d lines omitted)", shortID, verb, last.injectSessionID, last.injectTotalLines)
+		} else {
+			last.summary = fmt.Sprintf("(cc-session#%s: %s session %s here)", shortID, verb, last.injectSessionID)
+		}
+		result = append(result, last)
+		i = j - 1
+	}
+	return result
 }
 
 // applyPagination slices the formatted output by offset and maxLines, writing
