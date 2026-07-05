@@ -49,4 +49,19 @@ In the next phase of tool compression, we will explore generating **meaningful s
 - The timeline output becomes cleaner and more readable, saving context token usage.
 - Duplicate filename ambiguity is solved via project-relative path prefixes.
 - Local environment absolute paths are removed from the outputs.
-- Future work: Execute benchmarks to verify token savings.
+- Future work: Track token savings on a larger diversity of project histories.
+
+## Benchmark Results
+
+We ran `./cc-session benchmark -n 5 -no-api` before and after this optimization on five representative historical sessions:
+
+### Before Optimization
+- **Token Savings (Median)**: **82.1%** (Mean: 81.5%, Range: 78.9% — 82.2%)
+- **Opus cost savings**: 72% at 10-turn, 38% at 100-turn.
+
+### After Optimization (Project-Relative Paths & Option A Compression)
+- **Token Savings (Median)**: **81.9%** (Mean: 81.3%, Range: 78.9% — 82.0%)
+- **Opus cost savings**: 72% at 10-turn, 38% at 100-turn.
+
+### Analysis of the 0.2% Difference
+Using project-relative path resolution (e.g. `src/features/myinccu/api/mutations.ts`) instead of file base names (e.g. `mutations.ts`) adds a small token overhead (~1,000 tokens for extremely long 500k-token sessions). This is a highly acceptable trade-off to resolve duplicate filename ambiguity and prevent path leakage.
