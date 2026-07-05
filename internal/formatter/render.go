@@ -173,7 +173,7 @@ func summarizeToolUse(tool session.ToolUse) pendingTool {
 		name = "?"
 	}
 	shortID := session.ToolShortID(tool.ID)
-	summary := summarizer.SummarizeToolUse(name, tool.Input)
+	summary := summarizer.SummarizeToolUse(name, tool.Input, tool.Cwd)
 	// Inject "#shortID" before the closing ']' of the first bracket group
 	// so "[Bash] cmd" becomes "[Bash#ol-1] cmd" and
 	// "[Agent(general)] desc" becomes "[Agent(general)#ol-1] desc".

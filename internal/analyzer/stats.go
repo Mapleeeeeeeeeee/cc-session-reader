@@ -172,7 +172,7 @@ func ComputeStats(events []session.Event) StatsResult {
 				ts.CallCount++
 				ts.InputChars += utf8.RuneCountInString(rawJSON)
 
-				summary := summarizer.SummarizeToolUse(name, tool.Input)
+				summary := summarizer.SummarizeToolUse(name, tool.Input, tool.Cwd)
 				categories["tool_summaries"] += utf8.RuneCountInString(summary)
 				filteredParts = append(filteredParts, summary)
 			}

@@ -513,8 +513,8 @@ func TestFormatReadEvents_WhenVerboseBash_ThenNonBashToolsStillCompressed(t *tes
 	if strings.Contains(got, "line4") {
 		t.Fatalf("non-Bash tool should remain compressed with verbose-bash, got:\n%s", got)
 	}
-	if !strings.Contains(got, "line1") {
-		t.Fatalf("non-Bash tool summary should contain first line, got:\n%s", got)
+	if !strings.Contains(got, "-> ok") {
+		t.Fatalf("non-Bash tool summary should contain ok status, got:\n%s", got)
 	}
 }
 

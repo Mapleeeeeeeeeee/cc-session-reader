@@ -5,3 +5,4 @@ bin/
 /sessions
 coverage.out
 dist/
+/cc-session
