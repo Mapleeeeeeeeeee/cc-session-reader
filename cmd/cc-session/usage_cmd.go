@@ -38,6 +38,8 @@ func logUsageAsync(cmd string, target string) {
 			Target:    target,
 			Cwd:       cwd,
 			Caller:    caller,
+			Version:   version,
+			Commit:    commit,
 		}
 		_ = tracker.LogUsage(entry)
 	}()

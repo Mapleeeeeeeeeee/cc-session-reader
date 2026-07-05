@@ -11,6 +11,7 @@ import (
 )
 
 var version = "dev"
+var commit = "none"
 
 type countTokensFunc func(string) (int, error)
 

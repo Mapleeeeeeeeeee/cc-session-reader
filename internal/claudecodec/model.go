@@ -19,6 +19,7 @@ type rawEntry struct {
 	Timestamp     string          `json:"timestamp"`
 	Message       *rawMessage     `json:"message"`
 	ToolUseResult json.RawMessage `json:"toolUseResult"`
+	Cwd           string          `json:"cwd"`
 }
 
 type rawMessage struct {
@@ -127,6 +128,13 @@ type rawContentBlock struct {
 	Content   json.RawMessage `json:"content"`
 }
 
+func cleanCwdPaths(text string, cwd string) string {
+	if cwd == "" || text == "" {
+		return text
+	}
+	return strings.ReplaceAll(text, cwd, ".")
+}
+
 func (e rawEntry) toToolResult() session.ToolResult {
 	result := rawToolUseResult{Success: true}
 	if len(e.ToolUseResult) > 0 {
@@ -140,7 +148,7 @@ func (e rawEntry) toToolResult() session.ToolResult {
 	return session.ToolResult{
 		ToolUseID: toolUseID,
 		Success:   result.Success,
-		Text:      text,
+		Text:      cleanCwdPaths(text, e.Cwd),
 		RawName:   name,
 	}
 }

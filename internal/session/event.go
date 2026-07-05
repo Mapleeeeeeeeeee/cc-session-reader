@@ -132,6 +132,7 @@ type ToolUse struct {
 	ID    string
 	Name  string
 	Input ToolInput
+	Cwd   string
 }
 
 type ToolInput struct {
@@ -198,6 +199,12 @@ func (r ToolResult) Status() string {
 }
 
 func (r ToolResult) Summary() string {
+	if r.Success {
+		switch r.RawName {
+		case ToolRead, ToolWrite, ToolEdit, ToolAgent:
+			return fmt.Sprintf(" -> %s", r.Status())
+		}
+	}
 	firstLine := FirstLine(r.Text, 80)
 	if firstLine != "" {
 		return fmt.Sprintf(" -> %s: %s", r.Status(), firstLine)

@@ -141,6 +141,9 @@ func ParseLine(line []byte) (session.Event, bool, error) {
 		if strings.TrimSpace(assistant.Text) == "" && len(assistant.ToolUses) == 0 && len(assistant.Thinking) == 0 {
 			return session.Event{}, false, nil
 		}
+		for i := range assistant.ToolUses {
+			assistant.ToolUses[i].Cwd = raw.Cwd
+		}
 		event.Kind = session.EventAssistantMessage
 		event.Assistant = &assistant
 		return event, true, nil

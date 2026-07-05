@@ -20,6 +20,8 @@ type UsageEntry struct {
 	Target    string `json:"target"`
 	Cwd       string `json:"cwd"`
 	Caller    string `json:"caller"`
+	Version   string `json:"version,omitempty"`
+	Commit    string `json:"commit,omitempty"`
 }
 
 // DefaultLogPath returns the canonical path for the usage log.

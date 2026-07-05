@@ -40,7 +40,7 @@ func TestSummarizeToolUse_Bash(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := SummarizeToolUse("Bash", tt.inp)
+			got := SummarizeToolUse("Bash", tt.inp, "")
 			if got != tt.want {
 				t.Fatalf("got %q, want %q", got, tt.want)
 			}
@@ -52,15 +52,39 @@ func TestSummarizeToolUse_Read(t *testing.T) {
 	tests := []struct {
 		name string
 		path string
+		inp  map[string]any
+		cwd  string
 		want string
 	}{
-		{name: "deep path shows last 2 segments", path: "/Users/maple/project/internal/parser/parser.go", want: "[Read] parser/parser.go"},
-		{name: "single segment path", path: "file.txt", want: "[Read] file.txt"},
-		{name: "empty path shows question mark", path: "", want: "[Read] ?"},
+		{name: "deep path shows last 2 segments", path: "/Users/maple/project/internal/parser/parser.go", cwd: "", want: "[Read] parser/parser.go"},
+		{name: "single segment path", path: "file.txt", cwd: "", want: "[Read] file.txt"},
+		{name: "empty path shows question mark", path: "", cwd: "", want: "[Read] ?"},
+		{
+			name: "relative path to cwd",
+			path: "/Users/maple/project/src/features/api.ts",
+			cwd:  "/Users/maple/project",
+			want: "[Read] src/features/api.ts",
+		},
+		{
+			name: "with line range limit only",
+			path: "main.go",
+			inp:  map[string]any{"limit": float64(100)},
+			want: "[Read] main.go:1:100",
+		},
+		{
+			name: "with line range offset and limit",
+			path: "main.go",
+			inp:  map[string]any{"offset": float64(20), "limit": float64(100)},
+			want: "[Read] main.go:21:120",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := SummarizeToolUse("Read", toolInput(map[string]any{"file_path": tt.path}))
+			raw := map[string]any{"file_path": tt.path}
+			for k, v := range tt.inp {
+				raw[k] = v
+			}
+			got := SummarizeToolUse("Read", toolInput(raw), tt.cwd)
 			if got != tt.want {
 				t.Fatalf("got %q, want %q", got, tt.want)
 			}
@@ -73,16 +97,24 @@ func TestSummarizeToolUse_EditAndWrite(t *testing.T) {
 		name     string
 		toolName string
 		path     string
+		cwd      string
 		want     string
 	}{
-		{name: "Edit extracts filename from path", toolName: "Edit", path: "/Users/maple/project/main.go", want: "[Edit] main.go"},
-		{name: "Write extracts filename from path", toolName: "Write", path: "/Users/maple/project/config.yaml", want: "[Write] config.yaml"},
-		{name: "Edit with no slash returns full path", toolName: "Edit", path: "standalone.txt", want: "[Edit] standalone.txt"},
-		{name: "Write with empty path shows question mark", toolName: "Write", path: "", want: "[Write] ?"},
+		{name: "Edit extracts filename from path", toolName: "Edit", path: "/Users/maple/project/main.go", cwd: "", want: "[Edit] project/main.go"},
+		{name: "Write extracts filename from path", toolName: "Write", path: "/Users/maple/project/config.yaml", cwd: "", want: "[Write] project/config.yaml"},
+		{name: "Edit with no slash returns full path", toolName: "Edit", path: "standalone.txt", cwd: "", want: "[Edit] standalone.txt"},
+		{name: "Write with empty path shows question mark", toolName: "Write", path: "", cwd: "", want: "[Write] ?"},
+		{
+			name:     "Edit relative to cwd",
+			toolName: "Edit",
+			path:     "/Users/maple/project/src/main.go",
+			cwd:      "/Users/maple/project",
+			want:     "[Edit] src/main.go",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := SummarizeToolUse(tt.toolName, toolInput(map[string]any{"file_path": tt.path}))
+			got := SummarizeToolUse(tt.toolName, toolInput(map[string]any{"file_path": tt.path}), tt.cwd)
 			if got != tt.want {
 				t.Fatalf("got %q, want %q", got, tt.want)
 			}
@@ -102,7 +134,7 @@ func TestSummarizeToolUse_Agent(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := SummarizeToolUse("Agent", tt.inp)
+			got := SummarizeToolUse("Agent", tt.inp, "")
 			if got != tt.want {
 				t.Fatalf("got %q, want %q", got, tt.want)
 			}
@@ -118,7 +150,7 @@ func TestSummarizeToolUse_AskUserQuestion(t *testing.T) {
 			map[string]interface{}{"question": "Third question?"},
 		},
 	})
-	got := SummarizeToolUse("AskUserQuestion", inp)
+	got := SummarizeToolUse("AskUserQuestion", inp, "")
 	want := "[AskUserQuestion] Q1: First question?\n  [AskUserQuestion] Q2: Second question?\n  [AskUserQuestion] Q3: Third question?"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -140,7 +172,7 @@ func TestSummarizeToolUse_AskUserQuestion_EdgeCases(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := SummarizeToolUse("AskUserQuestion", tt.inp)
+			got := SummarizeToolUse("AskUserQuestion", tt.inp, "")
 			if got != tt.want {
 				t.Fatalf("got %q, want %q", got, tt.want)
 			}
@@ -165,7 +197,7 @@ func TestSummarizeToolUse_OtherTools(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := SummarizeToolUse(tt.toolName, tt.inp)
+			got := SummarizeToolUse(tt.toolName, tt.inp, "")
 			if got != tt.want {
 				t.Fatalf("got %q, want %q", got, tt.want)
 			}
