@@ -1340,6 +1340,9 @@ func TestLogUsageAsync_GivenCallerSession_ThenWritesToLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Getwd: %v", err)
 	}
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = resolved
+	}
 	projectDir := filepath.Join(root, ".claude", "projects", strings.ReplaceAll(cwd, "/", "-"))
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)

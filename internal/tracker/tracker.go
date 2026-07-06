@@ -176,6 +176,9 @@ func DetectCallerSession(cwd string) string {
 // DetectCallerSessionWithBase is the testable variant of DetectCallerSession
 // that accepts an explicit projectsDir.
 func DetectCallerSessionWithBase(cwd string, projectsDir string) string {
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = resolved
+	}
 	// Claude Code maps an absolute path to a project dir by replacing every
 	// "/" with "-", e.g. /Users/maple/Desktop -> -Users-maple-Desktop.
 	projectDir := filepath.Join(projectsDir, strings.ReplaceAll(cwd, "/", "-"))

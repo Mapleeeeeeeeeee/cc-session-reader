@@ -21,7 +21,7 @@ func cleanPath(path string, cwd string) string {
 	}
 	if cwd != "" {
 		if rel, err := filepath.Rel(cwd, path); err == nil && !strings.HasPrefix(rel, "..") {
-			return rel
+			return filepath.ToSlash(rel)
 		}
 	}
 	parts := strings.Split(filepath.ToSlash(path), "/")
