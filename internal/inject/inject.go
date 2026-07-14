@@ -1,4 +1,5 @@
-// Package inject implements paginated session output for the inject subcommand.
+// Package inject implements paginated session output for the inherit subcommand
+// (formerly named "inject"; the CLI-facing name changed, this package did not).
 // Each page stays under 20K chars so Claude Code's Bash tool returns it as
 // stdout rather than persisting it to a file.
 package inject
@@ -138,7 +139,7 @@ func WritePage(pageLines []string, pageNum, totalPages, startLine, totalLines in
 		fmt.Fprintln(out)
 	}
 	if pageNum == totalPages {
-		fmt.Fprintf(out, "[inject complete: %d pages, %d lines] — use -reset to start over\n", totalPages, totalLines)
+		fmt.Fprintf(out, "[inherit complete: %d pages, %d lines] — use -reset to start over\n", totalPages, totalLines)
 	} else {
 		fmt.Fprintf(out, "[page %d/%d complete — run again for next page]\n", pageNum, totalPages)
 	}

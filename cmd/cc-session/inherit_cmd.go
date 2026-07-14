@@ -12,12 +12,12 @@ import (
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
 )
 
-func cmdInject(args []string, reader session.TranscriptReader) {
-	exitOnError(runInject(args, os.Stdout, os.Stderr, parser.DefaultStore(), reader))
+func cmdInherit(args []string, reader session.TranscriptReader) {
+	exitOnError(runInherit(args, os.Stdout, os.Stderr, parser.DefaultStore(), reader))
 }
 
-func runInject(args []string, out io.Writer, errOut io.Writer, store parser.Store, reader session.TranscriptReader) error {
-	fs := flag.NewFlagSet("inject", flag.ContinueOnError)
+func runInherit(args []string, out io.Writer, errOut io.Writer, store parser.Store, reader session.TranscriptReader) error {
+	fs := flag.NewFlagSet("inherit", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	pageFlag := fs.Int("page", 0, "jump to specific page (1-based; 0 = auto-advance)")
 	resetFlag := fs.Bool("reset", false, "clear state and start from the beginning")
@@ -25,7 +25,7 @@ func runInject(args []string, out io.Writer, errOut io.Writer, store parser.Stor
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("usage: cc-session inject <session-id> [--page N] [--reset]")
+		return fmt.Errorf("usage: cc-session inherit <session-id> [--page N] [--reset]")
 	}
 
 	sessionPrefix := fs.Arg(0)
@@ -36,7 +36,7 @@ func runInject(args []string, out io.Writer, errOut io.Writer, store parser.Stor
 	if resolved.Path == "" {
 		return fmt.Errorf("transcript not found: %s", resolved.ID)
 	}
-	logUsageAsync("inject", session.ShortID(resolved.ID, 8))
+	logUsageAsync("inherit", session.ShortID(resolved.ID, 8))
 
 	if *resetFlag {
 		if err := inject.ClearState(resolved.ID); err != nil {
@@ -59,7 +59,7 @@ func runInject(args []string, out io.Writer, errOut io.Writer, store parser.Stor
 	pages := inject.SplitPages(allLines)
 	totalPages := len(pages)
 	if totalPages == 0 {
-		fmt.Fprintln(out, "[inject complete: 0 pages, 0 lines]")
+		fmt.Fprintln(out, "[inherit complete: 0 pages, 0 lines]")
 		return nil
 	}
 
@@ -72,7 +72,7 @@ func runInject(args []string, out io.Writer, errOut io.Writer, store parser.Stor
 	} else {
 		state, loadErr := inject.LoadState(resolved.ID)
 		if loadErr != nil {
-			return fmt.Errorf("load inject state: %w", loadErr)
+			return fmt.Errorf("load inherit state: %w", loadErr)
 		}
 		if state == nil {
 			pageNum = 1
@@ -82,7 +82,7 @@ func runInject(args []string, out io.Writer, errOut io.Writer, store parser.Stor
 	}
 
 	if pageNum > totalPages {
-		fmt.Fprintf(out, "[inject complete: %d pages, %d lines] — use -reset to start over\n", totalPages, totalLines)
+		fmt.Fprintf(out, "[inherit complete: %d pages, %d lines] — use -reset to start over\n", totalPages, totalLines)
 		return nil
 	}
 	if pageNum < 1 {
@@ -110,7 +110,7 @@ func runInject(args []string, out io.Writer, errOut io.Writer, store parser.Stor
 	}
 	if err := inject.SaveState(newState); err != nil {
 		// Non-fatal: output was already written.
-		fmt.Fprintf(errOut, "warning: could not save inject state: %v\n", err)
+		fmt.Fprintf(errOut, "warning: could not save inherit state: %v\n", err)
 	}
 	return nil
 }
