@@ -178,7 +178,7 @@ func TestGivenMiddlePage_WhenWritePage_ThenContinueFooterAppears(t *testing.T) {
 	if !strings.Contains(out, "[page 1/3 complete — run again for next page]") {
 		t.Errorf("missing continue footer in: %q", out)
 	}
-	if strings.Contains(out, "inject complete") {
+	if strings.Contains(out, "inherit complete") {
 		t.Errorf("should not have complete footer for middle page")
 	}
 }
@@ -190,7 +190,7 @@ func TestGivenLastPage_WhenWritePage_ThenCompleteFooterAppears(t *testing.T) {
 	if !strings.Contains(out, "[page 3/3 | lines 91-91 of 100]") {
 		t.Errorf("missing header in: %q", out)
 	}
-	if !strings.Contains(out, "[inject complete: 3 pages, 100 lines]") {
+	if !strings.Contains(out, "[inherit complete: 3 pages, 100 lines]") {
 		t.Errorf("missing complete footer in: %q", out)
 	}
 	if !strings.Contains(out, "use -reset to start over") {
@@ -202,7 +202,7 @@ func TestGivenOnlyOnePage_WhenWritePage_ThenCompleteFooterAppears(t *testing.T) 
 	var sb strings.Builder
 	inject.WritePage([]string{"only line"}, 1, 1, 0, 1, &sb)
 	out := sb.String()
-	if !strings.Contains(out, "[inject complete: 1 pages, 1 lines]") {
+	if !strings.Contains(out, "[inherit complete: 1 pages, 1 lines]") {
 		t.Errorf("missing complete footer in: %q", out)
 	}
 	if !strings.Contains(out, "use -reset to start over") {

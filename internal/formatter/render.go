@@ -83,9 +83,9 @@ type pendingTool struct {
 	toolUseID        string
 	summary          string
 	name             string // e.g. "Bash", "Read", "Edit"
-	injectSessionID  string // non-empty when this is a cc-session inject/read/context call
+	injectSessionID  string // non-empty when this is a cc-session inherit/inject/read/context call
 	injectTotalLines int    // total lines from the last page marker
-	ccSubcommand     string // "inject", "read", or "context"
+	ccSubcommand     string // "inherit", "inject" (legacy), "read", or "context"
 }
 
 func loadEvents(transcriptPath string, isVerboseAgents bool, reader session.TranscriptReader) ([]session.Event, map[string]bool, error) {
@@ -207,8 +207,10 @@ func injectShortID(summary string, shortID string) string {
 	return summary[:idx] + "#" + shortID + summary[idx:]
 }
 
-// parseCCSessionCommand checks if cmd is a cc-session inject/read/context command
-// and returns the subcommand and session ID prefix (first 8 chars).
+// parseCCSessionCommand checks if cmd is a cc-session inherit/inject/read/context
+// command and returns the subcommand and session ID prefix (first 8 chars).
+// "inject" is the legacy name for "inherit" (kept for old transcripts) and is
+// treated as an equivalent verb for collapsing purposes.
 // Returns ("", "") if not a cc-session command.
 func parseCCSessionCommand(cmd string) (subcommand string, sessionID string) {
 	fields := strings.Fields(strings.TrimSpace(cmd))
@@ -216,7 +218,7 @@ func parseCCSessionCommand(cmd string) (subcommand string, sessionID string) {
 		return "", ""
 	}
 	switch fields[1] {
-	case "inject", "read", "context":
+	case "inherit", "inject", "read", "context":
 	default:
 		return "", ""
 	}
@@ -283,7 +285,13 @@ func collapseCCSessionTools(tools []pendingTool) []pendingTool {
 		}
 		last := tools[j-1]
 		verb := "loaded"
-		if pt.ccSubcommand == "inject" {
+		switch pt.ccSubcommand {
+		case "inherit":
+			verb = "inherited"
+		case "inject":
+			// Legacy verb: old transcripts recorded "cc-session inject" before
+			// the CLI rename to "inherit". Keep the historical wording so old
+			// sessions still read naturally.
 			verb = "injected"
 		}
 		shortID := session.ToolShortID(pt.toolUseID)

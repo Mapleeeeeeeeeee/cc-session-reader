@@ -1220,11 +1220,11 @@ func TestRunList_GivenHelpFlag_ThenReturnsErrHelp(t *testing.T) {
 	}
 }
 
-func TestRunInject_GivenHelpFlag_ThenReturnsErrHelp(t *testing.T) {
+func TestRunInherit_GivenHelpFlag_ThenReturnsErrHelp(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	err := runInject([]string{"-h"}, &stdout, &stderr, parser.Store{}, testReader)
+	err := runInherit([]string{"-h"}, &stdout, &stderr, parser.Store{}, testReader)
 	if err == nil || err.Error() != "flag: help requested" {
-		t.Fatalf("runInject(-h) = %v, want flag.ErrHelp", err)
+		t.Fatalf("runInherit(-h) = %v, want flag.ErrHelp", err)
 	}
 	if !strings.Contains(stderr.String(), "page") {
 		t.Fatalf("stderr should contain flag descriptions, got: %q", stderr.String())

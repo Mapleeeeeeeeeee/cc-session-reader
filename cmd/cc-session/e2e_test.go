@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"os/exec"
@@ -118,6 +119,35 @@ func TestCLI_WhenSessionExists_ThenListReadContextAndAuditWorkEndToEnd(t *testin
 				}
 			}
 		})
+	}
+}
+
+func TestCLI_GivenInjectAlias_WhenInvoked_ThenBehavesLikeInheritAndWarnsOnStderr(t *testing.T) {
+	root := t.TempDir()
+	bin := filepath.Join(root, binaryName())
+	build := exec.Command("go", "build", "-o", bin, ".")
+	build.Dir = "."
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build CLI: %v\n%s", err, out)
+	}
+
+	sid := "12345678-1234-1234-1234-123456789abc"
+	writeE2EFixture(t, root, sid)
+
+	var stdout, stderr bytes.Buffer
+	cmd := exec.Command(bin, "inject", sid)
+	cmd.Env = homeEnv(root)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("cc-session inject %s failed: %v\nstderr:\n%s", sid, err, stderr.String())
+	}
+
+	if !strings.Contains(stderr.String(), "cc-session inject 已改名為 cc-session inherit") {
+		t.Fatalf("stderr missing deprecation notice, got: %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "[page 1/1") || !strings.Contains(stdout.String(), "[inherit complete: 1 pages") {
+		t.Fatalf("stdout missing paginated session output, got: %q", stdout.String())
 	}
 }
 

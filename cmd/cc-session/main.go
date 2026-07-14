@@ -1,5 +1,6 @@
 // Package main is the CLI entry point for the Claude session reader.
-// Subcommands: list, read, context, stats, audit, expand, usage, inject.
+// Subcommands: list, read, context, stats, audit, expand, usage, inherit.
+// "inject" is kept as a hidden, deprecated alias for "inherit".
 package main
 
 import (
@@ -62,8 +63,11 @@ func main() {
 		cmdExpand(os.Args[2:], reader)
 	case "usage":
 		cmdUsage(os.Args[2:])
+	case "inherit":
+		cmdInherit(os.Args[2:], reader)
 	case "inject":
-		cmdInject(os.Args[2:], reader)
+		fmt.Fprintln(os.Stderr, "cc-session inject 已改名為 cc-session inherit，inject 別名將於未來版本移除，請改用 inherit。")
+		cmdInherit(os.Args[2:], reader)
 	case "benchmark":
 		cmdBenchmark(os.Args[2:], reader)
 	default:
@@ -84,7 +88,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  audit     檢視被過濾的內容取樣")
 	fmt.Fprintln(os.Stderr, "  expand    展開特定 tool call 完整內容")
 	fmt.Fprintln(os.Stderr, "  usage     CLI 使用紀錄")
-	fmt.Fprintln(os.Stderr, "  inject      分頁注入 session 到 context")
+	fmt.Fprintln(os.Stderr, "  inherit   分頁繼承 session 到 context")
 	fmt.Fprintln(os.Stderr, "  benchmark   掃描近期 session，計算壓縮率與成本比較")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Run 'cc-session <command> -h' for command-specific flags.")

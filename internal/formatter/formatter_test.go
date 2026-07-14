@@ -833,7 +833,13 @@ func TestParseCCSessionCommand(t *testing.T) {
 		wantSession string
 	}{
 		{
-			name:        "given inject with full uuid then returns inject and 8-char prefix",
+			name:        "given inherit with full uuid then returns inherit and 8-char prefix",
+			cmd:         "cc-session inherit 16d06326-977b-4c82-a38f-9b2358aa80ca",
+			wantSub:     "inherit",
+			wantSession: "16d06326",
+		},
+		{
+			name:        "given legacy inject with full uuid then returns inject and 8-char prefix",
 			cmd:         "cc-session inject 16d06326-977b-4c82-a38f-9b2358aa80ca",
 			wantSub:     "inject",
 			wantSession: "16d06326",
@@ -934,10 +940,13 @@ func TestParseTotalLines(t *testing.T) {
 	}
 }
 
-func makeInjectEvents(sessionID string, pages int) []session.Event {
+// makeInjectEvents builds a sequence of Bash tool-use/result events for a
+// paginated "cc-session <subcommand> <sessionID>" call, e.g. "inherit" (current)
+// or "inject" (legacy, kept for old transcripts).
+func makeCCSessionEvents(subcommand, sessionID string, pages int) []session.Event {
 	events := make([]session.Event, 0, pages*2)
 	for p := 1; p <= pages; p++ {
-		toolID := fmt.Sprintf("inject-tool-%d", p)
+		toolID := fmt.Sprintf("%s-tool-%d", subcommand, p)
 		events = append(events,
 			session.Event{
 				Kind:      session.EventAssistantMessage,
@@ -948,8 +957,8 @@ func makeInjectEvents(sessionID string, pages int) []session.Event {
 							ID:   toolID,
 							Name: "Bash",
 							Input: session.ToolInput{Raw: map[string]any{
-								"command":     "cc-session inject " + sessionID,
-								"description": "Inject session",
+								"command":     fmt.Sprintf("cc-session %s %s", subcommand, sessionID),
+								"description": "Load session",
 							}},
 						},
 					},
@@ -966,6 +975,12 @@ func makeInjectEvents(sessionID string, pages int) []session.Event {
 		)
 	}
 	return events
+}
+
+// makeInjectEvents is a convenience wrapper for the legacy "cc-session inject"
+// verb, used by tests that specifically cover pre-rename transcripts.
+func makeInjectEvents(sessionID string, pages int) []session.Event {
+	return makeCCSessionEvents("inject", sessionID, pages)
 }
 
 func TestFormatReadEvents_GivenConsecutiveInjectCalls_WhenRendered_ThenCollapsesIntoOneLine(t *testing.T) {
@@ -987,6 +1002,28 @@ func TestFormatReadEvents_GivenConsecutiveInjectCalls_WhenRendered_ThenCollapses
 	}
 	if strings.Count(got, "cc-session#") > 1 {
 		t.Fatalf("must collapse to exactly one inject summary line\ngot:\n%s", got)
+	}
+}
+
+func TestFormatReadEvents_GivenConsecutiveInheritCalls_WhenRendered_ThenCollapsesWithInheritedVerb(t *testing.T) {
+	sessionID := "16d06326-977b-4c82-a38f-9b2358aa80ca"
+	events := makeCCSessionEvents("inherit", sessionID, 4)
+
+	var out bytes.Buffer
+	if err := FormatReadEvents(events, nil, 0, 0, FormatOptions{}, &out); err != nil {
+		t.Fatalf("FormatReadEvents returned error: %v", err)
+	}
+	got := out.String()
+
+	want := "(cc-session#ol-1: inherited session 16d06326 here, 400 lines omitted)"
+	if !strings.Contains(got, want) {
+		t.Fatalf("expected collapsed inherit line with 'inherited' verb\nwant substring: %q\ngot:\n%s", want, got)
+	}
+	if strings.Contains(got, "[Bash") {
+		t.Fatalf("individual inherit Bash entries must not appear in output\ngot:\n%s", got)
+	}
+	if strings.Count(got, "cc-session#") > 1 {
+		t.Fatalf("must collapse to exactly one inherit summary line\ngot:\n%s", got)
 	}
 }
 
