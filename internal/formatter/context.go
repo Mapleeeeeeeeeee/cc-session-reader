@@ -41,7 +41,7 @@ func renderContextEvents(events []session.Event, agentIDs map[string]bool, opts 
 	seenSkills := make(map[string]bool)
 
 	flush := func() {
-		flushPendingTools(&pendingTools, opts, out)
+		flushPendingTools(&pendingTools, opts, out, nil)
 	}
 
 	for _, event := range events {

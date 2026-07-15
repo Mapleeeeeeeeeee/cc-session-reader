@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/analyzer"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/claudecodec"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/parser"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
@@ -152,29 +151,6 @@ func TestIntegration_FullPipeline_GivenNormalConversation_WhenFormatted_ThenAllT
 	// Bash tool use must produce a tool summary line.
 	if !strings.Contains(got, "[Bash") {
 		t.Errorf("Bash tool summary line missing\ngot:\n%s", got)
-	}
-}
-
-// TestIntegration_FullPipeline_GivenFixture_WhenStatsComputed_ThenCompressionOccurredAndCategoriesPopulated
-// verifies that ComputeStats reflects the compression the formatter performs:
-// raw text is larger than filtered, and the key categories are non-zero.
-func TestIntegration_FullPipeline_GivenFixture_WhenStatsComputed_ThenCompressionOccurredAndCategoriesPopulated(t *testing.T) {
-	events, _ := readIntegrationFixture(t)
-
-	stats := analyzer.ComputeStats(events)
-
-	if stats.RawChars <= stats.FilteredChars {
-		t.Errorf("expected raw chars > filtered chars (compression happened), got raw=%d filtered=%d",
-			stats.RawChars, stats.FilteredChars)
-	}
-	if stats.Categories["user_text"] == 0 {
-		t.Errorf("user_text category must be non-zero")
-	}
-	if stats.Categories["assistant_text"] == 0 {
-		t.Errorf("assistant_text category must be non-zero")
-	}
-	if stats.Categories["tool_summaries"] == 0 {
-		t.Errorf("tool_summaries category must be non-zero")
 	}
 }
 

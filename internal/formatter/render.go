@@ -18,6 +18,22 @@ type FormatOptions struct {
 	VerboseCommands bool
 }
 
+// ContentSink receives each unit of kept content as it is emitted by the read
+// render pipeline, tagged with the category it belongs to. analyzer.ComputeStats
+// uses this so its KEPT breakdown is derived from the exact same pass that
+// produces the injected text (see RenderReadEventsWithSink), instead of a
+// second, drift-prone reimplementation of what read/context actually keep.
+type ContentSink func(category string, text string)
+
+// Content categories reported to ContentSink. The values match the keys
+// analyzer.StatsResult.Categories uses for its KEPT buckets.
+const (
+	CategoryUserText      = "user_text"
+	CategoryUserAnswer    = "user_answers"
+	CategoryAssistantText = "assistant_text"
+	CategoryToolSummary   = "tool_summaries"
+)
+
 // userRender is the rendered form of a user-message event: the body to print
 // and whether anything should be printed at all.
 type userRender struct {
@@ -306,13 +322,16 @@ func collapseCCSessionTools(tools []pendingTool) []pendingTool {
 	return result
 }
 
-func flushPendingTools(pendingTools *[]pendingTool, opts FormatOptions, out io.Writer) {
+func flushPendingTools(pendingTools *[]pendingTool, opts FormatOptions, out io.Writer, sink ContentSink) {
 	tools := *pendingTools
 	if !opts.VerboseBash {
 		tools = collapseCCSessionTools(tools)
 	}
 	for _, pt := range tools {
 		fmt.Fprintf(out, "  %s\n", pt.summary)
+		if sink != nil {
+			sink(CategoryToolSummary, pt.summary)
+		}
 	}
 	if len(*pendingTools) > 0 {
 		fmt.Fprintln(out)
