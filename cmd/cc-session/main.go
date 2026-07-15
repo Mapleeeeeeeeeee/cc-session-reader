@@ -64,12 +64,29 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "Usage: cc-session <command> [options]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
+	nameFormat := fmt.Sprintf("  %%-%ds  %%s\n", longestVisibleCommandNameLen())
 	for _, cmd := range commands {
 		if cmd.hidden {
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "  %-8s  %s\n", cmd.name, cmd.summary)
+		fmt.Fprintf(os.Stderr, nameFormat, cmd.name, cmd.summary)
 	}
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Run 'cc-session <command> -h' for command-specific flags.")
+}
+
+// longestVisibleCommandNameLen returns the length of the longest non-hidden
+// command name, so printUsage can pad its name column wide enough for every
+// entry (a fixed width goes ragged once a name like "benchmark" exceeds it).
+func longestVisibleCommandNameLen() int {
+	maxLen := 0
+	for _, cmd := range commands {
+		if cmd.hidden {
+			continue
+		}
+		if len(cmd.name) > maxLen {
+			maxLen = len(cmd.name)
+		}
+	}
+	return maxLen
 }

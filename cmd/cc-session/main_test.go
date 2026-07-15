@@ -1331,6 +1331,70 @@ func TestRunHelp_GivenArgumentHintFlag_ThenPrintsSingleBracketedPipeSeparatedLin
 	}
 }
 
+// Regression guard for finding 3: the help cheat sheet used to be a fourth
+// hand-copied command list with no link to the registry. This asserts the
+// set of commands the cheat sheet derives its "cc-session ..." string from
+// exactly matches the registry's non-hidden, hinted commands, so adding a
+// registry subcommand without a matching cheat-sheet row (or vice versa)
+// turns this test red.
+func TestCheatSheet_GivenRegistry_ThenCoversExactlyNonHiddenHintedCommands(t *testing.T) {
+	want := map[string]bool{}
+	for _, cmd := range commands {
+		if cmd.hidden || cmd.argHint == "" {
+			continue
+		}
+		want[cmd.name] = true
+	}
+
+	got := map[string]bool{}
+	for _, row := range cheatSheet {
+		if row.cmdName == "" {
+			continue
+		}
+		got[row.cmdName] = true
+	}
+
+	for name := range want {
+		if !got[name] {
+			t.Errorf("cheatSheet has no row deriving from registry command %q", name)
+		}
+	}
+	for name := range got {
+		if !want[name] {
+			t.Errorf("cheatSheet row references %q, which is hidden or has no argHint in the registry", name)
+		}
+	}
+}
+
+// Regression guard for finding 4: SKILL.md's argument-hint frontmatter is a
+// hand-written literal with no compiler-enforced link to buildArgumentHint.
+// This asserts it matches verbatim, so a registry change that isn't synced
+// into SKILL.md turns this test red instead of silently drifting.
+func TestSkillMD_GivenArgumentHintFrontmatter_ThenMatchesBuildArgumentHint(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read SKILL.md: %v", err)
+	}
+
+	const linePrefix = "argument-hint: "
+	var hintLine string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, linePrefix) {
+			hintLine = line
+			break
+		}
+	}
+	if hintLine == "" {
+		t.Fatal("SKILL.md frontmatter has no argument-hint line")
+	}
+
+	got := strings.Trim(strings.TrimPrefix(hintLine, linePrefix), `"`)
+	want := buildArgumentHint()
+	if got != want {
+		t.Fatalf("SKILL.md argument-hint = %q, want %q (buildArgumentHint output); sync SKILL.md's frontmatter with the registry", got, want)
+	}
+}
+
 func TestFindCommand_GivenInjectName_ThenReturnsHiddenButDispatchable(t *testing.T) {
 	cmd, ok := findCommand("inject")
 	if !ok {

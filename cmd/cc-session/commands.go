@@ -8,9 +8,12 @@ import (
 )
 
 // command describes one cc-session subcommand. It is the single source of
-// truth for dispatch (main's switch), printUsage, and the "cc-session help"
-// cheat sheet / --argument-hint output — each of those used to hand-copy the
-// command list independently and drift out of sync.
+// truth for dispatch (main's switch), printUsage, and --argument-hint —
+// those used to hand-copy the command list independently and drift out of
+// sync. The "cc-session help" cheat sheet in help_cmd.go also derives each
+// row's "cc-session <name> <argHint>" fragment from this registry by name,
+// but keeps its intent text and teaching asides hand-written since those
+// aren't part of the registry.
 type command struct {
 	// name is the word typed after "cc-session" (os.Args[1]) and the label
 	// shown in printUsage / help.
@@ -24,9 +27,10 @@ type command struct {
 	// used for meta commands like "help" and "benchmark" that aren't part of
 	// the skill's quick-launch surface.
 	argHint string
-	// hidden excludes the command from printUsage, help, and the
-	// argument-hint line, while keeping it dispatchable. Used for the
-	// deprecated "inject" alias.
+	// hidden excludes the command from printUsage, the argument-hint line,
+	// and the help cheat sheet, while keeping it dispatchable. Used for the
+	// deprecated "inject" alias. The cheat sheet enforces this by panicking
+	// if a row ever references a hidden command's name.
 	hidden bool
 	// run executes the command. reader is the concrete claudecodec.Codec,
 	// which satisfies both session.TranscriptReader and session.HeaderScanner
