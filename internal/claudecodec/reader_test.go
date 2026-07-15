@@ -67,6 +67,72 @@ func TestParseLine_ToolResultTextBlockContent(t *testing.T) {
 	}
 }
 
+// --- ADR-003 decision 1: status determination ladder ---
+
+// TestParseLine_ToolResult_GivenExplicitSuccessField_ThenItWinsOverSniffedFailureText
+// pins ladder rule 1: an explicit toolUseResult.success always wins, even when
+// the result text also contains a known-failure signature (here "Exit code 1").
+func TestParseLine_ToolResult_GivenExplicitSuccessField_ThenItWinsOverSniffedFailureText(t *testing.T) {
+	event := parseLine(t, `{"type":"user","toolUseResult":{"success":true,"commandName":"Bash"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"Exit code 1"}]}}`)
+	if event.Tool == nil || !event.Tool.Success {
+		t.Fatalf("tool result = %#v, want Success=true (explicit signal wins)", event.Tool)
+	}
+}
+
+// TestParseLine_ToolResult_GivenBashResultWithoutSuccessField_ThenNoSignalDefaultsOk
+// pins that the highest-frequency shape (Bash toolUseResult carries no
+// "success" field at all) still resolves to ok when nothing in the ladder
+// signals failure. This is the safe default from ADR-003 rule 4.
+func TestParseLine_ToolResult_GivenBashResultWithoutSuccessField_ThenNoSignalDefaultsOk(t *testing.T) {
+	event := parseLine(t, `{"type":"user","toolUseResult":{"stdout":"done","stderr":"","interrupted":false},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"done\nExit code 0"}]}}`)
+	if event.Tool == nil || !event.Tool.Success {
+		t.Fatalf("tool result = %#v, want Success=true", event.Tool)
+	}
+}
+
+// TestParseLine_ToolResult_GivenNoSuccessFieldAndIsErrorTrue_ThenFailed guards
+// the bug described in ADR-003: Bash toolUseResult has no "success" field, so
+// the codec used to default Success=true unconditionally, rendering failed
+// commands as "-> ok". With is_error:true parsed, it must resolve to FAILED.
+func TestParseLine_ToolResult_GivenNoSuccessFieldAndIsErrorTrue_ThenFailed(t *testing.T) {
+	event := parseLine(t, `{"type":"user","toolUseResult":{"stdout":"","stderr":"no such file or directory"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","is_error":true,"content":"no such file or directory"}]}}`)
+	if event.Tool == nil || event.Tool.Success {
+		t.Fatalf("tool result = %#v, want Success=false", event.Tool)
+	}
+}
+
+// TestParseLine_ToolResult_GivenIsErrorFalseButExitCodeNonZero_ThenSniffedAsFailed
+// guards the ADR-003 negative knowledge: is_error is a one-directional signal.
+// Real transcripts carry is_error:false on Bash results whose text still says
+// "Exit code 1" — false must never be trusted as a success signal, so the
+// content sniff step must still catch the failure.
+func TestParseLine_ToolResult_GivenIsErrorFalseButExitCodeNonZero_ThenSniffedAsFailed(t *testing.T) {
+	event := parseLine(t, `{"type":"user","toolUseResult":{"stdout":"","stderr":""},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","is_error":false,"content":"Exit code 1"}]}}`)
+	if event.Tool == nil || event.Tool.Success {
+		t.Fatalf("tool result = %#v, want Success=false (sniffed from Exit code 1)", event.Tool)
+	}
+}
+
+// TestParseLine_ToolResult_GivenExitCodeZero_ThenNotSniffedAsFailed guards
+// against over-eager sniffing: "Exit code 0" reports a successful exit and
+// must not trigger the failure signature.
+func TestParseLine_ToolResult_GivenExitCodeZero_ThenNotSniffedAsFailed(t *testing.T) {
+	event := parseLine(t, `{"type":"user","toolUseResult":{"stdout":"ok","stderr":""},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok\nExit code 0"}]}}`)
+	if event.Tool == nil || !event.Tool.Success {
+		t.Fatalf("tool result = %#v, want Success=true", event.Tool)
+	}
+}
+
+// TestParseLine_ToolResult_GivenHookErrorText_ThenSniffedAsFailed pins the
+// second ADR-003 sniff pattern: a hook rejection is reported as ordinary
+// result content (no success/is_error signal) ending in "... hook error".
+func TestParseLine_ToolResult_GivenHookErrorText_ThenSniffedAsFailed(t *testing.T) {
+	event := parseLine(t, `{"type":"user","toolUseResult":{"stdout":"","stderr":""},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"PreToolUse:Bash [rm -rf /tmp/x] hook error: blocked by policy"}]}}`)
+	if event.Tool == nil || event.Tool.Success {
+		t.Fatalf("tool result = %#v, want Success=false (sniffed from hook error)", event.Tool)
+	}
+}
+
 func TestParseLine_UserAnswer(t *testing.T) {
 	event := parseLine(t, `{"type":"user","toolUseResult":{"success":true},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-3","content":"User has answered your questions: ship it"}]}}`)
 	if event.User == nil || !event.User.IsAnswer || event.User.Text != "User has answered your questions: ship it" {

@@ -3,6 +3,7 @@ package claudecodec
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
@@ -126,6 +127,11 @@ type rawContentBlock struct {
 	ToolUseID string          `json:"tool_use_id"`
 	Input     json.RawMessage `json:"input"`
 	Content   json.RawMessage `json:"content"`
+	// IsError is the tool_result content block's failure flag. Per ADR-003 it
+	// is a one-directional signal: true always means failed, but false does not
+	// mean success (real transcripts carry is_error:false on Bash results whose
+	// text says "Exit code 1") — see the status ladder in toToolResult.
+	IsError bool `json:"is_error"`
 }
 
 func cleanCwdPaths(text string, cwd string) string {
@@ -136,40 +142,83 @@ func cleanCwdPaths(text string, cwd string) string {
 }
 
 func (e rawEntry) toToolResult() session.ToolResult {
-	result := rawToolUseResult{Success: true}
+	var result rawToolUseResult
 	if len(e.ToolUseResult) > 0 {
 		_ = json.Unmarshal(e.ToolUseResult, &result)
 	}
-	text, toolUseID := extractToolResultText(e.Message.Blocks)
+	text, toolUseID, isError := extractToolResultText(e.Message.Blocks)
 	name := result.CommandName
 	if name == "" {
 		name = result.AgentType
 	}
+	cleanText := cleanCwdPaths(text, e.Cwd)
 	return session.ToolResult{
 		ToolUseID: toolUseID,
-		Success:   result.Success,
-		Text:      cleanCwdPaths(text, e.Cwd),
+		Success:   determineSuccess(result.Success, isError, cleanText),
+		Text:      cleanText,
 		RawName:   name,
 	}
 }
 
 type rawToolUseResult struct {
-	Success     bool   `json:"success"`
+	// Success is a pointer so an absent field (the common case for Bash and
+	// Read, see ADR-003) is distinguishable from an explicit false — nil means
+	// "no explicit signal", not "failed".
+	Success     *bool  `json:"success"`
 	CommandName string `json:"commandName"`
 	AgentType   string `json:"agentType"`
 }
 
-func extractToolResultText(blocks []rawContentBlock) (string, string) {
+// nonZeroExitCodeLine matches a bare Bash "Exit code N" line. Claude Code
+// appends this line to Bash results regardless of outcome, so N must be
+// checked: "Exit code 0" is a success marker, not a failure signature.
+var nonZeroExitCodeLine = regexp.MustCompile(`(?m)^Exit code (\d+)\s*$`)
+
+// hookErrorSignature matches PreToolUse/PostToolUse hook rejection text,
+// which Claude Code renders as ordinary result content ending in
+// "... hook error" rather than setting is_error.
+var hookErrorSignature = regexp.MustCompile(`hook error`)
+
+// determineSuccess applies the ADR-003 status ladder: the first applicable
+// signal wins. explicitSuccess is nil when toolUseResult.success was absent
+// from the transcript line (the common case for Bash/Read).
+func determineSuccess(explicitSuccess *bool, isError bool, text string) bool {
+	if explicitSuccess != nil {
+		return *explicitSuccess
+	}
+	if isError {
+		return false
+	}
+	if hasKnownFailureSignature(text) {
+		return false
+	}
+	return true
+}
+
+// hasKnownFailureSignature sniffs result text for the small, enumerated set
+// of known-failure patterns from ADR-003. This is deliberately not a general
+// heuristic: a false FAILED misleads the reader as badly as a false ok, so
+// new signatures are added only with a real transcript sample as evidence.
+func hasKnownFailureSignature(text string) bool {
+	for _, match := range nonZeroExitCodeLine.FindAllStringSubmatch(text, -1) {
+		if match[1] != "0" {
+			return true
+		}
+	}
+	return hookErrorSignature.MatchString(text)
+}
+
+func extractToolResultText(blocks []rawContentBlock) (string, string, bool) {
 	for _, block := range blocks {
 		if block.Type != "tool_result" {
 			continue
 		}
 		if len(block.Content) == 0 {
-			return "", block.ToolUseID
+			return "", block.ToolUseID, block.IsError
 		}
 		var s string
 		if err := json.Unmarshal(block.Content, &s); err == nil {
-			return s, block.ToolUseID
+			return s, block.ToolUseID, block.IsError
 		}
 		var subBlocks []rawContentBlock
 		if err := json.Unmarshal(block.Content, &subBlocks); err == nil {
@@ -179,15 +228,15 @@ func extractToolResultText(blocks []rawContentBlock) (string, string) {
 					parts = append(parts, subBlock.Text)
 				}
 			}
-			return strings.Join(parts, "\n"), block.ToolUseID
+			return strings.Join(parts, "\n"), block.ToolUseID, block.IsError
 		}
-		return string(block.Content), block.ToolUseID
+		return string(block.Content), block.ToolUseID, block.IsError
 	}
-	return "", ""
+	return "", "", false
 }
 
 func extractUserAnswer(blocks []rawContentBlock) string {
-	text, _ := extractToolResultText(blocks)
+	text, _, _ := extractToolResultText(blocks)
 	for _, prefix := range userAnswerPrefixes {
 		if strings.HasPrefix(text, prefix) {
 			return text
@@ -209,7 +258,7 @@ func (e rawEntry) extractAllText() string {
 					parts = append(parts, marshalNoEscape(block.Input))
 				}
 			case "tool_result":
-				text, _ := extractToolResultText([]rawContentBlock{block})
+				text, _, _ := extractToolResultText([]rawContentBlock{block})
 				if text != "" {
 					parts = append(parts, text)
 				}

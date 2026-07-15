@@ -293,6 +293,63 @@ func TestToolResultSummary(t *testing.T) {
 	}
 }
 
+// --- ADR-003 decision 2: error excerpts skip noise lines ---
+
+// TestToolResultSummary_GivenFailureTextWithNoiseLines_ThenExcerptSkipsNoiseAndWidensBudget
+// guards the bug described in ADR-003: before this fix, a failed result's
+// summary blindly took the first line, which was often noise (a cat -n line
+// number prefix, the bare "Exit code N" line itself, or hook rejection
+// boilerplate) rather than the actual error. It also pins the widened
+// single-line budget (~200 chars) failures get versus successes (~80).
+func TestToolResultSummary_GivenFailureTextWithNoiseLines_ThenExcerptSkipsNoiseAndWidensBudget(t *testing.T) {
+	longError := "compiler error: " + strings.Repeat("x", 190)
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		{
+			name: "given bare exit code line then skips it for the real error beneath",
+			text: "Exit code 1\ncompiler error: unexpected token",
+			want: " -> FAILED: compiler error: unexpected token",
+		},
+		{
+			name: "given cat -n line number prefix then skips it",
+			text: "   12\tfunc broken() {\nsyntax error: missing }",
+			want: " -> FAILED: syntax error: missing }",
+		},
+		{
+			name: "given hook error boilerplate then skips it for the detail beneath",
+			text: "PreToolUse:Bash hook error: blocked\nactual reason: policy violation",
+			want: " -> FAILED: actual reason: policy violation",
+		},
+		{
+			name: "given only noise lines then falls back to the first noise line",
+			text: "Exit code 1",
+			want: " -> FAILED: Exit code 1",
+		},
+		{
+			name: "given non-noise first line then keeps prior single-line behavior",
+			text: "bad",
+			want: " -> FAILED: bad",
+		},
+		{
+			name: "given long error line then truncates to the 200-char failure budget",
+			text: longError,
+			want: " -> FAILED: " + Truncate(longError, failureExcerptMaxRunes),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ToolResult{Success: false, Text: tt.text}
+			if got := result.Summary(); got != tt.want {
+				t.Fatalf("Summary() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCompactTaskNotification_GivenFullNotification_ThenKeepsSummaryAndResult(t *testing.T) {
 	input := `<task-notification>
 <task-id>ad4760fe24f754e27</task-id>

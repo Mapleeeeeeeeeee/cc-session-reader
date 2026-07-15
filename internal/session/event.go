@@ -198,18 +198,74 @@ func (r ToolResult) Status() string {
 	return "FAILED"
 }
 
+const (
+	// successExcerptMaxRunes bounds the one-line summary shown after a
+	// successful result, where the reader mainly wants a glance, not detail.
+	successExcerptMaxRunes = 80
+	// failureExcerptMaxRunes is wider than the success budget (ADR-003):
+	// errors are the content least safe to drop from the compact summary.
+	failureExcerptMaxRunes = 200
+)
+
 func (r ToolResult) Summary() string {
 	if r.Success {
 		switch r.RawName {
 		case ToolRead, ToolWrite, ToolEdit, ToolAgent:
 			return fmt.Sprintf(" -> %s", r.Status())
 		}
+		if firstLine := FirstLine(r.Text, successExcerptMaxRunes); firstLine != "" {
+			return fmt.Sprintf(" -> %s: %s", r.Status(), firstLine)
+		}
+		return fmt.Sprintf(" -> %s", r.Status())
 	}
-	firstLine := FirstLine(r.Text, 80)
-	if firstLine != "" {
-		return fmt.Sprintf(" -> %s: %s", r.Status(), firstLine)
+	if excerpt := firstMeaningfulErrorLine(r.Text, failureExcerptMaxRunes); excerpt != "" {
+		return fmt.Sprintf(" -> %s: %s", r.Status(), excerpt)
 	}
 	return fmt.Sprintf(" -> %s", r.Status())
+}
+
+// catLineNumberPrefix matches "cat -n" style line-number prefixes ("   12\t")
+// that Read/Edit tool output prepends to every line — noise, not error content.
+var catLineNumberPrefix = regexp.MustCompile(`^\s*\d+\t`)
+
+// bareExitCodeLine matches a standalone "Exit code N" line. The code is
+// already reflected in the FAILED status token, so per ADR-003 it is skipped
+// when picking an excerpt in favor of the actual error line beneath it.
+var bareExitCodeLine = regexp.MustCompile(`^Exit code \d+\s*$`)
+
+// hookErrorBoilerplate matches PreToolUse/PostToolUse hook rejection preamble
+// lines ("... hook error"), which name the hook stage rather than the actual
+// failure — the reader wants what's beneath it, not the wrapper.
+var hookErrorBoilerplate = regexp.MustCompile(`hook error`)
+
+// isNoiseExcerptLine reports whether line is one of the known-noise shapes
+// that should be skipped when picking a failure excerpt (ADR-003 decision 2).
+func isNoiseExcerptLine(line string) bool {
+	return catLineNumberPrefix.MatchString(line) ||
+		bareExitCodeLine.MatchString(line) ||
+		hookErrorBoilerplate.MatchString(line)
+}
+
+// firstMeaningfulErrorLine returns the first non-noise line of text, skipping
+// cat -n prefixes, bare "Exit code N" lines, and hook boilerplate so the
+// excerpt surfaces the actual error instead of the noise around it. If every
+// line is noise, it falls back to the first non-empty line rather than
+// dropping the excerpt entirely.
+func firstMeaningfulErrorLine(text string, maxRunes int) string {
+	var firstNonEmpty string
+	for _, raw := range strings.Split(text, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if firstNonEmpty == "" {
+			firstNonEmpty = line
+		}
+		if !isNoiseExcerptLine(line) {
+			return Truncate(line, maxRunes)
+		}
+	}
+	return Truncate(firstNonEmpty, maxRunes)
 }
 
 type NoiseEvent struct {
