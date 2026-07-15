@@ -193,11 +193,57 @@ func TestSummarizeToolUse_OtherTools(t *testing.T) {
 		{name: "Grep empty pattern", toolName: "Grep", inp: toolInput(nil), want: `[Grep] "?"`},
 		{name: "Glob", toolName: "Glob", inp: toolInput(map[string]any{"pattern": "**/*.go"}), want: "[Glob] **/*.go"},
 		{name: "ToolSearch", toolName: "ToolSearch", inp: toolInput(map[string]any{"query": "react docs"}), want: "[ToolSearch] react docs"},
-		{name: "Unknown", toolName: "WebSearch", inp: toolInput(nil), want: "[WebSearch]"},
+		{name: "Unknown with no input", toolName: "WebSearch", inp: toolInput(nil), want: "[WebSearch]"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := SummarizeToolUse(tt.toolName, tt.inp, "")
+			if got != tt.want {
+				t.Fatalf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// --- ADR-003 decision 4: unknown-tool fallback shows input key/value pairs ---
+
+// TestSummarizeToolUse_GivenUnknownToolWithInput_ThenShowsFirstKeysSortedAndTruncated
+// guards the bug described in ADR-003: before this fix, a tool with no
+// dedicated summarizer branch rendered "[ToolName]" with the input completely
+// discarded, so a future Claude Code tool would silently lose all context.
+// Map iteration order is not stable in Go, so this also pins that the key
+// order in the rendered output is deterministic (alphabetical) rather than
+// flaky across runs.
+func TestSummarizeToolUse_GivenUnknownToolWithInput_ThenShowsFirstKeysSortedAndTruncated(t *testing.T) {
+	tests := []struct {
+		name string
+		inp  session.ToolInput
+		want string
+	}{
+		{
+			name: "given input under the key cap then shows every key sorted alphabetically",
+			inp:  toolInput(map[string]any{"query": "cats", "num_results": float64(5)}),
+			want: "[WebSearch] num_results=5, query=cats",
+		},
+		{
+			name: "given more keys than the cap then keeps only the first alphabetically",
+			inp:  toolInput(map[string]any{"z_last": "z", "a_first": "a", "m_mid": "m", "b_second": "b"}),
+			want: "[WebSearch] a_first=a, b_second=b, m_mid=m",
+		},
+		{
+			name: "given a long value then truncates it to the 60-rune budget",
+			inp:  toolInput(map[string]any{"payload": strings.Repeat("x", 100)}),
+			want: "[WebSearch] payload=" + strings.Repeat("x", 60),
+		},
+		{
+			name: "given empty input map then returns bare tag",
+			inp:  toolInput(map[string]any{}),
+			want: "[WebSearch]",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SummarizeToolUse("WebSearch", tt.inp, "")
 			if got != tt.want {
 				t.Fatalf("got %q, want %q", got, tt.want)
 			}

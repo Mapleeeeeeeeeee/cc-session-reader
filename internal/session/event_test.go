@@ -350,6 +350,67 @@ func TestToolResultSummary_GivenFailureTextWithNoiseLines_ThenExcerptSkipsNoiseA
 	}
 }
 
+// --- ADR-003 decision 3: diff summaries for Edit/Write ---
+
+// TestToolResultSummary_GivenEditDiffStat_ThenRendersDiffAnnotation pins the
+// Edit diff summary format: "+A, -D @ L<newStart>" for a single hunk, and the
+// same with a trailing ", H hunks" once more than one hunk is present.
+func TestToolResultSummary_GivenEditDiffStat_ThenRendersDiffAnnotation(t *testing.T) {
+	tests := []struct {
+		name   string
+		result ToolResult
+		want   string
+	}{
+		{
+			name: "given single hunk then omits hunk count",
+			result: ToolResult{Success: true, RawName: ToolEdit, DiffStat: &DiffStat{
+				Additions: 2, Deletions: 1, NewStartLine: 10, HunkCount: 1,
+			}},
+			want: " -> ok (+2, -1 @ L10)",
+		},
+		{
+			name: "given multiple hunks then appends hunk count",
+			result: ToolResult{Success: true, RawName: ToolEdit, DiffStat: &DiffStat{
+				Additions: 5, Deletions: 3, NewStartLine: 5, HunkCount: 2,
+			}},
+			want: " -> ok (+5, -3 @ L5, 2 hunks)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.result.Summary(); got != tt.want {
+				t.Fatalf("Summary() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestToolResultSummary_GivenWriteDiffStatNewFile_ThenRendersLineCount pins
+// the Write new-file summary format from ADR-003 decision 3.
+func TestToolResultSummary_GivenWriteDiffStatNewFile_ThenRendersLineCount(t *testing.T) {
+	result := ToolResult{Success: true, RawName: ToolWrite, DiffStat: &DiffStat{
+		IsNewFile: true, NewFileLines: 42,
+	}}
+	want := " -> ok (new file, 42 lines)"
+	if got := result.Summary(); got != want {
+		t.Fatalf("Summary() = %q, want %q", got, want)
+	}
+}
+
+// TestToolResultSummary_GivenNoDiffStat_ThenFallsBackToBareOk guards the
+// ADR-003 decision 3 fallback: when the codec couldn't parse structuredPatch
+// (missing or unparsable), DiffStat is nil and Summary() must not panic or
+// render a bogus diff annotation — it keeps the plain "-> ok" the tool
+// already got before diff summaries existed.
+func TestToolResultSummary_GivenNoDiffStat_ThenFallsBackToBareOk(t *testing.T) {
+	result := ToolResult{Success: true, RawName: ToolEdit, Text: "irrelevant body"}
+	want := " -> ok"
+	if got := result.Summary(); got != want {
+		t.Fatalf("Summary() = %q, want %q", got, want)
+	}
+}
+
 func TestCompactTaskNotification_GivenFullNotification_ThenKeepsSummaryAndResult(t *testing.T) {
 	input := `<task-notification>
 <task-id>ad4760fe24f754e27</task-id>

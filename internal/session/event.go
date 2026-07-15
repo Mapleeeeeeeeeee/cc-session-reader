@@ -189,6 +189,31 @@ type ToolResult struct {
 	Success   bool
 	Text      string
 	RawName   string
+
+	// DiffStat carries the parsed structuredPatch summary for a successful
+	// Edit/Write result (ADR-003 decision 3), computed by the codec from
+	// toolUseResult. Nil means no diff info is available (wrong tool, or
+	// structuredPatch/content missing or unparsable) — Summary() then falls
+	// back to the bare status line it always rendered.
+	DiffStat *DiffStat
+}
+
+// DiffStat summarizes a successful Edit's structuredPatch hunks or a
+// successful Write's new-file content.
+type DiffStat struct {
+	// IsNewFile distinguishes a Write result (new file, line count from
+	// content) from an Edit result (hunk-based +/- counts).
+	IsNewFile bool
+
+	// Edit fields: +/- line counts summed across every hunk, NewStartLine
+	// taken from the first hunk, HunkCount the total number of hunks.
+	Additions    int
+	Deletions    int
+	NewStartLine int
+	HunkCount    int
+
+	// NewFileLines is Write's new-file line count, derived from content.
+	NewFileLines int
 }
 
 func (r ToolResult) Status() string {
@@ -209,6 +234,9 @@ const (
 
 func (r ToolResult) Summary() string {
 	if r.Success {
+		if diff := r.diffSummary(); diff != "" {
+			return diff
+		}
 		switch r.RawName {
 		case ToolRead, ToolWrite, ToolEdit, ToolAgent:
 			return fmt.Sprintf(" -> %s", r.Status())
@@ -222,6 +250,24 @@ func (r ToolResult) Summary() string {
 		return fmt.Sprintf(" -> %s: %s", r.Status(), excerpt)
 	}
 	return fmt.Sprintf(" -> %s", r.Status())
+}
+
+// diffSummary renders the ADR-003 decision 3 diff/new-file annotation for a
+// successful Edit/Write result. Returns "" when DiffStat wasn't computed (the
+// codec couldn't find a structuredPatch/content to parse), so Summary() falls
+// back to the bare status line.
+func (r ToolResult) diffSummary() string {
+	if r.DiffStat == nil {
+		return ""
+	}
+	if r.DiffStat.IsNewFile {
+		return fmt.Sprintf(" -> %s (new file, %d lines)", r.Status(), r.DiffStat.NewFileLines)
+	}
+	summary := fmt.Sprintf(" -> %s (+%d, -%d @ L%d", r.Status(), r.DiffStat.Additions, r.DiffStat.Deletions, r.DiffStat.NewStartLine)
+	if r.DiffStat.HunkCount > 1 {
+		summary += fmt.Sprintf(", %d hunks", r.DiffStat.HunkCount)
+	}
+	return summary + ")"
 }
 
 // catLineNumberPrefix matches "cat -n" style line-number prefixes ("   12\t")

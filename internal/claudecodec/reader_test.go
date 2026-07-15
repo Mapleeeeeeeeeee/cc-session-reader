@@ -133,6 +133,193 @@ func TestParseLine_ToolResult_GivenHookErrorText_ThenSniffedAsFailed(t *testing.
 	}
 }
 
+// --- ADR-003 decision 3: diff summaries for Edit/Write ---
+
+// TestParseLine_ToolResult_GivenEditSingleHunk_ThenDiffStatSumsHunkLines pins
+// the codec's structuredPatch parsing: +/- line counts summed from the hunk's
+// "lines" entries, and NewStartLine taken from the hunk's newStart.
+func TestParseLine_ToolResult_GivenEditSingleHunk_ThenDiffStatSumsHunkLines(t *testing.T) {
+	line := `{"type":"user","toolUseResult":{"success":true,"commandName":"Edit","structuredPatch":[` +
+		`{"oldStart":10,"oldLines":3,"newStart":10,"newLines":4,"lines":[" line1","-old line","+new line","+another new"," line2"]}` +
+		`]},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok"}]}}`
+	event := parseLine(t, line)
+
+	stat := event.Tool.DiffStat
+	if stat == nil {
+		t.Fatal("DiffStat is nil, want populated stat")
+	}
+	if stat.IsNewFile {
+		t.Fatal("IsNewFile = true, want false for Edit")
+	}
+	if stat.Additions != 2 || stat.Deletions != 1 || stat.NewStartLine != 10 || stat.HunkCount != 1 {
+		t.Fatalf("DiffStat = %#v, want Additions=2 Deletions=1 NewStartLine=10 HunkCount=1", stat)
+	}
+}
+
+// TestParseLine_ToolResult_GivenEditMultipleHunks_ThenDiffStatAggregatesAcrossHunks
+// pins multi-hunk aggregation: additions/deletions sum across every hunk, but
+// NewStartLine stays pinned to the *first* hunk (per ADR-003), and HunkCount
+// reflects the total hunk count.
+func TestParseLine_ToolResult_GivenEditMultipleHunks_ThenDiffStatAggregatesAcrossHunks(t *testing.T) {
+	line := `{"type":"user","toolUseResult":{"success":true,"commandName":"Edit","structuredPatch":[` +
+		`{"oldStart":5,"oldLines":2,"newStart":5,"newLines":3,"lines":[" a","+b","+c"]},` +
+		`{"oldStart":40,"oldLines":4,"newStart":41,"newLines":2,"lines":["-d","-e"," f"]}` +
+		`]},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok"}]}}`
+	event := parseLine(t, line)
+
+	stat := event.Tool.DiffStat
+	if stat == nil {
+		t.Fatal("DiffStat is nil, want populated stat")
+	}
+	if stat.Additions != 2 || stat.Deletions != 2 || stat.NewStartLine != 5 || stat.HunkCount != 2 {
+		t.Fatalf("DiffStat = %#v, want Additions=2 Deletions=2 NewStartLine=5 HunkCount=2", stat)
+	}
+}
+
+// TestParseLine_ToolResult_GivenWriteNewFile_ThenDiffStatCountsContentLines
+// pins Write's new-file shape: empty structuredPatch plus a content field, no
+// hunks to parse, so the line count comes from splitting content instead.
+func TestParseLine_ToolResult_GivenWriteNewFile_ThenDiffStatCountsContentLines(t *testing.T) {
+	line := `{"type":"user","toolUseResult":{"success":true,"commandName":"Write","structuredPatch":[],` +
+		`"content":"package main\n\nfunc main() {}\n"},` +
+		`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok"}]}}`
+	event := parseLine(t, line)
+
+	stat := event.Tool.DiffStat
+	if stat == nil {
+		t.Fatal("DiffStat is nil, want populated stat")
+	}
+	if !stat.IsNewFile {
+		t.Fatal("IsNewFile = false, want true for Write")
+	}
+	if stat.NewFileLines != 3 {
+		t.Fatalf("NewFileLines = %d, want 3", stat.NewFileLines)
+	}
+}
+
+// TestParseLine_ToolResult_GivenEditWithoutStructuredPatch_ThenDiffStatNil
+// guards the ADR-003 fallback: a successful Edit whose toolUseResult carries
+// no structuredPatch (missing/unparsable) must not synthesize a fake diff —
+// DiffStat stays nil so Summary() renders the bare "-> ok" it always did.
+func TestParseLine_ToolResult_GivenEditWithoutStructuredPatch_ThenDiffStatNil(t *testing.T) {
+	line := `{"type":"user","toolUseResult":{"success":true,"commandName":"Edit"},` +
+		`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok"}]}}`
+	event := parseLine(t, line)
+
+	if event.Tool.DiffStat != nil {
+		t.Fatalf("DiffStat = %#v, want nil (no structuredPatch in transcript)", event.Tool.DiffStat)
+	}
+}
+
+// TestParseLine_ToolResult_GivenFailedEdit_ThenDiffStatNil guards the
+// constraint that diff summaries never apply to failed results, even when the
+// transcript happens to carry a structuredPatch — the existing FAILED excerpt
+// path must own the summary, not the diff annotation.
+func TestParseLine_ToolResult_GivenFailedEdit_ThenDiffStatNil(t *testing.T) {
+	line := `{"type":"user","toolUseResult":{"success":false,"commandName":"Edit","structuredPatch":[` +
+		`{"oldStart":1,"oldLines":1,"newStart":1,"newLines":1,"lines":["-a","+b"]}` +
+		`]},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"permission denied"}]}}`
+	event := parseLine(t, line)
+
+	if event.Tool.DiffStat != nil {
+		t.Fatalf("DiffStat = %#v, want nil for a failed result", event.Tool.DiffStat)
+	}
+}
+
+// --- ADR-003 follow-up: tool_result name resolved from the preceding tool_use ---
+//
+// Real Claude Code transcripts carry no commandName/agentType field on
+// Bash/Edit/Write/Read toolUseResults (only "success"-less bodies like
+// {filePath, structuredPatch, ...} for Edit, or {type, file} for Read) — the
+// tool name only exists on the earlier assistant tool_use block, correlated
+// by tool_use_id. A fixture with RawName/commandName hand-filled (as every
+// other test in this file does, matching ParseLine's single-line contract)
+// cannot catch a regression here: it has to run the real two-entry sequence
+// through ReadAll so the tool_use -> tool_result name resolution actually
+// executes.
+
+// TestReadAll_GivenEditToolResultWithoutCommandName_ThenRawNameResolvedFromPrecedingToolUse
+// guards the bug where diffStatFor's tool-name gate silently no-opped on
+// every real transcript because RawName was always "": with the tool_use's
+// name recovered via tool_use_id, RawName must read "Edit" and the
+// structuredPatch diff annotation must render.
+func TestReadAll_GivenEditToolResultWithoutCommandName_ThenRawNameResolvedFromPrecedingToolUse(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	lines := []string{
+		`{"type":"assistant","timestamp":"2026-07-15T00:00:00Z","message":{"role":"assistant","content":[` +
+			`{"type":"tool_use","id":"toolu_edit1","name":"Edit","input":{"file_path":"/repo/src/lib/app-metadata.ts"}}` +
+			`]}}`,
+		`{"type":"user","timestamp":"2026-07-15T00:00:01Z","toolUseResult":{` +
+			`"filePath":"/repo/src/lib/app-metadata.ts","oldString":"a","newString":"b","originalFile":"a",` +
+			`"replaceAll":false,"userModified":false,` +
+			`"structuredPatch":[{"oldStart":10,"oldLines":3,"newStart":10,"newLines":4,` +
+			`"lines":[" line1","-old line","+new line","+another new"," line2"]}]` +
+			`},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_edit1",` +
+			`"content":"The file /repo/src/lib/app-metadata.ts has been updated successfully."}]}}`,
+		"",
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	events, err := ReadAll(path)
+	if err != nil {
+		t.Fatalf("ReadAll returned error: %v", err)
+	}
+	if len(events) != 2 || events[1].Tool == nil {
+		t.Fatalf("events = %#v, want an assistant event followed by a tool_result event", events)
+	}
+
+	tool := events[1].Tool
+	if tool.RawName != session.ToolEdit {
+		t.Fatalf("RawName = %q, want %q (resolved from preceding tool_use)", tool.RawName, session.ToolEdit)
+	}
+	wantSummary := " -> ok (+2, -1 @ L10)"
+	if got := tool.Summary(); got != wantSummary {
+		t.Fatalf("Summary() = %q, want %q", got, wantSummary)
+	}
+}
+
+// TestReadAll_GivenReadToolResultWithoutCommandName_ThenBareOkSuppressionApplies
+// guards the companion regression: Summary()'s ADR-002 bare "-> ok"
+// suppression for Read switches on RawName, so with RawName stuck at "" on
+// real transcripts the tool's boilerplate confirmation text ("has been
+// updated successfully...") leaked into the rendered summary instead of
+// being suppressed.
+func TestReadAll_GivenReadToolResultWithoutCommandName_ThenBareOkSuppressionApplies(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	lines := []string{
+		`{"type":"assistant","timestamp":"2026-07-15T00:00:00Z","message":{"role":"assistant","content":[` +
+			`{"type":"tool_use","id":"toolu_read1","name":"Read","input":{"file_path":"/repo/README.md"}}` +
+			`]}}`,
+		`{"type":"user","timestamp":"2026-07-15T00:00:01Z","toolUseResult":{` +
+			`"type":"text","file":{"content":"# README","numLines":1}` +
+			`},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_read1",` +
+			`"content":"     1\t# README"}]}}`,
+		"",
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	events, err := ReadAll(path)
+	if err != nil {
+		t.Fatalf("ReadAll returned error: %v", err)
+	}
+	if len(events) != 2 || events[1].Tool == nil {
+		t.Fatalf("events = %#v, want an assistant event followed by a tool_result event", events)
+	}
+
+	tool := events[1].Tool
+	if tool.RawName != session.ToolRead {
+		t.Fatalf("RawName = %q, want %q (resolved from preceding tool_use)", tool.RawName, session.ToolRead)
+	}
+	wantSummary := " -> ok"
+	if got := tool.Summary(); got != wantSummary {
+		t.Fatalf("Summary() = %q, want %q (boilerplate body content must be suppressed)", got, wantSummary)
+	}
+}
+
 func TestParseLine_UserAnswer(t *testing.T) {
 	event := parseLine(t, `{"type":"user","toolUseResult":{"success":true},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-3","content":"User has answered your questions: ship it"}]}}`)
 	if event.User == nil || !event.User.IsAnswer || event.User.Text != "User has answered your questions: ship it" {
