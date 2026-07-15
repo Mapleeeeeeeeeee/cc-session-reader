@@ -5,6 +5,7 @@ import (
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/analyzer"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/claudecodec"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/formatter"
 )
 
 // This file lives in the external formatter_test package (not formatter)
@@ -29,13 +30,13 @@ func TestIntegration_FullPipeline_GivenFixture_WhenStatsComputed_ThenCompression
 		t.Errorf("expected raw chars > filtered chars (compression happened), got raw=%d filtered=%d",
 			stats.RawChars, stats.FilteredChars)
 	}
-	if stats.Categories["user_text"] == 0 {
+	if stats.Categories[formatter.CategoryUserText] == 0 {
 		t.Errorf("user_text category must be non-zero")
 	}
-	if stats.Categories["assistant_text"] == 0 {
+	if stats.Categories[formatter.CategoryAssistantText] == 0 {
 		t.Errorf("assistant_text category must be non-zero")
 	}
-	if stats.Categories["tool_summaries"] == 0 {
+	if stats.Categories[formatter.CategoryToolSummary] == 0 {
 		t.Errorf("tool_summaries category must be non-zero")
 	}
 }

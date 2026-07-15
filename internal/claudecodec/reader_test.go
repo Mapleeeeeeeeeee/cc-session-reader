@@ -123,6 +123,20 @@ func TestParseLine_ToolResult_GivenExitCodeZero_ThenNotSniffedAsFailed(t *testin
 	}
 }
 
+// TestParseLine_ToolResult_GivenExitCodeMentionedMidSentence_ThenNotSniffedAsFailed
+// guards the nonZeroExitCodeLine regex anchor `(?m)^Exit code (\d+)\s*$`: it
+// only matches a bare "Exit code N" line, not the phrase appearing inside
+// other text. This protects against a future edit that loosens the anchor
+// (e.g. dropping `^`/`$` or switching to a plain substring match), which
+// would sniff any result mentioning "Exit code 1" as FAILED regardless of
+// context.
+func TestParseLine_ToolResult_GivenExitCodeMentionedMidSentence_ThenNotSniffedAsFailed(t *testing.T) {
+	event := parseLine(t, `{"type":"user","toolUseResult":{"stdout":"","stderr":""},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"note: Exit code 1 is documented below\nall good"}]}}`)
+	if event.Tool == nil || !event.Tool.Success {
+		t.Fatalf("tool result = %#v, want Success=true (mid-sentence mention must not match the bare-line anchor)", event.Tool)
+	}
+}
+
 // TestParseLine_ToolResult_GivenHookErrorText_ThenSniffedAsFailed pins the
 // second ADR-003 sniff pattern: a hook rejection is reported as ordinary
 // result content (no success/is_error signal) ending in "... hook error".
@@ -194,6 +208,47 @@ func TestParseLine_ToolResult_GivenWriteNewFile_ThenDiffStatCountsContentLines(t
 	}
 	if stat.NewFileLines != 3 {
 		t.Fatalf("NewFileLines = %d, want 3", stat.NewFileLines)
+	}
+}
+
+// TestParseLine_ToolResult_GivenWriteNewFile_ThenCountContentLinesMatchesDocumentedContract
+// pins the countContentLines doc comment (model.go): a trailing newline is the
+// common text-file convention and must not count as an extra blank line, while
+// truly empty content reports zero lines. The existing diff-stat test above
+// only exercises content with a trailing newline, leaving these two boundary
+// cases unguarded.
+func TestParseLine_ToolResult_GivenWriteNewFile_ThenCountContentLinesMatchesDocumentedContract(t *testing.T) {
+	tests := []struct {
+		name          string
+		content       string
+		wantNewFile   bool
+		wantFileLines int
+	}{
+		{name: "no trailing newline counts visible lines", content: "a\nb", wantNewFile: true, wantFileLines: 2},
+		{name: "empty content reports zero lines", content: "", wantNewFile: true, wantFileLines: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			contentJSON, err := json.Marshal(tt.content)
+			if err != nil {
+				t.Fatalf("marshal content: %v", err)
+			}
+			line := `{"type":"user","toolUseResult":{"success":true,"commandName":"Write","structuredPatch":[],` +
+				`"content":` + string(contentJSON) + `},` +
+				`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok"}]}}`
+			event := parseLine(t, line)
+
+			stat := event.Tool.DiffStat
+			if stat == nil {
+				t.Fatal("DiffStat is nil, want populated stat")
+			}
+			if stat.IsNewFile != tt.wantNewFile {
+				t.Fatalf("IsNewFile = %v, want %v", stat.IsNewFile, tt.wantNewFile)
+			}
+			if stat.NewFileLines != tt.wantFileLines {
+				t.Fatalf("NewFileLines = %d, want %d", stat.NewFileLines, tt.wantFileLines)
+			}
+		})
 	}
 }
 

@@ -6,7 +6,6 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/parser"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
 )
 
@@ -101,7 +100,11 @@ func TestComputeStats_CountsCharsForSingleUserMessage(t *testing.T) {
 		t.Fatalf("RawText = %q, want %q", result.RawText, message)
 	}
 
-	wantFiltered := fmt.Sprintf("[%s] user:\n%s\n\n", parser.FormatTimestamp(""), message)
+	// "??-?? ??:??" is the placeholder parser.FormatTimestamp("") returns for a
+	// missing timestamp; that contract is pinned independently by
+	// parser.TestFormatTimestamp, so it is hardcoded here rather than
+	// re-invoking the SUT to build its own expected value.
+	wantFiltered := fmt.Sprintf("[%s] user:\n%s\n\n", "??-?? ??:??", message)
 	if result.FilteredText != wantFiltered {
 		t.Fatalf("FilteredText = %q, want %q", result.FilteredText, wantFiltered)
 	}

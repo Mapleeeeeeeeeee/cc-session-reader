@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/formatter"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/skillpath"
 )
 
@@ -39,10 +40,10 @@ func RenderStats(out io.Writer, errOut io.Writer, result StatsResult, opts Rende
 
 	fmt.Fprintln(out, "\n=== Breakdown ===")
 	for _, bl := range []struct{ label, key string }{
-		{"KEPT  user text:        ", "user_text"},
-		{"KEPT  user answers:     ", "user_answers"},
-		{"KEPT  assistant text:   ", "assistant_text"},
-		{"KEPT  tool summaries:   ", "tool_summaries"},
+		{"KEPT  user text:        ", formatter.CategoryUserText},
+		{"KEPT  user answers:     ", formatter.CategoryUserAnswer},
+		{"KEPT  assistant text:   ", formatter.CategoryAssistantText},
+		{"KEPT  tool summaries:   ", formatter.CategoryToolSummary},
 		{"FMT   render overhead:  ", "render_overhead"},
 		{"CUT   tool input (raw): ", "tool_input_raw"},
 		{"CUT   tool result (raw):", "tool_result_raw"},

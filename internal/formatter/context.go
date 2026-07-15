@@ -39,9 +39,10 @@ func FormatContextEvents(events []session.Event, agentIDs map[string]bool, maxLi
 func renderContextEvents(events []session.Event, agentIDs map[string]bool, opts FormatOptions, out io.Writer) error {
 	var pendingTools []pendingTool
 	seenSkills := make(map[string]bool)
+	rc := renderContext{agentIDs: agentIDs, opts: opts, out: out}
 
 	flush := func() {
-		flushPendingTools(&pendingTools, opts, out, nil)
+		flushPendingTools(&pendingTools, rc)
 	}
 
 	for _, event := range events {

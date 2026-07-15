@@ -46,15 +46,15 @@ type StatsResult struct {
 func ComputeStats(events []session.Event) StatsResult {
 	var rawParts []string
 	categories := map[string]int{
-		"user_text":       0,
-		"user_answers":    0,
-		"assistant_text":  0,
-		"tool_summaries":  0,
-		"tool_input_raw":  0,
-		"tool_result_raw": 0,
-		"system_noise":    0,
-		"command_noise":   0,
-		"render_overhead": 0,
+		formatter.CategoryUserText:      0,
+		formatter.CategoryUserAnswer:    0,
+		formatter.CategoryAssistantText: 0,
+		formatter.CategoryToolSummary:   0,
+		"tool_input_raw":                0,
+		"tool_result_raw":               0,
+		"system_noise":                  0,
+		"command_noise":                 0,
+		"render_overhead":               0,
 	}
 	perTool := map[string]*ToolStats{}
 	toolUseNames := map[string]string{}
@@ -197,7 +197,7 @@ func ComputeStats(events []session.Event) StatsResult {
 	// single content category but all of which is real injected bytes.
 	// Surfacing it explicitly keeps KEPT-category-sum + this line exactly
 	// equal to FilteredChars, instead of leaving an unexplained gap.
-	kept := categories["user_text"] + categories["user_answers"] + categories["assistant_text"] + categories["tool_summaries"]
+	kept := categories[formatter.CategoryUserText] + categories[formatter.CategoryUserAnswer] + categories[formatter.CategoryAssistantText] + categories[formatter.CategoryToolSummary]
 	categories["render_overhead"] = filteredChars - kept
 
 	return StatsResult{

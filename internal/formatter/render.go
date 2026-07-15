@@ -25,6 +25,18 @@ type FormatOptions struct {
 // second, drift-prone reimplementation of what read/context actually keep.
 type ContentSink func(category string, text string)
 
+// renderContext bundles the render-invariant values threaded unchanged through
+// the read/context render pipelines (renderReadEvents -> handleToolResultRead
+// -> flushPendingTools, and renderContextEvents -> flushPendingTools) so
+// callers pass them once instead of repeating agentIDs/opts/out/sink as
+// positional parameters at every layer.
+type renderContext struct {
+	agentIDs map[string]bool
+	opts     FormatOptions
+	out      io.Writer
+	sink     ContentSink
+}
+
 // Content categories reported to ContentSink. The values match the keys
 // analyzer.StatsResult.Categories uses for its KEPT buckets.
 const (
@@ -322,19 +334,19 @@ func collapseCCSessionTools(tools []pendingTool) []pendingTool {
 	return result
 }
 
-func flushPendingTools(pendingTools *[]pendingTool, opts FormatOptions, out io.Writer, sink ContentSink) {
+func flushPendingTools(pendingTools *[]pendingTool, rc renderContext) {
 	tools := *pendingTools
-	if !opts.VerboseBash {
+	if !rc.opts.VerboseBash {
 		tools = collapseCCSessionTools(tools)
 	}
 	for _, pt := range tools {
-		fmt.Fprintf(out, "  %s\n", pt.summary)
-		if sink != nil {
-			sink(CategoryToolSummary, pt.summary)
+		fmt.Fprintf(rc.out, "  %s\n", pt.summary)
+		if rc.sink != nil {
+			rc.sink(CategoryToolSummary, pt.summary)
 		}
 	}
 	if len(*pendingTools) > 0 {
-		fmt.Fprintln(out)
+		fmt.Fprintln(rc.out)
 	}
 	*pendingTools = (*pendingTools)[:0]
 }
