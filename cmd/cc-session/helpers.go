@@ -11,6 +11,7 @@ import (
 )
 
 func exitOnError(err error) {
+	finalizeUsageLog(err)
 	if err == nil {
 		return
 	}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"testing"
@@ -1442,39 +1443,11 @@ func TestExitOnError_GivenErrHelp_ThenNoStderrOutput(t *testing.T) {
 	}
 }
 
-func TestLogUsageAsync_GivenNoUsageEnabled_ThenDoesNotWriteToLog(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("HOME", root)
-	t.Setenv("USERPROFILE", root)
-	t.Setenv("CC_SESSION_NO_USAGE", "1")
-	t.Setenv("ANTHROPIC_API_KEY", "")
-	config.Reset()
-	t.Cleanup(config.Reset)
-
-	logUsageAsync("read", "abc12345")
-	waitUsageLog()
-
-	usagePath := filepath.Join(root, ".claude", "skills", "cc-session", "usage.jsonl")
-	if _, err := os.Stat(usagePath); err == nil {
-		t.Error("usage.jsonl was created despite CC_SESSION_NO_USAGE=1")
-	}
-}
-
-func TestLogUsageAsync_GivenCallerSession_ThenWritesToLog(t *testing.T) {
-	// DetectCallerSession uses forward-slash path mapping that only works on
-	// macOS/Linux where Claude Code actually creates session files.
-	if runtime.GOOS == "windows" {
-		t.Skip("Claude Code sessions only exist on macOS/Linux")
-	}
-	root := t.TempDir()
-	t.Setenv("HOME", root)
-	t.Setenv("USERPROFILE", root)
-	t.Setenv("CC_SESSION_NO_USAGE", "")
-	t.Setenv("ANTHROPIC_API_KEY", "")
-	config.Reset()
-	t.Cleanup(config.Reset)
-
-	// Create a fake Claude Code session so DetectCallerSession returns non-empty.
+// usageTestCallerSession creates a fake Claude Code session under root so
+// DetectCallerSession(cwd) returns non-empty, the precondition finalizeUsageLog
+// checks before writing any entry.
+func usageTestCallerSession(t *testing.T, root string) {
+	t.Helper()
 	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("os.Getwd: %v", err)
@@ -1489,8 +1462,88 @@ func TestLogUsageAsync_GivenCallerSession_ThenWritesToLog(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(projectDir, "fake-session-id.jsonl"), []byte{}, 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
+}
 
+func TestFinalizeUsageLog_GivenNoUsageEnabled_ThenDoesNotWriteToLog(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
+	t.Setenv("CC_SESSION_NO_USAGE", "1")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	config.Reset()
+	t.Cleanup(config.Reset)
+
+	beginUsageTracking("read")
 	logUsageAsync("read", "abc12345")
+	finalizeUsageLog(nil)
+	waitUsageLog()
+
+	usagePath := filepath.Join(root, ".claude", "skills", "cc-session", "usage.jsonl")
+	if _, err := os.Stat(usagePath); err == nil {
+		t.Error("usage.jsonl was created despite CC_SESSION_NO_USAGE=1")
+	}
+}
+
+func TestFinalizeUsageLog_GivenNoCallerSession_ThenDoesNotWriteToLog(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
+	t.Setenv("CC_SESSION_NO_USAGE", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	config.Reset()
+	t.Cleanup(config.Reset)
+
+	// No Claude Code project directory created, so DetectCallerSession returns "".
+	beginUsageTracking("read")
+	logUsageAsync("read", "abc12345")
+	finalizeUsageLog(nil)
+	waitUsageLog()
+
+	usagePath := filepath.Join(root, ".claude", "skills", "cc-session", "usage.jsonl")
+	if _, err := os.Stat(usagePath); err == nil {
+		t.Error("usage.jsonl was created despite no caller session")
+	}
+}
+
+func TestFinalizeUsageLog_GivenNoBeginUsageTracking_ThenDoesNotWriteToLog(t *testing.T) {
+	// Regression: "help"/"usage" never call beginUsageTracking, so their
+	// exitOnError call must stay a no-op instead of logging a bogus entry.
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
+	t.Setenv("CC_SESSION_NO_USAGE", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	config.Reset()
+	t.Cleanup(config.Reset)
+	usageTestCallerSession(t, root)
+
+	finalizeUsageLog(nil)
+	waitUsageLog()
+
+	usagePath := filepath.Join(root, ".claude", "skills", "cc-session", "usage.jsonl")
+	if _, err := os.Stat(usagePath); err == nil {
+		t.Error("usage.jsonl was created despite no tracked command")
+	}
+}
+
+func TestFinalizeUsageLog_GivenSuccessfulCommand_ThenRecordsOkResult(t *testing.T) {
+	// DetectCallerSession uses forward-slash path mapping that only works on
+	// macOS/Linux where Claude Code actually creates session files.
+	if runtime.GOOS == "windows" {
+		t.Skip("Claude Code sessions only exist on macOS/Linux")
+	}
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
+	t.Setenv("CC_SESSION_NO_USAGE", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	config.Reset()
+	t.Cleanup(config.Reset)
+	usageTestCallerSession(t, root)
+
+	beginUsageTracking("read")
+	logUsageAsync("read", "abc12345")
+	finalizeUsageLog(nil)
 	waitUsageLog()
 
 	usagePath := filepath.Join(root, ".claude", "skills", "cc-session", "usage.jsonl")
@@ -1505,9 +1558,23 @@ func TestLogUsageAsync_GivenCallerSession_ThenWritesToLog(t *testing.T) {
 	if !strings.Contains(line, `"target":"abc12345"`) {
 		t.Errorf("usage.jsonl missing target field, got: %s", line)
 	}
+	if !strings.Contains(line, `"result":"ok"`) {
+		t.Errorf("usage.jsonl missing result:ok, got: %s", line)
+	}
+	if strings.Contains(line, `"error"`) {
+		t.Errorf("usage.jsonl should omit error field on success, got: %s", line)
+	}
 }
 
-func TestLogUsageAsync_GivenNoCallerSession_ThenDoesNotWriteToLog(t *testing.T) {
+// Bug this guards against: a command that failed before ever resolving a
+// target (e.g. "read" given an unknown session ID) used to log nothing at
+// all, so failures were invisible in usage.jsonl. beginUsageTracking starts
+// tracking before the command's own logic runs, so this now produces an
+// entry with an empty target and result:error.
+func TestFinalizeUsageLog_GivenCommandFailedBeforeResolvingTarget_ThenRecordsErrorResultWithEmptyTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Claude Code sessions only exist on macOS/Linux")
+	}
 	root := t.TempDir()
 	t.Setenv("HOME", root)
 	t.Setenv("USERPROFILE", root)
@@ -1515,13 +1582,134 @@ func TestLogUsageAsync_GivenNoCallerSession_ThenDoesNotWriteToLog(t *testing.T) 
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	config.Reset()
 	t.Cleanup(config.Reset)
+	usageTestCallerSession(t, root)
 
-	// No Claude Code project directory created, so DetectCallerSession returns "".
-	logUsageAsync("read", "abc12345")
+	// Simulate main's dispatch starting tracking, then the command failing
+	// (e.g. resolveSession erroring) before it ever calls logUsageAsync.
+	beginUsageTracking("read")
+	finalizeUsageLog(fmt.Errorf("transcript not found: no-such-session-id"))
+	waitUsageLog()
+
+	usagePath := filepath.Join(root, ".claude", "skills", "cc-session", "usage.jsonl")
+	data, err := os.ReadFile(usagePath)
+	if err != nil {
+		t.Fatalf("usage.jsonl not created: %v", err)
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.Contains(line, `"cmd":"read"`) {
+		t.Errorf("usage.jsonl missing cmd field, got: %s", line)
+	}
+	if !strings.Contains(line, `"target":""`) {
+		t.Errorf("usage.jsonl should record an empty target (never resolved), got: %s", line)
+	}
+	if !strings.Contains(line, `"result":"error"`) {
+		t.Errorf("usage.jsonl missing result:error, got: %s", line)
+	}
+	if !strings.Contains(line, `"error":"transcript not found: no-such-session-id"`) {
+		t.Errorf("usage.jsonl missing error message, got: %s", line)
+	}
+}
+
+func TestFinalizeUsageLog_GivenMultilineError_ThenTruncatesToFirstLine(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Claude Code sessions only exist on macOS/Linux")
+	}
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
+	t.Setenv("CC_SESSION_NO_USAGE", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	config.Reset()
+	t.Cleanup(config.Reset)
+	usageTestCallerSession(t, root)
+
+	beginUsageTracking("stats")
+	finalizeUsageLog(fmt.Errorf("count filtered tokens: boom\nrequest id: abc"))
+	waitUsageLog()
+
+	usagePath := filepath.Join(root, ".claude", "skills", "cc-session", "usage.jsonl")
+	data, err := os.ReadFile(usagePath)
+	if err != nil {
+		t.Fatalf("usage.jsonl not created: %v", err)
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.Contains(line, `"error":"count filtered tokens: boom"`) {
+		t.Errorf("usage.jsonl error field should be truncated to the first line, got: %s", line)
+	}
+	if strings.Contains(line, "request id") {
+		t.Errorf("usage.jsonl error field leaked a second line, got: %s", line)
+	}
+}
+
+func TestFinalizeUsageLog_GivenErrHelp_ThenDoesNotWriteToLog(t *testing.T) {
+	// A "-h" request is a deliberate UX flow, not a command failure — it
+	// shouldn't show up as a tracked error.
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
+	t.Setenv("CC_SESSION_NO_USAGE", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	config.Reset()
+	t.Cleanup(config.Reset)
+	usageTestCallerSession(t, root)
+
+	beginUsageTracking("read")
+	finalizeUsageLog(flag.ErrHelp)
 	waitUsageLog()
 
 	usagePath := filepath.Join(root, ".claude", "skills", "cc-session", "usage.jsonl")
 	if _, err := os.Stat(usagePath); err == nil {
-		t.Error("usage.jsonl was created despite no caller session")
+		t.Error("usage.jsonl was created for a flag.ErrHelp invocation")
+	}
+}
+
+func TestResolveVersion_GivenLdflagsVersion_ThenReturnsItUnchanged(t *testing.T) {
+	// ldflags -X main.version=... (goreleaser) always takes priority over
+	// build-info fallback.
+	got := resolveVersion("v1.2.3")
+	if got != "v1.2.3" {
+		t.Errorf("resolveVersion(%q) = %q, want unchanged", "v1.2.3", got)
+	}
+}
+
+func TestResolveVersion_GivenDevWithModuleVersion_ThenReturnsModuleVersion(t *testing.T) {
+	old := readBuildInfo
+	t.Cleanup(func() { readBuildInfo = old })
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Main: debug.Module{Version: "v0.5.0"}}, true
+	}
+
+	got := resolveVersion("dev")
+	if got != "v0.5.0" {
+		t.Errorf("resolveVersion(\"dev\") = %q, want %q (go install pkg@version)", got, "v0.5.0")
+	}
+}
+
+func TestResolveVersion_GivenDevWithNoModuleVersionButVCSRevision_ThenReturnsShortRevision(t *testing.T) {
+	old := readBuildInfo
+	t.Cleanup(func() { readBuildInfo = old })
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{
+			Main: debug.Module{Version: "(devel)"},
+			Settings: []debug.BuildSetting{
+				{Key: "vcs.revision", Value: "95712a4abcdef1234567890"},
+			},
+		}, true
+	}
+
+	got := resolveVersion("dev")
+	if got != "dev+95712a4abcde" {
+		t.Errorf("resolveVersion(\"dev\") = %q, want short vcs revision fallback", got)
+	}
+}
+
+func TestResolveVersion_GivenDevWithNoBuildInfo_ThenReturnsDevUnchanged(t *testing.T) {
+	old := readBuildInfo
+	t.Cleanup(func() { readBuildInfo = old })
+	readBuildInfo = func() (*debug.BuildInfo, bool) { return nil, false }
+
+	got := resolveVersion("dev")
+	if got != "dev" {
+		t.Errorf("resolveVersion(\"dev\") = %q, want %q when build info is unavailable", got, "dev")
 	}
 }

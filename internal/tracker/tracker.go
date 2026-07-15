@@ -22,6 +22,31 @@ type UsageEntry struct {
 	Caller    string `json:"caller"`
 	Version   string `json:"version,omitempty"`
 	Commit    string `json:"commit,omitempty"`
+	// Result is "ok" or "error", recorded once the invocation finishes.
+	// Empty on entries written before this field existed (and on entries
+	// for commands that don't track a result) — treat as unknown, not as
+	// a failure.
+	Result string `json:"result,omitempty"`
+	// Error holds the first line of the failing command's error message.
+	// Empty unless Result == "error".
+	Error string `json:"error,omitempty"`
+}
+
+// commandAliases maps a deprecated subcommand name recorded by older
+// binaries to its current name, so usage queries and stats treat historical
+// entries the same as new ones. "inject" was renamed to "inherit" in
+// 554e57b; see commands.go's hidden "inject" registry entry.
+var commandAliases = map[string]string{
+	"inject": "inherit",
+}
+
+// canonicalCommand resolves cmd through commandAliases, returning cmd
+// unchanged if it has no alias.
+func canonicalCommand(cmd string) string {
+	if canon, ok := commandAliases[cmd]; ok {
+		return canon
+	}
+	return cmd
 }
 
 // DefaultLogPath returns the canonical path for the usage log.
@@ -80,7 +105,10 @@ func ReadUsageLog(limit int, cmdFilter string) ([]UsageEntry, error) {
 // ReadUsageLogFromPath reads and parses the JSONL file at path.
 // Returns entries in reverse chronological order (most-recent first).
 // If the file does not exist, returns an empty slice and nil error.
-// Blank or unparseable lines are silently skipped.
+// Blank or unparseable lines are silently skipped. cmdFilter and each
+// entry's Command are both resolved through canonicalCommand first, so a
+// deprecated alias (e.g. "inject") matches its current name ("inherit") in
+// either direction, and the returned entries always display the current name.
 func ReadUsageLogFromPath(limit int, cmdFilter string, path string) ([]UsageEntry, error) {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
@@ -90,6 +118,8 @@ func ReadUsageLogFromPath(limit int, cmdFilter string, path string) ([]UsageEntr
 		return nil, err
 	}
 	defer f.Close()
+
+	cmdFilter = canonicalCommand(cmdFilter)
 
 	var entries []UsageEntry
 	scanner := bufio.NewScanner(f)
@@ -102,6 +132,7 @@ func ReadUsageLogFromPath(limit int, cmdFilter string, path string) ([]UsageEntr
 		if err := json.Unmarshal([]byte(line), &e); err != nil {
 			continue
 		}
+		e.Command = canonicalCommand(e.Command)
 		if cmdFilter != "" && e.Command != cmdFilter {
 			continue
 		}

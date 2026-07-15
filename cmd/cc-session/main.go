@@ -6,6 +6,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/claudecodec"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/tokens"
@@ -13,6 +14,40 @@ import (
 
 var version = "dev"
 var commit = "none"
+
+// readBuildInfo is the debug.ReadBuildInfo backend used by resolveVersion. It
+// is a package-level seam so tests can substitute deterministic build info
+// instead of whatever the go test binary itself was built with.
+var readBuildInfo = debug.ReadBuildInfo
+
+// resolveVersion returns version unchanged unless it's still the "dev"
+// placeholder, meaning goreleaser's ldflags -X override (see .goreleaser.yaml)
+// never ran — a plain `go build`/`go install` of this module. In that case it
+// falls back to runtime/debug build info: `go install pkg@version` embeds the
+// module version in info.Main.Version, while a source build embeds the VCS
+// revision in info.Settings. Returns "dev" unchanged if neither is available.
+func resolveVersion(version string) string {
+	if version != "dev" {
+		return version
+	}
+	info, ok := readBuildInfo()
+	if !ok {
+		return version
+	}
+	if info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	for _, s := range info.Settings {
+		if s.Key == "vcs.revision" && s.Value != "" {
+			rev := s.Value
+			if len(rev) > 12 {
+				rev = rev[:12]
+			}
+			return "dev+" + rev
+		}
+	}
+	return version
+}
 
 type countTokensFunc func(string) (int, error)
 
@@ -37,6 +72,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	version = resolveVersion(version)
+
 	defer waitUsageLog()
 
 	reader := claudecodec.Codec{}
@@ -55,6 +92,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Unknown command: %s\n", subcommand)
 			printUsage()
 			os.Exit(1)
+		}
+		if cmd.tracksUsage {
+			beginUsageTracking(cmd.name)
 		}
 		cmd.run(os.Args[2:], reader)
 	}

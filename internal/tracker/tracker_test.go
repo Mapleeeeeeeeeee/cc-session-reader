@@ -222,6 +222,88 @@ func TestDetectCallerSessionWithBase_GivenMissingDir_WhenDetected_ThenReturnsEmp
 	}
 }
 
+func TestLogUsageToPath_GivenResultAndError_WhenAppended_ThenRoundTrips(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	entry := UsageEntry{Command: "read", Target: "x", Result: "error", Error: "transcript not found: abc"}
+
+	writeEntry(t, path, entry)
+
+	entries, err := ReadUsageLogFromPath(0, "", path)
+	if err != nil {
+		t.Fatalf("ReadUsageLogFromPath returned error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entry count = %d, want 1", len(entries))
+	}
+	if entries[0].Result != "error" {
+		t.Errorf("Result = %q, want %q", entries[0].Result, "error")
+	}
+	if entries[0].Error != entry.Error {
+		t.Errorf("Error = %q, want %q", entries[0].Error, entry.Error)
+	}
+}
+
+// Regression: entries written before the Result field existed have no
+// "result" key at all. Without this, an empty Result on unmarshal could be
+// mistaken for a known failure instead of "we don't know".
+func TestReadUsageLogFromPath_GivenLegacyEntryWithoutResultField_WhenRead_ThenResultIsEmptyNotError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	raw := `{"ts":"2026-06-15T10:00:00Z","cmd":"read","target":"legacy","cwd":"/x","caller":"c"}` + "\n"
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatalf("write legacy entry: %v", err)
+	}
+
+	entries, err := ReadUsageLogFromPath(0, "", path)
+	if err != nil {
+		t.Fatalf("ReadUsageLogFromPath returned error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entry count = %d, want 1", len(entries))
+	}
+	if entries[0].Result != "" {
+		t.Errorf("Result = %q, want empty (unknown) for a pre-existing entry", entries[0].Result)
+	}
+}
+
+// Regression: "inject" was renamed to "inherit" in 554e57b, but binaries built
+// before the rename wrote entries with Command == "inject". Without alias
+// normalization, "usage -cmd inherit" can't find that history.
+func TestReadUsageLogFromPath_GivenLegacyInjectEntries_WhenFilteredByInherit_ThenMatchesAndNormalizesDisplay(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	writeEntry(t, path, UsageEntry{Command: "inject", Target: "legacy"})
+	writeEntry(t, path, UsageEntry{Command: "inherit", Target: "current"})
+	writeEntry(t, path, UsageEntry{Command: "read", Target: "unrelated"})
+
+	entries, err := ReadUsageLogFromPath(0, "inherit", path)
+	if err != nil {
+		t.Fatalf("ReadUsageLogFromPath returned error: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("entry count = %d, want 2 (legacy inject + current inherit)", len(entries))
+	}
+	for _, e := range entries {
+		if e.Command != "inherit" {
+			t.Errorf("Command = %q, want normalized %q", e.Command, "inherit")
+		}
+	}
+}
+
+// Regression: filtering by the deprecated alias itself ("-cmd inject") should
+// still surface entries recorded under the current name, for anyone who
+// still types the old command out of habit.
+func TestReadUsageLogFromPath_GivenLegacyInjectFilter_WhenFiltered_ThenAlsoMatchesCurrentInheritEntries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	writeEntry(t, path, UsageEntry{Command: "inherit", Target: "current"})
+
+	entries, err := ReadUsageLogFromPath(0, "inject", path)
+	if err != nil {
+		t.Fatalf("ReadUsageLogFromPath returned error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entry count = %d, want 1 (alias filter should also match current entries)", len(entries))
+	}
+}
+
 func TestDetectCallerSessionWithBase_GivenMultipleJSONL_WhenDetected_ThenReturnsNewestSession(t *testing.T) {
 	projectsDir := t.TempDir()
 	cwd := "/Users/maple/Desktop"
