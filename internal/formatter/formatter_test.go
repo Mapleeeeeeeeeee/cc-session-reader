@@ -37,6 +37,9 @@ func TestFormatRead_WhenTranscriptHasDialogueAndToolUse_ThenWritesReadableTimeli
 }
 
 func TestFormatContext_WhenSessionMetadataExists_ThenWritesCompactContextWithHeader(t *testing.T) {
+	// Also guards the metadata-missing fallback (see below): when session_meta
+	// is present it must still win and produce the original full header, not
+	// the transcript-derived one.
 	transcriptPath, metaDir := writeFormatterFixture(t)
 
 	var out bytes.Buffer
@@ -56,6 +59,82 @@ func TestFormatContext_WhenSessionMetadataExists_ThenWritesCompactContextWithHea
 	}
 	if !strings.Contains(got, "U: hello") || !strings.Contains(got, "U: next") {
 		t.Fatalf("FormatContext output missing user messages\ngot:\n%q", got)
+	}
+}
+
+// TestFormatContext_WhenSessionMetadataMissing_ThenWritesMinimalHeaderFromTranscript
+// guards a regression: session_meta files stopped being written by the
+// upstream harness (production incident starting 2026-07-04), so
+// writeContextHeader's silent "meta missing -> write nothing" branch left
+// every recent session's context output opening directly with dialogue —
+// a fresh reader had no idea which session or project it was looking at.
+func TestFormatContext_WhenSessionMetadataMissing_ThenWritesMinimalHeaderFromTranscript(t *testing.T) {
+	root := t.TempDir()
+	sessionID := "deadbeef-dead-beef-dead-beefdeadbeef"
+	transcriptPath := filepath.Join(root, sessionID+".jsonl")
+	transcript := `{"type":"user","timestamp":"2026-07-10T09:30:00Z","message":{"role":"user","content":"hello"}}
+{"type":"assistant","timestamp":"2026-07-10T09:30:01Z","cwd":"/Users/dev/my-project","message":{"role":"assistant","content":[{"type":"text","text":"hi"},{"type":"tool_use","name":"Bash","id":"tool-1","input":{"command":"echo ok"}}]}}
+`
+	if err := os.WriteFile(transcriptPath, []byte(transcript), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	var out bytes.Buffer
+	store := parser.Store{SessionMetaDir: filepath.Join(root, "no-such-meta-dir")}
+	if err := FormatContextWithStore(transcriptPath, sessionID, 0, 0, FormatOptions{}, &out, store, claudecodec.Codec{}); err != nil {
+		t.Fatalf("FormatContext returned error: %v", err)
+	}
+
+	got := out.String()
+	shortID := session.ShortID(sessionID, 8)
+	if !strings.HasPrefix(got, "# Session "+shortID) {
+		t.Fatalf("fallback header must open the output with the session id\ngot:\n%q", got)
+	}
+	if !strings.Contains(got, "my-project") {
+		t.Fatalf("fallback header missing project derived from a tool call's cwd\ngot:\n%q", got)
+	}
+	if !strings.Contains(got, "07-10") {
+		t.Fatalf("fallback header missing date derived from the first event's timestamp\ngot:\n%q", got)
+	}
+}
+
+// TestFormatContext_WhenSessionMetadataMissingAndTranscriptHasNoCwd_ThenDerivesProjectFromTranscriptDirectory
+// covers the harder fallback case: no assistant tool call ever ran (so no
+// event carries a cwd), so the project must come from the transcript's
+// parent directory name instead.
+//
+// The leading "mode" line also guards a bug found during manual acceptance:
+// real transcripts open with noise entries (mode/permission-mode/bridge-
+// session/...) that carry no "timestamp" field, so reading events[0].Timestamp
+// directly produced "??-?? ??:??" even though a real timestamp was a few
+// lines down.
+func TestFormatContext_WhenSessionMetadataMissingAndTranscriptHasNoCwd_ThenDerivesProjectFromTranscriptDirectory(t *testing.T) {
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "projects", "-Users-dev-encoded-project")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+	sessionID := "cafefeed-cafe-feed-cafe-feedcafefeed"
+	transcriptPath := filepath.Join(projectDir, sessionID+".jsonl")
+	transcript := `{"type":"mode","mode":"normal","sessionId":"` + sessionID + `"}
+{"type":"user","timestamp":"2026-07-10T09:30:00Z","message":{"role":"user","content":"hello"}}
+`
+	if err := os.WriteFile(transcriptPath, []byte(transcript), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	var out bytes.Buffer
+	store := parser.Store{SessionMetaDir: filepath.Join(root, "no-such-meta-dir")}
+	if err := FormatContextWithStore(transcriptPath, sessionID, 0, 0, FormatOptions{}, &out, store, claudecodec.Codec{}); err != nil {
+		t.Fatalf("FormatContext returned error: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "-Users-dev-encoded-project") {
+		t.Fatalf("fallback header missing project derived from the transcript's directory\ngot:\n%q", got)
+	}
+	if !strings.Contains(got, "07-10") {
+		t.Fatalf("fallback header must skip timestamp-less leading noise events and use the first real event's date\ngot:\n%q", got)
 	}
 }
 
