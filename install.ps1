@@ -116,6 +116,41 @@ function Update-UserPath {
 
 # ── skill install ─────────────────────────────────────────────────────────────
 
+# Sync-ArgumentHint overwrites the installed SKILL.md's "argument-hint:" line
+# with the live output of "cc-session help --argument-hint". The CLI's
+# command registry is the single source of truth for that hint; without this,
+# the skill drifts out of sync whenever the CLI's subcommand order or set
+# changes.
+#
+# Best-effort: leaves the existing line untouched if the binary isn't
+# installed, the subcommand errors out (e.g. an older CLI without
+# "help --argument-hint"), or the output doesn't look like a hint — a broken
+# skill install is worse than a stale hint.
+function Sync-ArgumentHint {
+    param([string]$SkillPath)
+
+    $exePath = Join-Path $InstallDir "cc-session.exe"
+    if (-not (Test-Path $exePath)) {
+        return
+    }
+
+    try {
+        $hint = & $exePath help --argument-hint 2>$null
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($hint) -or -not $hint.StartsWith('[')) {
+            return
+        }
+
+        $lines = Get-Content -Path $SkillPath
+        $updated = $lines | ForEach-Object {
+            if ($_ -match '^argument-hint:') { "argument-hint: `"$hint`"" } else { $_ }
+        }
+        Set-Content -Path $SkillPath -Value $updated
+    } catch {
+        # Sync is best-effort and must not abort the skill install; fall
+        # through and keep the existing argument-hint line.
+    }
+}
+
 function Install-Skill {
     if ($NoSkill) { return }
 
@@ -133,6 +168,7 @@ function Install-Skill {
 
     try {
         Invoke-WebRequest -Uri $SkillUrl -OutFile $skillDst -UseBasicParsing
+        Sync-ArgumentHint -SkillPath $skillDst
         Write-Host "Skill installed. Use /cc-session in Claude Code to activate it."
     } catch {
         Write-Error "Failed to download skill: $_"
