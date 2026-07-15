@@ -533,6 +533,37 @@ func TestScanTranscriptHeaders_GivenCommandMessage_ThenSkipsToNextUserMessage(t 
 	}
 }
 
+// TestScanTranscriptHeaders_GivenNoSessionMeta_ThenComputesDurationFromTranscriptTimestamps
+// guards the bug where the JSONL-fallback path never populated
+// DurationMinutes at all (it only ever came from session-meta files), so
+// `list` rendered "0m" for every session once the upstream meta-file writer
+// stopped producing new files. The fixture's first and last timestamps are
+// seven minutes apart.
+func TestScanTranscriptHeaders_GivenNoSessionMeta_ThenComputesDurationFromTranscriptTimestamps(t *testing.T) {
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "projects", "-Users-me-proj")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+	sid := "12121212-1212-1212-1212-121212121212"
+	lines := []string{
+		`{"type":"user","timestamp":"2026-07-15T02:00:00.000Z","message":{"role":"user","content":"start"}}`,
+		`{"type":"assistant","timestamp":"2026-07-15T02:07:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}`,
+		"",
+	}
+	writeFile(t, filepath.Join(projectDir, sid+".jsonl"), strings.Join(lines, "\n"))
+
+	store := Store{ProjectsDir: filepath.Join(root, "projects"), HeaderScanner: claudecodec.Codec{}}
+	entries := store.ScanTranscriptHeaders()
+
+	if len(entries) != 1 {
+		t.Fatalf("ScanTranscriptHeaders returned %d entries, want 1", len(entries))
+	}
+	if entries[0].DurationMinutes != 7 {
+		t.Fatalf("DurationMinutes = %d, want 7 (computed from first/last transcript timestamps)", entries[0].DurationMinutes)
+	}
+}
+
 func TestScanTranscriptHeaders_GivenDuplicateUUID_ThenDeduplicates(t *testing.T) {
 	root := t.TempDir()
 	projA := filepath.Join(root, "projects", "-Users-me-alpha")

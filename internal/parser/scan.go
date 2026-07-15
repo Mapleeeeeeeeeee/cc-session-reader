@@ -24,11 +24,12 @@ type SessionListEntry struct {
 }
 
 // ScanTranscriptHeaders walks ProjectsDir for .jsonl files and extracts a
-// SessionListEntry from the first 20 lines of each file via the Store's
-// HeaderScanner. Files that cannot be opened or parsed are silently skipped.
-// Sessions with the same UUID in multiple project directories are deduplicated
-// (first walk hit wins). Returns nil when ProjectsDir is empty or no
-// HeaderScanner is configured.
+// SessionListEntry from a bounded prefix of each file via the Store's
+// HeaderScanner, with DurationMinutes computed from the scanner's first and
+// last transcript timestamps. Files that cannot be opened or parsed are
+// silently skipped. Sessions with the same UUID in multiple project
+// directories are deduplicated (first walk hit wins). Returns nil when
+// ProjectsDir is empty or no HeaderScanner is configured.
 func (s Store) ScanTranscriptHeaders() []SessionListEntry {
 	if s.ProjectsDir == "" || s.HeaderScanner == nil {
 		return nil
@@ -62,6 +63,13 @@ func (s Store) ScanTranscriptHeaders() []SessionListEntry {
 			entry.StartTime = header.Timestamp
 			if t, err := parseISO(header.Timestamp); err == nil {
 				entry.StartTimeParsed = t
+				if header.EndTimestamp != "" {
+					if end, err := parseISO(header.EndTimestamp); err == nil {
+						if elapsed := end.Sub(t); elapsed >= 0 {
+							entry.DurationMinutes = int(elapsed.Minutes())
+						}
+					}
+				}
 			}
 		}
 

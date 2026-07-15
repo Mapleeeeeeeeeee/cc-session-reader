@@ -8,7 +8,15 @@ type TranscriptReader interface {
 
 // HeaderInfo contains minimal session metadata extracted from transcript headers.
 type HeaderInfo struct {
-	Timestamp       string
+	// Timestamp is the transcript's first timestamp (session start).
+	Timestamp string
+
+	// EndTimestamp is the transcript's last timestamp, read from a bounded
+	// tail scan rather than a full read of the file. Combined with
+	// Timestamp, callers derive session duration. Empty when the tail scan
+	// found no timestamped entry.
+	EndTimestamp string
+
 	FirstUserPrompt string
 }
 

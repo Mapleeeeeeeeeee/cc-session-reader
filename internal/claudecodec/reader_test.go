@@ -836,6 +836,135 @@ func parseLineWithText(t *testing.T, text string) session.Event {
 	return parseLine(t, line)
 }
 
+// --- ScanHeader: tail-read duration + noise-resilient prompt discovery ---
+
+// TestScanHeader_GivenMultiLineTranscript_ThenEndTimestampIsLastLineTimestamp
+// pins the new EndTimestamp field: ScanHeader must report the transcript's
+// last timestamp (not just its first), since list.go's duration column has
+// nothing else to compute from once metadata is unavailable.
+func TestScanHeader_GivenMultiLineTranscript_ThenEndTimestampIsLastLineTimestamp(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	lines := []string{
+		`{"type":"user","timestamp":"2026-07-15T02:00:00.000Z","message":{"role":"user","content":"start the task"}}`,
+		`{"type":"assistant","timestamp":"2026-07-15T02:05:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}`,
+		"",
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	info, err := (Codec{}).ScanHeader(path)
+	if err != nil {
+		t.Fatalf("ScanHeader returned error: %v", err)
+	}
+	if info.Timestamp != "2026-07-15T02:00:00.000Z" {
+		t.Fatalf("Timestamp = %q, want the first line's timestamp", info.Timestamp)
+	}
+	if info.EndTimestamp != "2026-07-15T02:05:00.000Z" {
+		t.Fatalf("EndTimestamp = %q, want the last line's timestamp", info.EndTimestamp)
+	}
+}
+
+// inheritChainNoiseLines returns the noise-only opening of a `/cc-session
+// inherit` session transcript: a command invocation, a skill injection, and
+// twenty tool_result turns — the shape observed in real inherit chains
+// (session 2b73acc2 in the architecture note), none of which is a real human
+// question. Twenty-two lines exceeds the old fixed 20-raw-line scan window.
+func inheritChainNoiseLines() []string {
+	lines := []string{
+		`{"type":"user","timestamp":"2026-07-15T02:00:00.000Z","message":{"role":"user",` +
+			`"content":"<command-message>cc-session</command-message>\n<command-name>/cc-session</command-name>\n` +
+			`<command-args>inherit 9cd01951-e149-4d83-84e2-a210818d02aa</command-args>"}}`,
+		`{"type":"user","timestamp":"2026-07-15T02:00:01.000Z","message":{"role":"user","content":[` +
+			`{"type":"text","text":"Base directory for this skill: /Users/maple/.claude/skills/cc-session\n\n# Session Reader"}]}}`,
+	}
+	for i := 0; i < 20; i++ {
+		lines = append(lines, fmt.Sprintf(
+			`{"type":"user","timestamp":"2026-07-15T02:01:%02dZ","toolUseResult":{"success":true},`+
+				`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_%d","content":"ok"}]}}`,
+			i%60, i))
+	}
+	return lines
+}
+
+// TestScanHeader_GivenNoiseHeavyPrefix_ThenNoiseLinesDoNotConsumeScanBudget
+// guards the bug where every scanned line — including command tags, skill
+// injections, and tool-result-shaped user entries — consumed one slot of the
+// old fixed 20-line window. An inherit-style session opens with a command
+// invocation, a skill injection, and a run of tool_result turns before the
+// real human question; the window used to exhaust before ever reaching it,
+// leaving [refs] sessions like 2b73acc2 with a blank list preview.
+func TestScanHeader_GivenNoiseHeavyPrefix_ThenNoiseLinesDoNotConsumeScanBudget(t *testing.T) {
+	lines := inheritChainNoiseLines()
+	lines = append(lines,
+		`{"type":"user","timestamp":"2026-07-15T02:10:00.000Z","message":{"role":"user",`+
+			`"content":"可以搭配 trigger 一起看 @docs/trigger-modernization-report.md"}}`,
+		"")
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	info, err := (Codec{}).ScanHeader(path)
+	if err != nil {
+		t.Fatalf("ScanHeader returned error: %v", err)
+	}
+	want := "可以搭配 trigger 一起看 @docs/trigger-modernization-report.md"
+	if info.FirstUserPrompt != want {
+		t.Fatalf("FirstUserPrompt = %q, want %q (noise-heavy prefix must not exhaust the scan budget)", info.FirstUserPrompt, want)
+	}
+}
+
+// TestScanHeader_GivenOnlyCommandNoiseAndNoRealQuestion_ThenFallsBackToCommandPreview
+// pins the layer-2 fallback: when the real question never appears within the
+// scan window at all (the common case for inherit-chain sessions, where the
+// real prompt can be dozens of turns later), FirstUserPrompt must still carry
+// enough information to identify the session instead of staying blank.
+func TestScanHeader_GivenOnlyCommandNoiseAndNoRealQuestion_ThenFallsBackToCommandPreview(t *testing.T) {
+	lines := append(inheritChainNoiseLines(), "")
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	info, err := (Codec{}).ScanHeader(path)
+	if err != nil {
+		t.Fatalf("ScanHeader returned error: %v", err)
+	}
+	want := "[/cc-session inherit 9cd01951]"
+	if info.FirstUserPrompt != want {
+		t.Fatalf("FirstUserPrompt = %q, want %q (command-invocation fallback preview)", info.FirstUserPrompt, want)
+	}
+}
+
+// TestScanHeader_GivenInterruptedToolCallSentinel_ThenTreatsItAsNoiseNotAPrompt
+// guards a bug caught during real-transcript acceptance testing of session
+// 2b73acc2: Claude Code inserts a fixed "[Request interrupted by user]"
+// text block (same role/shape as a real question) whenever a tool call gets
+// interrupted. Before this fix that sentinel was accepted as the first
+// "genuine" candidate, so the list preview showed the harness's own
+// boilerplate instead of falling through to the command-invocation preview.
+func TestScanHeader_GivenInterruptedToolCallSentinel_ThenTreatsItAsNoiseNotAPrompt(t *testing.T) {
+	lines := inheritChainNoiseLines()
+	lines = append(lines,
+		`{"type":"user","timestamp":"2026-07-15T02:05:14.315Z","message":{"role":"user","content":[`+
+			`{"type":"text","text":"[Request interrupted by user]"}]}}`,
+		"")
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	info, err := (Codec{}).ScanHeader(path)
+	if err != nil {
+		t.Fatalf("ScanHeader returned error: %v", err)
+	}
+	want := "[/cc-session inherit 9cd01951]"
+	if info.FirstUserPrompt != want {
+		t.Fatalf("FirstUserPrompt = %q, want %q (interrupted-request sentinel must not be mistaken for a real prompt)", info.FirstUserPrompt, want)
+	}
+}
+
 func parseLine(t *testing.T, line string) session.Event {
 	t.Helper()
 	event, ok, err := ParseLine([]byte(line))
