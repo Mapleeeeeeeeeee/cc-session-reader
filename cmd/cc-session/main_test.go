@@ -1272,6 +1272,81 @@ func TestRunUsage_GivenHelpFlag_ThenReturnsErrHelp(t *testing.T) {
 	}
 }
 
+func TestRunHelp_GivenHelpFlag_ThenReturnsErrHelp(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := runHelp([]string{"-h"}, &stdout, &stderr)
+	if err == nil || err.Error() != "flag: help requested" {
+		t.Fatalf("runHelp(-h) = %v, want flag.ErrHelp", err)
+	}
+}
+
+func TestRunHelp_GivenNoFlags_ThenPrintsIntentToCommandCheatSheet(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if err := runHelp(nil, &stdout, &stderr); err != nil {
+		t.Fatalf("runHelp(nil) returned error: %v", err)
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"cc-session inherit <id>",
+		"cc-session read <id>",
+		"Session ID 支援 prefix match",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("cheat sheet missing %q, got:\n%s", want, got)
+		}
+	}
+}
+
+// buildArgumentHint feeds a Claude Code skill's argument-hint frontmatter, so
+// its output must be exactly one bracketed, pipe-separated line with no
+// stray whitespace. It must expose only the registry's user-facing,
+// session-driven quick actions: not the deprecated "inject" alias (hidden)
+// and not "benchmark" (a maintainer command with no argHint).
+func TestRunHelp_GivenArgumentHintFlag_ThenPrintsSingleBracketedPipeSeparatedLine(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if err := runHelp([]string{"--argument-hint"}, &stdout, &stderr); err != nil {
+		t.Fatalf("runHelp(--argument-hint) returned error: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected exactly one line, got %d: %q", len(lines), stdout.String())
+	}
+	got := lines[0]
+
+	if !strings.HasPrefix(got, "[") || !strings.HasSuffix(got, "]") {
+		t.Fatalf("argument-hint line not bracketed: %q", got)
+	}
+	if !strings.Contains(got, " | ") {
+		t.Fatalf("argument-hint entries should be pipe-separated: %q", got)
+	}
+	if !strings.Contains(got, "inherit <id>") {
+		t.Fatalf("argument-hint missing inherit entry: %q", got)
+	}
+	if strings.Contains(got, "inject") {
+		t.Fatalf("argument-hint must not expose the deprecated inject alias: %q", got)
+	}
+	if strings.Contains(got, "benchmark") {
+		t.Fatalf("argument-hint must not include benchmark (no argHint, not a quick-launch action): %q", got)
+	}
+}
+
+func TestFindCommand_GivenInjectName_ThenReturnsHiddenButDispatchable(t *testing.T) {
+	cmd, ok := findCommand("inject")
+	if !ok {
+		t.Fatal("findCommand(\"inject\") = not found, want the deprecated alias to remain dispatchable")
+	}
+	if !cmd.hidden {
+		t.Fatal("findCommand(\"inject\").hidden = false, want true so it stays out of usage/help/argument-hint")
+	}
+}
+
+func TestFindCommand_GivenUnknownName_ThenReturnsNotFound(t *testing.T) {
+	if _, ok := findCommand("no-such-command"); ok {
+		t.Fatal("findCommand(\"no-such-command\") = found, want not found")
+	}
+}
+
 // Guards against regression where exitOnError would print "Error: <nil>" or
 // "Error: flag: help requested" to stderr instead of being silent.
 func TestExitOnError_GivenNil_ThenNoStderrOutput(t *testing.T) {

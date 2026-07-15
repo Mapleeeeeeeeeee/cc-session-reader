@@ -170,7 +170,50 @@ install_skill() {
     wget -qO "$SKILL_DIR/SKILL.md" "$SKILL_URL"
   fi
 
+  sync_argument_hint
+
   echo "Skill installed. Use /cc-session in Claude Code to activate it."
+}
+
+# ── skill argument-hint sync ──────────────────────────────────────────────────
+
+# sync_argument_hint overwrites the installed SKILL.md's "argument-hint:" line
+# with the live output of "cc-session help --argument-hint". The CLI's command
+# registry is the single source of truth for that hint; without this, the
+# skill drifts out of sync whenever the CLI's subcommand order or set changes.
+#
+# Falls back to leaving the existing line untouched (no-op) if the binary
+# isn't installed/executable, the subcommand errors out (e.g. an older CLI
+# without "help --argument-hint"), or the output doesn't look like a hint —
+# a broken skill install is worse than a stale hint.
+sync_argument_hint() {
+  local cli_bin="$INSTALL_DIR/cc-session"
+  local skill_md="$SKILL_DIR/SKILL.md"
+
+  if [ ! -x "$cli_bin" ]; then
+    return
+  fi
+
+  local hint
+  hint=$("$cli_bin" help --argument-hint 2>/dev/null) || return
+
+  if [ -z "$hint" ] || [[ "$hint" != \[* ]]; then
+    return
+  fi
+
+  # sed -i is not an option here: BSD sed (macOS) and GNU sed (Linux) take
+  # incompatible flags for it. Writing to a temp file and moving it into
+  # place works identically on both.
+  local tmp_file
+  tmp_file=$(mktemp "${skill_md}.XXXXXX")
+  if awk -v hint="$hint" '
+    /^argument-hint:/ { print "argument-hint: \"" hint "\""; next }
+    { print }
+  ' "$skill_md" > "$tmp_file"; then
+    mv "$tmp_file" "$skill_md"
+  else
+    rm -f "$tmp_file"
+  fi
 }
 
 # ── main ──────────────────────────────────────────────────────────────────────

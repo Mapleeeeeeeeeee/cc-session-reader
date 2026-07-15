@@ -1,6 +1,6 @@
 // Package main is the CLI entry point for the Claude session reader.
-// Subcommands: list, read, context, stats, audit, expand, usage, inherit.
-// "inject" is kept as a hidden, deprecated alias for "inherit".
+// Run "cc-session help" for a usage cheat sheet, or see the command
+// registry in commands.go for the authoritative subcommand list.
 package main
 
 import (
@@ -43,37 +43,20 @@ func main() {
 
 	subcommand := os.Args[1]
 	switch subcommand {
-	case "-h", "--help", "help":
+	case "-h", "--help":
 		printUsage()
 		return
 	case "-v", "--version", "version":
 		fmt.Printf("cc-session %s\n", version)
 		return
-	case "list":
-		cmdList(os.Args[2:], reader)
-	case "read":
-		cmdRead(os.Args[2:], reader)
-	case "context":
-		cmdContext(os.Args[2:], reader)
-	case "stats":
-		cmdStats(os.Args[2:], reader)
-	case "audit":
-		cmdAudit(os.Args[2:], reader)
-	case "expand":
-		cmdExpand(os.Args[2:], reader)
-	case "usage":
-		cmdUsage(os.Args[2:])
-	case "inherit":
-		cmdInherit(os.Args[2:], reader)
-	case "inject":
-		fmt.Fprintln(os.Stderr, "cc-session inject 已改名為 cc-session inherit，inject 別名將於未來版本移除，請改用 inherit。")
-		cmdInherit(os.Args[2:], reader)
-	case "benchmark":
-		cmdBenchmark(os.Args[2:], reader)
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", subcommand)
-		printUsage()
-		os.Exit(1)
+		cmd, ok := findCommand(subcommand)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "Unknown command: %s\n", subcommand)
+			printUsage()
+			os.Exit(1)
+		}
+		cmd.run(os.Args[2:], reader)
 	}
 }
 
@@ -81,15 +64,12 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "Usage: cc-session <command> [options]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
-	fmt.Fprintln(os.Stderr, "  list      列出最近的 session")
-	fmt.Fprintln(os.Stderr, "  read      完整對話 + tool call 一行摘要")
-	fmt.Fprintln(os.Stderr, "  context   精簡注入格式（帶 metadata header）")
-	fmt.Fprintln(os.Stderr, "  stats     字元與 token 分佈統計")
-	fmt.Fprintln(os.Stderr, "  audit     檢視被過濾的內容取樣")
-	fmt.Fprintln(os.Stderr, "  expand    展開特定 tool call 完整內容")
-	fmt.Fprintln(os.Stderr, "  usage     CLI 使用紀錄")
-	fmt.Fprintln(os.Stderr, "  inherit   分頁繼承 session 到 context")
-	fmt.Fprintln(os.Stderr, "  benchmark   掃描近期 session，計算壓縮率與成本比較")
+	for _, cmd := range commands {
+		if cmd.hidden {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "  %-8s  %s\n", cmd.name, cmd.summary)
+	}
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Run 'cc-session <command> -h' for command-specific flags.")
 }

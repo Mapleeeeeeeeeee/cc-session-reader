@@ -4,10 +4,24 @@ description: |
   用 cc-session CLI 讀取過去的 Claude Code session，取代直接讀 JSONL。
   CLI 在 context 外完成過濾，原始 300K 壓到 30-50K，只保留對話和 tool call 一行摘要。
   使用者想回顧、引用、分析過去的對話時使用。
+argument-hint: "[list | inherit <id> | read <id> | context <id> | expand <id> <tool-id> | stats <id> | audit <id> | usage]"
 allowed-tools:
   - Bash
   - Read
 ---
+
+## 路由
+
+根據 `$ARGUMENTS` 決定執行什麼。`$ARGUMENTS` 是使用者在 `/cc-session` 後面輸入的內容。
+
+| `$ARGUMENTS` | 執行 |
+|------|------|
+| 空白 | 跑 `cc-session list`，把清單呈現給使用者，問想看哪個 session |
+| `list`（可帶 `-p`、`-n`） | 跑 `cc-session $ARGUMENTS`，呈現清單 |
+| 一個裸 session id（沒帶子命令，例如 `16d06326`） | 視為要讀這個 session → 走下方 inherit 分頁流程 |
+| 已知子命令 + 參數（`inherit`／`read`／`context`／`expand`／`stats`／`audit`／`usage`） | 跑 `cc-session $ARGUMENTS`；若是 inherit 走分頁流程 |
+
+`argument-hint` frontmatter 是輸入框看到的子命令提示，由 `cc-session help --argument-hint` 產生，安裝時自動同步，不要手改。
 
 ## 讀取 session 內容
 
@@ -29,19 +43,9 @@ inherit 記住讀取進度，重複呼叫同一個命令即自動翻頁：
 
 ## 子命令速查
 
-| 意圖 | 命令 |
-|------|------|
-| 找目標 session | `cc-session list` — 列出最近 session，`-p` 過濾專案，用過 cc-session 的標 `[refs]` |
-| 讀 session（預設） | `cc-session inherit <id>` — 分頁載入，重複呼叫翻頁 |
-| 查特定片段 | `cc-session read <id>` — 預設 200 行，`-offset` 跳讀 |
-| 緊湊單次輸出 | `cc-session context <id>` — 同 read 但更緊湊，帶 metadata header |
-| 展開單一 tool call | `cc-session expand <id> <tool-id>` — tool-id 取自輸出中的 `[Tool#xxxx]` |
-| 展開同類所有 tool call | `cc-session read <id> -verbose-bash` — 也有 `-verbose-agents` / `-verbose-thinking` |
-| 分析 token 消耗 | `cc-session stats <id>` |
-| 檢查過濾遺漏 | `cc-session audit <id>` |
-| 查看 CLI 使用紀錄 | `cc-session usage` |
+以下由 CLI 即時產生，永遠對應目前安裝的版本：
 
-Session ID 支援 prefix match，前 8 碼通常就夠。各子命令的 flags 用 `-h` 查看。
+!`cc-session help`
 
 ## 輸出行為
 
