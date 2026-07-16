@@ -3,6 +3,7 @@ package claudecodec
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
@@ -126,6 +127,11 @@ type rawContentBlock struct {
 	ToolUseID string          `json:"tool_use_id"`
 	Input     json.RawMessage `json:"input"`
 	Content   json.RawMessage `json:"content"`
+	// IsError is the tool_result content block's failure flag. Per ADR-003 it
+	// is a one-directional signal: true always means failed, but false does not
+	// mean success (real transcripts carry is_error:false on Bash results whose
+	// text says "Exit code 1") — see the status ladder in toToolResult.
+	IsError bool `json:"is_error"`
 }
 
 func cleanCwdPaths(text string, cwd string) string {
@@ -135,41 +141,168 @@ func cleanCwdPaths(text string, cwd string) string {
 	return strings.ReplaceAll(text, cwd, ".")
 }
 
-func (e rawEntry) toToolResult() session.ToolResult {
-	result := rawToolUseResult{Success: true}
+// toToolResult builds a ToolResult from the entry's toolUseResult/tool_result
+// block. toolNames is the tool_use_id -> tool name map accumulated by the
+// caller's sequential read (nil when called from the stateless public
+// ParseLine): real transcripts carry no commandName/agentType field on
+// Bash/Edit/Write/Read results, so name falls back to the map, which is
+// populated from the preceding assistant tool_use block's declared name.
+func (e rawEntry) toToolResult(toolNames map[string]string) session.ToolResult {
+	var result rawToolUseResult
 	if len(e.ToolUseResult) > 0 {
 		_ = json.Unmarshal(e.ToolUseResult, &result)
 	}
-	text, toolUseID := extractToolResultText(e.Message.Blocks)
+	text, toolUseID, isError := extractToolResultText(e.Message.Blocks)
 	name := result.CommandName
 	if name == "" {
 		name = result.AgentType
 	}
+	if name == "" {
+		name = toolNames[toolUseID]
+	}
+	cleanText := cleanCwdPaths(text, e.Cwd)
+	success := determineSuccess(result.Success, isError, cleanText)
 	return session.ToolResult{
 		ToolUseID: toolUseID,
-		Success:   result.Success,
-		Text:      cleanCwdPaths(text, e.Cwd),
+		Success:   success,
+		Text:      cleanText,
 		RawName:   name,
+		DiffStat:  diffStatFor(name, success, result),
 	}
 }
 
 type rawToolUseResult struct {
-	Success     bool   `json:"success"`
+	// Success is a pointer so an absent field (the common case for Bash and
+	// Read, see ADR-003) is distinguishable from an explicit false — nil means
+	// "no explicit signal", not "failed".
+	Success     *bool  `json:"success"`
 	CommandName string `json:"commandName"`
 	AgentType   string `json:"agentType"`
+
+	// StructuredPatch and Content feed the ADR-003 decision 3 diff summary.
+	// Edit carries a non-empty StructuredPatch; Write (new file) carries an
+	// empty StructuredPatch plus Content holding the file body.
+	StructuredPatch []rawPatchHunk `json:"structuredPatch"`
+	Content         *string        `json:"content"`
 }
 
-func extractToolResultText(blocks []rawContentBlock) (string, string) {
+// rawPatchHunk is one hunk of toolUseResult.structuredPatch. Lines entries
+// are prefixed "+"/"-"/" " (unified-diff convention) per ADR-003.
+type rawPatchHunk struct {
+	OldStart int      `json:"oldStart"`
+	OldLines int      `json:"oldLines"`
+	NewStart int      `json:"newStart"`
+	NewLines int      `json:"newLines"`
+	Lines    []string `json:"lines"`
+}
+
+// diffStatFor computes the ADR-003 decision 3 diff summary from a successful
+// Edit/Write result. Returns nil when the result failed, the tool isn't
+// Edit/Write, or the expected structuredPatch/content shape is missing —
+// callers then fall back to the bare "-> ok" status line.
+func diffStatFor(name string, success bool, result rawToolUseResult) *session.DiffStat {
+	if !success {
+		return nil
+	}
+	switch name {
+	case session.ToolEdit:
+		if len(result.StructuredPatch) == 0 {
+			return nil
+		}
+		var additions, deletions int
+		for _, hunk := range result.StructuredPatch {
+			for _, line := range hunk.Lines {
+				switch {
+				case strings.HasPrefix(line, "+"):
+					additions++
+				case strings.HasPrefix(line, "-"):
+					deletions++
+				}
+			}
+		}
+		return &session.DiffStat{
+			Additions:    additions,
+			Deletions:    deletions,
+			NewStartLine: result.StructuredPatch[0].NewStart,
+			HunkCount:    len(result.StructuredPatch),
+		}
+	case session.ToolWrite:
+		if len(result.StructuredPatch) != 0 || result.Content == nil {
+			return nil
+		}
+		return &session.DiffStat{
+			IsNewFile:    true,
+			NewFileLines: countContentLines(*result.Content),
+		}
+	default:
+		return nil
+	}
+}
+
+// countContentLines counts the visible lines of Write's new-file content. A
+// trailing newline (the common text-file convention) does not count as an
+// extra blank line, so "a\nb\n" and "a\nb" both report 2 lines.
+func countContentLines(content string) int {
+	if content == "" {
+		return 0
+	}
+	lines := strings.Split(content, "\n")
+	if lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return len(lines)
+}
+
+// nonZeroExitCodeLine matches a bare Bash "Exit code N" line. Claude Code
+// appends this line to Bash results regardless of outcome, so N must be
+// checked: "Exit code 0" is a success marker, not a failure signature.
+var nonZeroExitCodeLine = regexp.MustCompile(`(?m)^Exit code (\d+)\s*$`)
+
+// hookErrorSignature matches PreToolUse/PostToolUse hook rejection text,
+// which Claude Code renders as ordinary result content ending in
+// "... hook error" rather than setting is_error.
+var hookErrorSignature = regexp.MustCompile(`hook error`)
+
+// determineSuccess applies the ADR-003 status ladder: the first applicable
+// signal wins. explicitSuccess is nil when toolUseResult.success was absent
+// from the transcript line (the common case for Bash/Read).
+func determineSuccess(explicitSuccess *bool, isError bool, text string) bool {
+	if explicitSuccess != nil {
+		return *explicitSuccess
+	}
+	if isError {
+		return false
+	}
+	if hasKnownFailureSignature(text) {
+		return false
+	}
+	return true
+}
+
+// hasKnownFailureSignature sniffs result text for the small, enumerated set
+// of known-failure patterns from ADR-003. This is deliberately not a general
+// heuristic: a false FAILED misleads the reader as badly as a false ok, so
+// new signatures are added only with a real transcript sample as evidence.
+func hasKnownFailureSignature(text string) bool {
+	for _, match := range nonZeroExitCodeLine.FindAllStringSubmatch(text, -1) {
+		if match[1] != "0" {
+			return true
+		}
+	}
+	return hookErrorSignature.MatchString(text)
+}
+
+func extractToolResultText(blocks []rawContentBlock) (string, string, bool) {
 	for _, block := range blocks {
 		if block.Type != "tool_result" {
 			continue
 		}
 		if len(block.Content) == 0 {
-			return "", block.ToolUseID
+			return "", block.ToolUseID, block.IsError
 		}
 		var s string
 		if err := json.Unmarshal(block.Content, &s); err == nil {
-			return s, block.ToolUseID
+			return s, block.ToolUseID, block.IsError
 		}
 		var subBlocks []rawContentBlock
 		if err := json.Unmarshal(block.Content, &subBlocks); err == nil {
@@ -179,15 +312,15 @@ func extractToolResultText(blocks []rawContentBlock) (string, string) {
 					parts = append(parts, subBlock.Text)
 				}
 			}
-			return strings.Join(parts, "\n"), block.ToolUseID
+			return strings.Join(parts, "\n"), block.ToolUseID, block.IsError
 		}
-		return string(block.Content), block.ToolUseID
+		return string(block.Content), block.ToolUseID, block.IsError
 	}
-	return "", ""
+	return "", "", false
 }
 
 func extractUserAnswer(blocks []rawContentBlock) string {
-	text, _ := extractToolResultText(blocks)
+	text, _, _ := extractToolResultText(blocks)
 	for _, prefix := range userAnswerPrefixes {
 		if strings.HasPrefix(text, prefix) {
 			return text
@@ -209,7 +342,7 @@ func (e rawEntry) extractAllText() string {
 					parts = append(parts, marshalNoEscape(block.Input))
 				}
 			case "tool_result":
-				text, _ := extractToolResultText([]rawContentBlock{block})
+				text, _, _ := extractToolResultText([]rawContentBlock{block})
 				if text != "" {
 					parts = append(parts, text)
 				}

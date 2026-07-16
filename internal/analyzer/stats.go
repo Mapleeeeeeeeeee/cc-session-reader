@@ -5,8 +5,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/formatter"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
-	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/summarizer"
 )
 
 // ToolStats tracks per-tool usage metrics accumulated during ComputeStats.
@@ -35,21 +35,29 @@ type StatsResult struct {
 	CompactCount int
 }
 
+// ComputeStats walks events once to accumulate RAW-side accounting (every
+// byte the transcript contains, and the CUT categories that never reach the
+// injected output at all), then measures the FILTERED side by running the
+// same events through formatter.RenderReadEventsWithSink — the exact render
+// pass `cc-session inherit` uses to inject context, collapsing included. That
+// single render pass both produces FilteredText and reports each unit of
+// kept content to the KEPT categories, so the two can never drift apart the
+// way two independent implementations previously did.
 func ComputeStats(events []session.Event) StatsResult {
-	var rawParts, filteredParts []string
+	var rawParts []string
 	categories := map[string]int{
-		"user_text":       0,
-		"user_answers":    0,
-		"assistant_text":  0,
-		"tool_summaries":  0,
-		"tool_input_raw":  0,
-		"tool_result_raw": 0,
-		"system_noise":    0,
-		"command_noise":   0,
+		formatter.CategoryUserText:      0,
+		formatter.CategoryUserAnswer:    0,
+		formatter.CategoryAssistantText: 0,
+		formatter.CategoryToolSummary:   0,
+		"tool_input_raw":                0,
+		"tool_result_raw":               0,
+		"system_noise":                  0,
+		"command_noise":                 0,
+		"render_overhead":               0,
 	}
 	perTool := map[string]*ToolStats{}
 	toolUseNames := map[string]string{}
-	seenSkills := map[string]bool{}
 	var lastContextTokens, totalOutputTokens, apiCallCount, compactCount, userTurnCount int
 	var prevUsage *session.Usage
 
@@ -69,26 +77,16 @@ func ComputeStats(events []session.Event) StatsResult {
 			if event.User == nil {
 				continue
 			}
-			// Command invocation: the short marker is kept content. Deliberate
-			// undercount — the marker counts identically toward raw and filtered,
-			// so an invocation contributes zero reduction here. The original
-			// invocation wrapper (<command-name>...<command-args>) was already
-			// dropped at parse time and never reaches stats, so its ~100 chars of
-			// savings are not reflected in the reduction. We accept this: the
-			// wrapper is tiny, and the bulk command savings (multi-KB stdout) are
-			// correctly captured via the IsCommandNoise branch below, which counts
-			// toward raw but not filtered. Surfacing the wrapper would mean
-			// re-plumbing the dropped text through the parser for a rounding-error
-			// gain — not worth the coupling.
+			// Command invocation marker: cheap and identical in both raw and
+			// filtered streams, so it contributes no reduction here. Its KEPT
+			// weight is measured below via the render pass, not here.
 			if event.User.CommandMarker != "" {
-				categories["user_text"] += utf8.RuneCountInString(event.User.CommandMarker)
 				rawParts = append(rawParts, event.User.CommandMarker)
-				filteredParts = append(filteredParts, event.User.CommandMarker)
 				continue
 			}
-			// Command output / caveat: machine noise. Count toward raw so the
-			// reduction reflects what was actually cut, but never toward
-			// filtered — mirrors how system_noise is handled.
+			// Command output / caveat: machine noise, fully cut from the
+			// filtered stream (formatter.renderUserMessage drops it unless
+			// -verbose-commands is set, which ComputeStats never sets).
 			if event.User.IsCommandNoise {
 				categories["command_noise"] += utf8.RuneCountInString(event.User.Text)
 				rawParts = append(rawParts, event.User.Text)
@@ -97,45 +95,25 @@ func ComputeStats(events []session.Event) StatsResult {
 			if strings.TrimSpace(event.User.Text) == "" {
 				continue
 			}
-
-			// Harness-injected subtypes: mirror the formatter's compression.
+			// Harness-injected system-reminder/context-usage blocks are
+			// dropped entirely by the render pass (never shown), so they are
+			// CUT, not KEPT — folded into system_noise since they are the
+			// same kind of harness boilerplate as EventNoise.
 			if event.User.IsSystemReminder || event.User.IsContextUsage {
-				categories["user_text"] += utf8.RuneCountInString(event.User.Text)
+				categories["system_noise"] += utf8.RuneCountInString(event.User.Text)
 				rawParts = append(rawParts, event.User.Text)
 				continue
 			}
-			if event.User.IsSkillInjection {
-				categories["user_text"] += utf8.RuneCountInString(event.User.Text)
+			// Skill/teammate/command injections are compacted rather than
+			// dropped; their KEPT (compacted) size is measured below via the
+			// render pass. Only the raw side is recorded here.
+			if event.User.IsSkillInjection || event.User.IsTeammateMessage || event.User.IsCommandInjection {
 				rawParts = append(rawParts, event.User.Text)
-				compact := session.CompactSkillInjection(event.User, seenSkills)
-				filteredParts = append(filteredParts, compact)
-				continue
-			}
-			if event.User.IsTeammateMessage {
-				categories["user_text"] += utf8.RuneCountInString(event.User.Text)
-				rawParts = append(rawParts, event.User.Text)
-				if compacted, ok := session.CompactTeammateMessage(event.User.Text); ok {
-					filteredParts = append(filteredParts, compacted)
-				}
-				continue
-			}
-			if event.User.IsCommandInjection {
-				categories["user_text"] += utf8.RuneCountInString(event.User.Text)
-				rawParts = append(rawParts, event.User.Text)
-				if compacted, ok := session.CompactCommandInjection(event.User.Text); ok {
-					filteredParts = append(filteredParts, compacted)
-				}
 				continue
 			}
 
 			userTurnCount++
-			categories["user_text"] += utf8.RuneCountInString(event.User.Text)
 			rawParts = append(rawParts, event.User.Text)
-			if compacted, ok := session.CompactTaskNotification(event.User.Text); ok {
-				filteredParts = append(filteredParts, compacted)
-			} else {
-				filteredParts = append(filteredParts, event.User.Text)
-			}
 
 		case session.EventAssistantMessage:
 			if event.Assistant == nil {
@@ -148,9 +126,7 @@ func ComputeStats(events []session.Event) StatsResult {
 				prevUsage = u
 			}
 			if strings.TrimSpace(event.Assistant.Text) != "" {
-				categories["assistant_text"] += utf8.RuneCountInString(event.Assistant.Text)
 				rawParts = append(rawParts, event.Assistant.Text)
-				filteredParts = append(filteredParts, event.Assistant.Text)
 			}
 			for _, tool := range event.Assistant.ToolUses {
 				rawJSON := tool.Input.MarshalNoEscape()
@@ -171,10 +147,6 @@ func ComputeStats(events []session.Event) StatsResult {
 				}
 				ts.CallCount++
 				ts.InputChars += utf8.RuneCountInString(rawJSON)
-
-				summary := summarizer.SummarizeToolUse(name, tool.Input, tool.Cwd)
-				categories["tool_summaries"] += utf8.RuneCountInString(summary)
-				filteredParts = append(filteredParts, summary)
 			}
 
 		case session.EventToolResult:
@@ -182,16 +154,11 @@ func ComputeStats(events []session.Event) StatsResult {
 				continue
 			}
 			if event.User != nil && event.User.IsAnswer {
-				categories["user_answers"] += utf8.RuneCountInString(event.User.Text)
 				rawParts = append(rawParts, event.Tool.Text)
-				filteredParts = append(filteredParts, event.User.Text)
 				continue
 			}
 			categories["tool_result_raw"] += utf8.RuneCountInString(event.Tool.Text)
 			rawParts = append(rawParts, event.Tool.Text)
-			summary := event.Tool.Summary()
-			categories["tool_summaries"] += utf8.RuneCountInString(summary)
-			filteredParts = append(filteredParts, summary)
 
 			toolName := ""
 			if event.Tool.ToolUseID != "" {
@@ -213,13 +180,31 @@ func ComputeStats(events []session.Event) StatsResult {
 	}
 
 	rawText := strings.Join(rawParts, "\n")
-	filteredText := strings.Join(filteredParts, "\n")
+
+	// FilteredText is the actual `cc-session inherit`-equivalent render
+	// output (agentIDs empty and FormatOptions zero-value, matching
+	// inject.RenderFullOutput's defaults), so "Filtered" always means the
+	// real injected size. The sink tags each kept unit into categories in
+	// the same pass that renders it.
+	filteredText, _ := formatter.RenderReadEventsWithSink(events, map[string]bool{}, formatter.FormatOptions{}, func(category, text string) {
+		categories[category] += utf8.RuneCountInString(text)
+	})
+	filteredChars := utf8.RuneCountInString(filteredText)
+
+	// render_overhead is the render pipeline's own structure layered on top
+	// of kept content — timestamps, "user:"/"assistant:" labels, tool-line
+	// indentation, and blank-line separators — none of which belongs to a
+	// single content category but all of which is real injected bytes.
+	// Surfacing it explicitly keeps KEPT-category-sum + this line exactly
+	// equal to FilteredChars, instead of leaving an unexplained gap.
+	kept := categories[formatter.CategoryUserText] + categories[formatter.CategoryUserAnswer] + categories[formatter.CategoryAssistantText] + categories[formatter.CategoryToolSummary]
+	categories["render_overhead"] = filteredChars - kept
 
 	return StatsResult{
 		RawText:           rawText,
 		FilteredText:      filteredText,
 		RawChars:          utf8.RuneCountInString(rawText),
-		FilteredChars:     utf8.RuneCountInString(filteredText),
+		FilteredChars:     filteredChars,
 		Categories:        categories,
 		PerTool:           perTool,
 		LastContextTokens: lastContextTokens,

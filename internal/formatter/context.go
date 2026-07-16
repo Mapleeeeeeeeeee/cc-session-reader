@@ -19,7 +19,7 @@ func FormatContextWithStore(transcriptPath string, sessionID string, maxLines in
 	}
 
 	var buf bytes.Buffer
-	writeContextHeader(sessionID, &buf, store)
+	writeContextHeader(sessionID, transcriptPath, events, &buf, store)
 	if err := renderContextEvents(events, agentIDs, opts, &buf); err != nil {
 		return err
 	}
@@ -39,9 +39,10 @@ func FormatContextEvents(events []session.Event, agentIDs map[string]bool, maxLi
 func renderContextEvents(events []session.Event, agentIDs map[string]bool, opts FormatOptions, out io.Writer) error {
 	var pendingTools []pendingTool
 	seenSkills := make(map[string]bool)
+	rc := renderContext{agentIDs: agentIDs, opts: opts, out: out}
 
 	flush := func() {
-		flushPendingTools(&pendingTools, opts, out)
+		flushPendingTools(&pendingTools, rc)
 	}
 
 	for _, event := range events {
@@ -94,11 +95,21 @@ func renderContextEvents(events []session.Event, agentIDs map[string]bool, opts 
 	return nil
 }
 
-func writeContextHeader(sessionID string, out io.Writer, store parser.Store) {
+// writeContextHeader writes the one-line session header that opens every
+// context output. It prefers session_meta (richer: real project path,
+// recorded duration) and falls back to a minimal header derived from the
+// transcript itself when metadata is unavailable, so a fresh reader always
+// gets a session id and project on line 1 instead of raw dialogue.
+func writeContextHeader(sessionID string, transcriptPath string, events []session.Event, out io.Writer, store parser.Store) {
 	meta, err := store.LoadSessionMeta(sessionID)
-	if err != nil || meta == nil {
+	if err == nil && meta != nil {
+		writeMetaContextHeader(sessionID, meta, out)
 		return
 	}
+	writeFallbackContextHeader(sessionID, transcriptPath, events, out)
+}
+
+func writeMetaContextHeader(sessionID string, meta map[string]any, out io.Writer) {
 	projectPath := jsonutil.GetStr(meta, "project_path")
 	project := filepath.Base(projectPath)
 	if project == "" || project == "." {
@@ -110,4 +121,53 @@ func writeContextHeader(sessionID string, out io.Writer, store parser.Store) {
 	}
 	shortID := session.ShortID(sessionID, 8)
 	fmt.Fprintf(out, "# Session %s | %s | %sm\n\n", shortID, project, duration)
+}
+
+// writeFallbackContextHeader writes a minimal header sourced from the
+// transcript itself: session id, project (from a tool call's recorded cwd,
+// or the transcript's parent directory name as a last resort), and the date
+// of the first event. Used when session metadata is missing — notably the
+// ~/.claude/usage-data/session-meta/ upstream stopped writing new files as of
+// 2026-07-04, so without this fallback every recent session's context output
+// opened with raw dialogue and no indication of which project or session it
+// belonged to.
+func writeFallbackContextHeader(sessionID string, transcriptPath string, events []session.Event, out io.Writer) {
+	project := projectFromEventCwd(events)
+	if project == "" {
+		project = filepath.Base(filepath.Dir(transcriptPath))
+	}
+	if project == "" || project == "." {
+		project = "?"
+	}
+	date := parser.FormatTimestamp(firstEventTimestamp(events))
+	shortID := session.ShortID(sessionID, 8)
+	fmt.Fprintf(out, "# Session %s | %s | %s (no session metadata)\n\n", shortID, project, date)
+}
+
+// firstEventTimestamp returns the first non-empty timestamp among events, in
+// order. Leading noise events (mode/permission-mode/bridge-session/...) carry
+// no timestamp field, so events[0].Timestamp alone is not reliable.
+func firstEventTimestamp(events []session.Event) string {
+	for _, event := range events {
+		if event.Timestamp != "" {
+			return event.Timestamp
+		}
+	}
+	return ""
+}
+
+// projectFromEventCwd returns the directory name of the first recorded tool
+// call's working directory, or "" if no event carries one.
+func projectFromEventCwd(events []session.Event) string {
+	for _, event := range events {
+		if event.Assistant == nil {
+			continue
+		}
+		for _, tool := range event.Assistant.ToolUses {
+			if tool.Cwd != "" {
+				return filepath.Base(tool.Cwd)
+			}
+		}
+	}
+	return ""
 }

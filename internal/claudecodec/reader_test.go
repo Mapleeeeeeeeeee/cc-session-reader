@@ -67,6 +67,314 @@ func TestParseLine_ToolResultTextBlockContent(t *testing.T) {
 	}
 }
 
+// --- ADR-003 decision 1: status determination ladder ---
+
+// TestParseLine_ToolResult_GivenExplicitSuccessField_ThenItWinsOverSniffedFailureText
+// pins ladder rule 1: an explicit toolUseResult.success always wins, even when
+// the result text also contains a known-failure signature (here "Exit code 1").
+func TestParseLine_ToolResult_GivenExplicitSuccessField_ThenItWinsOverSniffedFailureText(t *testing.T) {
+	event := parseLine(t, `{"type":"user","toolUseResult":{"success":true,"commandName":"Bash"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"Exit code 1"}]}}`)
+	if event.Tool == nil || !event.Tool.Success {
+		t.Fatalf("tool result = %#v, want Success=true (explicit signal wins)", event.Tool)
+	}
+}
+
+// TestParseLine_ToolResult_GivenBashResultWithoutSuccessField_ThenNoSignalDefaultsOk
+// pins that the highest-frequency shape (Bash toolUseResult carries no
+// "success" field at all) still resolves to ok when nothing in the ladder
+// signals failure. This is the safe default from ADR-003 rule 4.
+func TestParseLine_ToolResult_GivenBashResultWithoutSuccessField_ThenNoSignalDefaultsOk(t *testing.T) {
+	event := parseLine(t, `{"type":"user","toolUseResult":{"stdout":"done","stderr":"","interrupted":false},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"done\nExit code 0"}]}}`)
+	if event.Tool == nil || !event.Tool.Success {
+		t.Fatalf("tool result = %#v, want Success=true", event.Tool)
+	}
+}
+
+// TestParseLine_ToolResult_GivenNoSuccessFieldAndIsErrorTrue_ThenFailed guards
+// the bug described in ADR-003: Bash toolUseResult has no "success" field, so
+// the codec used to default Success=true unconditionally, rendering failed
+// commands as "-> ok". With is_error:true parsed, it must resolve to FAILED.
+func TestParseLine_ToolResult_GivenNoSuccessFieldAndIsErrorTrue_ThenFailed(t *testing.T) {
+	event := parseLine(t, `{"type":"user","toolUseResult":{"stdout":"","stderr":"no such file or directory"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","is_error":true,"content":"no such file or directory"}]}}`)
+	if event.Tool == nil || event.Tool.Success {
+		t.Fatalf("tool result = %#v, want Success=false", event.Tool)
+	}
+}
+
+// TestParseLine_ToolResult_GivenIsErrorFalseButExitCodeNonZero_ThenSniffedAsFailed
+// guards the ADR-003 negative knowledge: is_error is a one-directional signal.
+// Real transcripts carry is_error:false on Bash results whose text still says
+// "Exit code 1" — false must never be trusted as a success signal, so the
+// content sniff step must still catch the failure.
+func TestParseLine_ToolResult_GivenIsErrorFalseButExitCodeNonZero_ThenSniffedAsFailed(t *testing.T) {
+	event := parseLine(t, `{"type":"user","toolUseResult":{"stdout":"","stderr":""},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","is_error":false,"content":"Exit code 1"}]}}`)
+	if event.Tool == nil || event.Tool.Success {
+		t.Fatalf("tool result = %#v, want Success=false (sniffed from Exit code 1)", event.Tool)
+	}
+}
+
+// TestParseLine_ToolResult_GivenExitCodeZero_ThenNotSniffedAsFailed guards
+// against over-eager sniffing: "Exit code 0" reports a successful exit and
+// must not trigger the failure signature.
+func TestParseLine_ToolResult_GivenExitCodeZero_ThenNotSniffedAsFailed(t *testing.T) {
+	event := parseLine(t, `{"type":"user","toolUseResult":{"stdout":"ok","stderr":""},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok\nExit code 0"}]}}`)
+	if event.Tool == nil || !event.Tool.Success {
+		t.Fatalf("tool result = %#v, want Success=true", event.Tool)
+	}
+}
+
+// TestParseLine_ToolResult_GivenExitCodeMentionedMidSentence_ThenNotSniffedAsFailed
+// guards the nonZeroExitCodeLine regex anchor `(?m)^Exit code (\d+)\s*$`: it
+// only matches a bare "Exit code N" line, not the phrase appearing inside
+// other text. This protects against a future edit that loosens the anchor
+// (e.g. dropping `^`/`$` or switching to a plain substring match), which
+// would sniff any result mentioning "Exit code 1" as FAILED regardless of
+// context.
+func TestParseLine_ToolResult_GivenExitCodeMentionedMidSentence_ThenNotSniffedAsFailed(t *testing.T) {
+	event := parseLine(t, `{"type":"user","toolUseResult":{"stdout":"","stderr":""},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"note: Exit code 1 is documented below\nall good"}]}}`)
+	if event.Tool == nil || !event.Tool.Success {
+		t.Fatalf("tool result = %#v, want Success=true (mid-sentence mention must not match the bare-line anchor)", event.Tool)
+	}
+}
+
+// TestParseLine_ToolResult_GivenHookErrorText_ThenSniffedAsFailed pins the
+// second ADR-003 sniff pattern: a hook rejection is reported as ordinary
+// result content (no success/is_error signal) ending in "... hook error".
+func TestParseLine_ToolResult_GivenHookErrorText_ThenSniffedAsFailed(t *testing.T) {
+	event := parseLine(t, `{"type":"user","toolUseResult":{"stdout":"","stderr":""},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"PreToolUse:Bash [rm -rf /tmp/x] hook error: blocked by policy"}]}}`)
+	if event.Tool == nil || event.Tool.Success {
+		t.Fatalf("tool result = %#v, want Success=false (sniffed from hook error)", event.Tool)
+	}
+}
+
+// --- ADR-003 decision 3: diff summaries for Edit/Write ---
+
+// TestParseLine_ToolResult_GivenEditSingleHunk_ThenDiffStatSumsHunkLines pins
+// the codec's structuredPatch parsing: +/- line counts summed from the hunk's
+// "lines" entries, and NewStartLine taken from the hunk's newStart.
+func TestParseLine_ToolResult_GivenEditSingleHunk_ThenDiffStatSumsHunkLines(t *testing.T) {
+	line := `{"type":"user","toolUseResult":{"success":true,"commandName":"Edit","structuredPatch":[` +
+		`{"oldStart":10,"oldLines":3,"newStart":10,"newLines":4,"lines":[" line1","-old line","+new line","+another new"," line2"]}` +
+		`]},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok"}]}}`
+	event := parseLine(t, line)
+
+	stat := event.Tool.DiffStat
+	if stat == nil {
+		t.Fatal("DiffStat is nil, want populated stat")
+	}
+	if stat.IsNewFile {
+		t.Fatal("IsNewFile = true, want false for Edit")
+	}
+	if stat.Additions != 2 || stat.Deletions != 1 || stat.NewStartLine != 10 || stat.HunkCount != 1 {
+		t.Fatalf("DiffStat = %#v, want Additions=2 Deletions=1 NewStartLine=10 HunkCount=1", stat)
+	}
+}
+
+// TestParseLine_ToolResult_GivenEditMultipleHunks_ThenDiffStatAggregatesAcrossHunks
+// pins multi-hunk aggregation: additions/deletions sum across every hunk, but
+// NewStartLine stays pinned to the *first* hunk (per ADR-003), and HunkCount
+// reflects the total hunk count.
+func TestParseLine_ToolResult_GivenEditMultipleHunks_ThenDiffStatAggregatesAcrossHunks(t *testing.T) {
+	line := `{"type":"user","toolUseResult":{"success":true,"commandName":"Edit","structuredPatch":[` +
+		`{"oldStart":5,"oldLines":2,"newStart":5,"newLines":3,"lines":[" a","+b","+c"]},` +
+		`{"oldStart":40,"oldLines":4,"newStart":41,"newLines":2,"lines":["-d","-e"," f"]}` +
+		`]},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok"}]}}`
+	event := parseLine(t, line)
+
+	stat := event.Tool.DiffStat
+	if stat == nil {
+		t.Fatal("DiffStat is nil, want populated stat")
+	}
+	if stat.Additions != 2 || stat.Deletions != 2 || stat.NewStartLine != 5 || stat.HunkCount != 2 {
+		t.Fatalf("DiffStat = %#v, want Additions=2 Deletions=2 NewStartLine=5 HunkCount=2", stat)
+	}
+}
+
+// TestParseLine_ToolResult_GivenWriteNewFile_ThenDiffStatCountsContentLines
+// pins Write's new-file shape: empty structuredPatch plus a content field, no
+// hunks to parse, so the line count comes from splitting content instead.
+func TestParseLine_ToolResult_GivenWriteNewFile_ThenDiffStatCountsContentLines(t *testing.T) {
+	line := `{"type":"user","toolUseResult":{"success":true,"commandName":"Write","structuredPatch":[],` +
+		`"content":"package main\n\nfunc main() {}\n"},` +
+		`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok"}]}}`
+	event := parseLine(t, line)
+
+	stat := event.Tool.DiffStat
+	if stat == nil {
+		t.Fatal("DiffStat is nil, want populated stat")
+	}
+	if !stat.IsNewFile {
+		t.Fatal("IsNewFile = false, want true for Write")
+	}
+	if stat.NewFileLines != 3 {
+		t.Fatalf("NewFileLines = %d, want 3", stat.NewFileLines)
+	}
+}
+
+// TestParseLine_ToolResult_GivenWriteNewFile_ThenCountContentLinesMatchesDocumentedContract
+// pins the countContentLines doc comment (model.go): a trailing newline is the
+// common text-file convention and must not count as an extra blank line, while
+// truly empty content reports zero lines. The existing diff-stat test above
+// only exercises content with a trailing newline, leaving these two boundary
+// cases unguarded.
+func TestParseLine_ToolResult_GivenWriteNewFile_ThenCountContentLinesMatchesDocumentedContract(t *testing.T) {
+	tests := []struct {
+		name          string
+		content       string
+		wantNewFile   bool
+		wantFileLines int
+	}{
+		{name: "no trailing newline counts visible lines", content: "a\nb", wantNewFile: true, wantFileLines: 2},
+		{name: "empty content reports zero lines", content: "", wantNewFile: true, wantFileLines: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			contentJSON, err := json.Marshal(tt.content)
+			if err != nil {
+				t.Fatalf("marshal content: %v", err)
+			}
+			line := `{"type":"user","toolUseResult":{"success":true,"commandName":"Write","structuredPatch":[],` +
+				`"content":` + string(contentJSON) + `},` +
+				`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok"}]}}`
+			event := parseLine(t, line)
+
+			stat := event.Tool.DiffStat
+			if stat == nil {
+				t.Fatal("DiffStat is nil, want populated stat")
+			}
+			if stat.IsNewFile != tt.wantNewFile {
+				t.Fatalf("IsNewFile = %v, want %v", stat.IsNewFile, tt.wantNewFile)
+			}
+			if stat.NewFileLines != tt.wantFileLines {
+				t.Fatalf("NewFileLines = %d, want %d", stat.NewFileLines, tt.wantFileLines)
+			}
+		})
+	}
+}
+
+// TestParseLine_ToolResult_GivenEditWithoutStructuredPatch_ThenDiffStatNil
+// guards the ADR-003 fallback: a successful Edit whose toolUseResult carries
+// no structuredPatch (missing/unparsable) must not synthesize a fake diff —
+// DiffStat stays nil so Summary() renders the bare "-> ok" it always did.
+func TestParseLine_ToolResult_GivenEditWithoutStructuredPatch_ThenDiffStatNil(t *testing.T) {
+	line := `{"type":"user","toolUseResult":{"success":true,"commandName":"Edit"},` +
+		`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok"}]}}`
+	event := parseLine(t, line)
+
+	if event.Tool.DiffStat != nil {
+		t.Fatalf("DiffStat = %#v, want nil (no structuredPatch in transcript)", event.Tool.DiffStat)
+	}
+}
+
+// TestParseLine_ToolResult_GivenFailedEdit_ThenDiffStatNil guards the
+// constraint that diff summaries never apply to failed results, even when the
+// transcript happens to carry a structuredPatch — the existing FAILED excerpt
+// path must own the summary, not the diff annotation.
+func TestParseLine_ToolResult_GivenFailedEdit_ThenDiffStatNil(t *testing.T) {
+	line := `{"type":"user","toolUseResult":{"success":false,"commandName":"Edit","structuredPatch":[` +
+		`{"oldStart":1,"oldLines":1,"newStart":1,"newLines":1,"lines":["-a","+b"]}` +
+		`]},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"permission denied"}]}}`
+	event := parseLine(t, line)
+
+	if event.Tool.DiffStat != nil {
+		t.Fatalf("DiffStat = %#v, want nil for a failed result", event.Tool.DiffStat)
+	}
+}
+
+// --- ADR-003 follow-up: tool_result name resolved from the preceding tool_use ---
+//
+// Real Claude Code transcripts carry no commandName/agentType field on
+// Bash/Edit/Write/Read toolUseResults (only "success"-less bodies like
+// {filePath, structuredPatch, ...} for Edit, or {type, file} for Read) — the
+// tool name only exists on the earlier assistant tool_use block, correlated
+// by tool_use_id. A fixture with RawName/commandName hand-filled (as every
+// other test in this file does, matching ParseLine's single-line contract)
+// cannot catch a regression here: it has to run the real two-entry sequence
+// through ReadAll so the tool_use -> tool_result name resolution actually
+// executes.
+
+// TestReadAll_GivenEditToolResultWithoutCommandName_ThenRawNameResolvedFromPrecedingToolUse
+// guards the bug where diffStatFor's tool-name gate silently no-opped on
+// every real transcript because RawName was always "": with the tool_use's
+// name recovered via tool_use_id, RawName must read "Edit" and the
+// structuredPatch diff annotation must render.
+func TestReadAll_GivenEditToolResultWithoutCommandName_ThenRawNameResolvedFromPrecedingToolUse(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	lines := []string{
+		`{"type":"assistant","timestamp":"2026-07-15T00:00:00Z","message":{"role":"assistant","content":[` +
+			`{"type":"tool_use","id":"toolu_edit1","name":"Edit","input":{"file_path":"/repo/src/lib/app-metadata.ts"}}` +
+			`]}}`,
+		`{"type":"user","timestamp":"2026-07-15T00:00:01Z","toolUseResult":{` +
+			`"filePath":"/repo/src/lib/app-metadata.ts","oldString":"a","newString":"b","originalFile":"a",` +
+			`"replaceAll":false,"userModified":false,` +
+			`"structuredPatch":[{"oldStart":10,"oldLines":3,"newStart":10,"newLines":4,` +
+			`"lines":[" line1","-old line","+new line","+another new"," line2"]}]` +
+			`},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_edit1",` +
+			`"content":"The file /repo/src/lib/app-metadata.ts has been updated successfully."}]}}`,
+		"",
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	events, err := ReadAll(path)
+	if err != nil {
+		t.Fatalf("ReadAll returned error: %v", err)
+	}
+	if len(events) != 2 || events[1].Tool == nil {
+		t.Fatalf("events = %#v, want an assistant event followed by a tool_result event", events)
+	}
+
+	tool := events[1].Tool
+	if tool.RawName != session.ToolEdit {
+		t.Fatalf("RawName = %q, want %q (resolved from preceding tool_use)", tool.RawName, session.ToolEdit)
+	}
+	wantSummary := " -> ok (+2, -1 @ L10)"
+	if got := tool.Summary(); got != wantSummary {
+		t.Fatalf("Summary() = %q, want %q", got, wantSummary)
+	}
+}
+
+// TestReadAll_GivenReadToolResultWithoutCommandName_ThenBareOkSuppressionApplies
+// guards the companion regression: Summary()'s ADR-002 bare "-> ok"
+// suppression for Read switches on RawName, so with RawName stuck at "" on
+// real transcripts the tool's boilerplate confirmation text ("has been
+// updated successfully...") leaked into the rendered summary instead of
+// being suppressed.
+func TestReadAll_GivenReadToolResultWithoutCommandName_ThenBareOkSuppressionApplies(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	lines := []string{
+		`{"type":"assistant","timestamp":"2026-07-15T00:00:00Z","message":{"role":"assistant","content":[` +
+			`{"type":"tool_use","id":"toolu_read1","name":"Read","input":{"file_path":"/repo/README.md"}}` +
+			`]}}`,
+		`{"type":"user","timestamp":"2026-07-15T00:00:01Z","toolUseResult":{` +
+			`"type":"text","file":{"content":"# README","numLines":1}` +
+			`},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_read1",` +
+			`"content":"     1\t# README"}]}}`,
+		"",
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	events, err := ReadAll(path)
+	if err != nil {
+		t.Fatalf("ReadAll returned error: %v", err)
+	}
+	if len(events) != 2 || events[1].Tool == nil {
+		t.Fatalf("events = %#v, want an assistant event followed by a tool_result event", events)
+	}
+
+	tool := events[1].Tool
+	if tool.RawName != session.ToolRead {
+		t.Fatalf("RawName = %q, want %q (resolved from preceding tool_use)", tool.RawName, session.ToolRead)
+	}
+	wantSummary := " -> ok"
+	if got := tool.Summary(); got != wantSummary {
+		t.Fatalf("Summary() = %q, want %q (boilerplate body content must be suppressed)", got, wantSummary)
+	}
+}
+
 func TestParseLine_UserAnswer(t *testing.T) {
 	event := parseLine(t, `{"type":"user","toolUseResult":{"success":true},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-3","content":"User has answered your questions: ship it"}]}}`)
 	if event.User == nil || !event.User.IsAnswer || event.User.Text != "User has answered your questions: ship it" {
@@ -91,6 +399,191 @@ func TestParseLine_UnknownEntryWithoutMessageIsSkipped(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("unknown entry without message should be skipped")
+	}
+}
+
+// --- Malformed JSONL robustness ---
+//
+// These tests pin the reader's actual contract for malformed input, per the
+// project's own decision (see reader.go's parseLineWithToolNames): a line
+// that fails json.Unmarshal returns an explicit "parse transcript line"
+// error and aborts the read, rather than panicking or silently dropping the
+// line to produce a truncated-but-successful result. Read/ReadAll callers
+// that check the returned error (as every call site does) can never mistake
+// a partially-read transcript for a complete one.
+
+// TestParseLine_GivenTruncatedJSON_ThenReturnsErrorNotPanic guards the exact
+// truncation shape a killed/crashed Claude Code process can leave mid-write:
+// a line cut off inside a string value. ParseLine must surface this as an
+// error rather than panicking, since a panic here would crash every command
+// that reads a transcript ending on such a line.
+func TestParseLine_GivenTruncatedJSON_ThenReturnsErrorNotPanic(t *testing.T) {
+	_, ok, err := ParseLine([]byte(`{"type":"user","message":{"role":"user","con`))
+	if err == nil {
+		t.Fatal("ParseLine returned nil error for truncated JSON, want an explicit error")
+	}
+	if ok {
+		t.Fatal("ParseLine returned ok=true for truncated JSON, want ok=false")
+	}
+}
+
+// TestParseLine_GivenMalformedInputVariants_ThenReturnsErrorWithoutPanic covers
+// the other shapes a corrupt or foreign line can take: a null byte (not
+// whitespace, so it reaches the JSON parser) and plain non-JSON text. Both
+// must fail the same way truncated JSON does.
+func TestParseLine_GivenMalformedInputVariants_ThenReturnsErrorWithoutPanic(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+	}{
+		{name: "null byte line", line: "\x00"},
+		{name: "plain non-JSON text", line: "this is not json at all"},
+		{name: "truncated at top level", line: `{"type":"user"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			event, ok, err := ParseLine([]byte(tt.line))
+			if err == nil {
+				t.Fatalf("ParseLine(%q) returned nil error, want an explicit error", tt.line)
+			}
+			if ok {
+				t.Fatalf("ParseLine(%q) returned ok=true, want ok=false", tt.line)
+			}
+			if event != (session.Event{}) {
+				t.Fatalf("ParseLine(%q) returned non-zero event %#v alongside an error", tt.line, event)
+			}
+		})
+	}
+}
+
+// TestReadFile_GivenBlankOrWhitespaceOnlyLinesInterleaved_ThenSkippedWithoutLoss
+// guards the whitespace-trim skip in ReadFile: blank lines and lines
+// containing only spaces/tabs must be skipped silently, and must not shift
+// or drop the valid events surrounding them.
+func TestReadFile_GivenBlankOrWhitespaceOnlyLinesInterleaved_ThenSkippedWithoutLoss(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	lines := []string{
+		`{"type":"user","message":{"role":"user","content":"first"}}`,
+		"",
+		"   \t  ",
+		`{"type":"user","message":{"role":"user","content":"second"}}`,
+		"",
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	var events []session.Event
+	if err := ReadFile(path, func(event session.Event) error {
+		events = append(events, event)
+		return nil
+	}); err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+
+	if len(events) != 2 || events[0].User.Text != "first" || events[1].User.Text != "second" {
+		t.Fatalf("events = %#v, want exactly [first, second]", events)
+	}
+}
+
+// TestReadFile_GivenInvalidLineAmongValidLines_ThenErrorSurfacesWithoutSilentlyDroppingPriorEvents
+// guards the "silent data loss" failure mode the task brief calls out
+// explicitly: a null-byte or non-JSON line anywhere in the file must abort
+// the read with an explicit error (never silently skipped as if it were
+// blank), while the valid line already handled before it is not retroactively
+// lost — the caller sees both the earlier event and the error, never a
+// silently truncated success.
+func TestReadFile_GivenInvalidLineAmongValidLines_ThenErrorSurfacesWithoutSilentlyDroppingPriorEvents(t *testing.T) {
+	tests := []struct {
+		name        string
+		invalidLine string
+	}{
+		{name: "null byte line", invalidLine: "\x00"},
+		{name: "non-JSON garbage line", invalidLine: "not json at all"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "session.jsonl")
+			lines := []string{
+				`{"type":"user","message":{"role":"user","content":"before the bad line"}}`,
+				tt.invalidLine,
+				`{"type":"user","message":{"role":"user","content":"after the bad line"}}`,
+				"",
+			}
+			if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+				t.Fatalf("write fixture: %v", err)
+			}
+
+			var events []session.Event
+			err := ReadFile(path, func(event session.Event) error {
+				events = append(events, event)
+				return nil
+			})
+			if err == nil {
+				t.Fatal("ReadFile returned nil error, want an explicit parse error")
+			}
+			if !strings.Contains(err.Error(), "parse transcript line") {
+				t.Fatalf("error = %v, want parse transcript line", err)
+			}
+			if len(events) != 1 || events[0].User.Text != "before the bad line" {
+				t.Fatalf("events before the error = %#v, want exactly the one line handled before the bad line", events)
+			}
+		})
+	}
+}
+
+// TestReadFile_GivenSingleLineLargerThanDefaultScannerTokenLimit_ThenReadsWithoutError
+// guards the classic bufio.Scanner landmine: Scanner's default MaxScanTokenSize
+// is 64KB, and Claude Code transcripts routinely carry multi-megabyte single
+// lines (large file reads/writes embedded in a tool_result). ReadFile uses
+// bufio.Reader.ReadBytes, which has no such cap, but a future refactor to
+// bufio.Scanner without an explicit Buffer() call would silently truncate the
+// read (Scanner.Scan returns false with bufio.ErrTooLong) on exactly this
+// shape. A multi-MB content field pins that ReadFile keeps working past the
+// 64KB boundary.
+func TestReadFile_GivenSingleLineLargerThanDefaultScannerTokenLimit_ThenReadsWithoutError(t *testing.T) {
+	const oversizedContentBytes = 1 * 1024 * 1024 // well past bufio.MaxScanTokenSize (64KB)
+	hugeContent := strings.Repeat("x", oversizedContentBytes)
+	contentJSON, err := json.Marshal(hugeContent)
+	if err != nil {
+		t.Fatalf("marshal huge content: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	line := `{"type":"user","message":{"role":"user","content":` + string(contentJSON) + `}}`
+	if err := os.WriteFile(path, []byte(line+"\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	events, err := ReadAll(path)
+	if err != nil {
+		t.Fatalf("ReadAll returned error on oversized line: %v", err)
+	}
+	if len(events) != 1 || events[0].User == nil || len(events[0].User.Text) != oversizedContentBytes {
+		t.Fatalf("got %d events, want 1 event with %d-byte text (got %d)",
+			len(events), oversizedContentBytes, len(events[0].User.Text))
+	}
+}
+
+// TestReadFile_GivenFileContainingOnlyNewlines_ThenNoEventsNoError guards the
+// boundary next to TestReadAll_GivenEmptyFile_ThenReturnsNoEvents: a file
+// that is not byte-empty but contains nothing except newline characters must
+// still read as zero events with no error, since every line is blank after
+// trimming.
+func TestReadFile_GivenFileContainingOnlyNewlines_ThenNoEventsNoError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "blank-lines.jsonl")
+	if err := os.WriteFile(path, []byte("\n\n\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	var events []session.Event
+	if err := ReadFile(path, func(event session.Event) error {
+		events = append(events, event)
+		return nil
+	}); err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("got %d events, want 0: %#v", len(events), events)
 	}
 }
 
@@ -581,6 +1074,135 @@ func parseLineWithText(t *testing.T, text string) session.Event {
 	textJSON, _ := json.Marshal(text)
 	line := fmt.Sprintf(`{"type":"user","timestamp":"2026-06-17T00:00:00Z","message":{"role":"user","content":%s}}`, textJSON)
 	return parseLine(t, line)
+}
+
+// --- ScanHeader: tail-read duration + noise-resilient prompt discovery ---
+
+// TestScanHeader_GivenMultiLineTranscript_ThenEndTimestampIsLastLineTimestamp
+// pins the new EndTimestamp field: ScanHeader must report the transcript's
+// last timestamp (not just its first), since list.go's duration column has
+// nothing else to compute from once metadata is unavailable.
+func TestScanHeader_GivenMultiLineTranscript_ThenEndTimestampIsLastLineTimestamp(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	lines := []string{
+		`{"type":"user","timestamp":"2026-07-15T02:00:00.000Z","message":{"role":"user","content":"start the task"}}`,
+		`{"type":"assistant","timestamp":"2026-07-15T02:05:00.000Z","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}`,
+		"",
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	info, err := (Codec{}).ScanHeader(path)
+	if err != nil {
+		t.Fatalf("ScanHeader returned error: %v", err)
+	}
+	if info.Timestamp != "2026-07-15T02:00:00.000Z" {
+		t.Fatalf("Timestamp = %q, want the first line's timestamp", info.Timestamp)
+	}
+	if info.EndTimestamp != "2026-07-15T02:05:00.000Z" {
+		t.Fatalf("EndTimestamp = %q, want the last line's timestamp", info.EndTimestamp)
+	}
+}
+
+// inheritChainNoiseLines returns the noise-only opening of a `/cc-session
+// inherit` session transcript: a command invocation, a skill injection, and
+// twenty tool_result turns — the shape observed in real inherit chains
+// (session 2b73acc2 in the architecture note), none of which is a real human
+// question. Twenty-two lines exceeds the old fixed 20-raw-line scan window.
+func inheritChainNoiseLines() []string {
+	lines := []string{
+		`{"type":"user","timestamp":"2026-07-15T02:00:00.000Z","message":{"role":"user",` +
+			`"content":"<command-message>cc-session</command-message>\n<command-name>/cc-session</command-name>\n` +
+			`<command-args>inherit 9cd01951-e149-4d83-84e2-a210818d02aa</command-args>"}}`,
+		`{"type":"user","timestamp":"2026-07-15T02:00:01.000Z","message":{"role":"user","content":[` +
+			`{"type":"text","text":"Base directory for this skill: /Users/maple/.claude/skills/cc-session\n\n# Session Reader"}]}}`,
+	}
+	for i := 0; i < 20; i++ {
+		lines = append(lines, fmt.Sprintf(
+			`{"type":"user","timestamp":"2026-07-15T02:01:%02dZ","toolUseResult":{"success":true},`+
+				`"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_%d","content":"ok"}]}}`,
+			i%60, i))
+	}
+	return lines
+}
+
+// TestScanHeader_GivenNoiseHeavyPrefix_ThenNoiseLinesDoNotConsumeScanBudget
+// guards the bug where every scanned line — including command tags, skill
+// injections, and tool-result-shaped user entries — consumed one slot of the
+// old fixed 20-line window. An inherit-style session opens with a command
+// invocation, a skill injection, and a run of tool_result turns before the
+// real human question; the window used to exhaust before ever reaching it,
+// leaving [refs] sessions like 2b73acc2 with a blank list preview.
+func TestScanHeader_GivenNoiseHeavyPrefix_ThenNoiseLinesDoNotConsumeScanBudget(t *testing.T) {
+	lines := inheritChainNoiseLines()
+	lines = append(lines,
+		`{"type":"user","timestamp":"2026-07-15T02:10:00.000Z","message":{"role":"user",`+
+			`"content":"可以搭配 trigger 一起看 @docs/trigger-modernization-report.md"}}`,
+		"")
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	info, err := (Codec{}).ScanHeader(path)
+	if err != nil {
+		t.Fatalf("ScanHeader returned error: %v", err)
+	}
+	want := "可以搭配 trigger 一起看 @docs/trigger-modernization-report.md"
+	if info.FirstUserPrompt != want {
+		t.Fatalf("FirstUserPrompt = %q, want %q (noise-heavy prefix must not exhaust the scan budget)", info.FirstUserPrompt, want)
+	}
+}
+
+// TestScanHeader_GivenOnlyCommandNoiseAndNoRealQuestion_ThenFallsBackToCommandPreview
+// pins the layer-2 fallback: when the real question never appears within the
+// scan window at all (the common case for inherit-chain sessions, where the
+// real prompt can be dozens of turns later), FirstUserPrompt must still carry
+// enough information to identify the session instead of staying blank.
+func TestScanHeader_GivenOnlyCommandNoiseAndNoRealQuestion_ThenFallsBackToCommandPreview(t *testing.T) {
+	lines := append(inheritChainNoiseLines(), "")
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	info, err := (Codec{}).ScanHeader(path)
+	if err != nil {
+		t.Fatalf("ScanHeader returned error: %v", err)
+	}
+	want := "[/cc-session inherit 9cd01951]"
+	if info.FirstUserPrompt != want {
+		t.Fatalf("FirstUserPrompt = %q, want %q (command-invocation fallback preview)", info.FirstUserPrompt, want)
+	}
+}
+
+// TestScanHeader_GivenInterruptedToolCallSentinel_ThenTreatsItAsNoiseNotAPrompt
+// guards a bug caught during real-transcript acceptance testing of session
+// 2b73acc2: Claude Code inserts a fixed "[Request interrupted by user]"
+// text block (same role/shape as a real question) whenever a tool call gets
+// interrupted. Before this fix that sentinel was accepted as the first
+// "genuine" candidate, so the list preview showed the harness's own
+// boilerplate instead of falling through to the command-invocation preview.
+func TestScanHeader_GivenInterruptedToolCallSentinel_ThenTreatsItAsNoiseNotAPrompt(t *testing.T) {
+	lines := inheritChainNoiseLines()
+	lines = append(lines,
+		`{"type":"user","timestamp":"2026-07-15T02:05:14.315Z","message":{"role":"user","content":[`+
+			`{"type":"text","text":"[Request interrupted by user]"}]}}`,
+		"")
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	info, err := (Codec{}).ScanHeader(path)
+	if err != nil {
+		t.Fatalf("ScanHeader returned error: %v", err)
+	}
+	want := "[/cc-session inherit 9cd01951]"
+	if info.FirstUserPrompt != want {
+		t.Fatalf("FirstUserPrompt = %q, want %q (interrupted-request sentinel must not be mistaken for a real prompt)", info.FirstUserPrompt, want)
+	}
 }
 
 func parseLine(t *testing.T, line string) session.Event {

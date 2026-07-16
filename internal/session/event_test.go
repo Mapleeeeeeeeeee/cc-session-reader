@@ -103,6 +103,83 @@ func TestTruncate(t *testing.T) {
 	}
 }
 
+// --- UTF-8 truncation boundary safety ---
+//
+// Truncate slices a []rune, so every result is by construction a sequence of
+// complete Unicode code points — it can never split a multi-byte code point
+// in half. These tests pin that guarantee at the trickiest boundaries: a
+// multi-rune emoji ZWJ sequence and a base+combining-mark pair, both of which
+// are made of more than one code point per visual character.
+//
+// Known limitation (not fixed here, by design): Truncate guarantees valid
+// UTF-8 output, not grapheme-cluster integrity. Cutting mid-sequence can
+// still separate a ZWJ joiner from its neighbour or a combining mark from its
+// base character, which may render as an unintended glyph (e.g. a lone
+// zero-width-joiner, or an accent detached from its letter). Fixing that
+// would require a grapheme-aware segmentation library; the project has no
+// such dependency, and the task brief for this test explicitly calls out not
+// to introduce one just to guard this boundary.
+
+// TestTruncate_GivenEmojiZWJSequenceAtBoundary_ThenCutsOnRuneBoundaryAndStaysValidUTF8
+// guards against a regression that reintroduces byte-based slicing (e.g.
+// `s[:n]`) instead of rune-based slicing, which would produce invalid UTF-8
+// for any input needing genuine truncation.
+func TestTruncate_GivenEmojiZWJSequenceAtBoundary_ThenCutsOnRuneBoundaryAndStaysValidUTF8(t *testing.T) {
+	// "👨‍👩‍👧" (family emoji) is 5 runes: 👨 ZWJ 👩 ZWJ 👧.
+	family := "👨‍👩‍👧"
+	familyRunes := []rune(family)
+	if len(familyRunes) != 5 {
+		t.Fatalf("test setup: family emoji has %d runes, want 5", len(familyRunes))
+	}
+
+	got := Truncate(family, 2)
+	if !utf8.ValidString(got) {
+		t.Fatalf("Truncate(%q, 2) = %q is not valid UTF-8", family, got)
+	}
+	want := string(familyRunes[:2]) // 👨 + ZWJ: a broken cluster, but valid UTF-8 runes
+	if got != want {
+		t.Fatalf("Truncate(%q, 2) = %q, want %q", family, got, want)
+	}
+}
+
+// TestTruncate_GivenCombiningCharacterAtBoundary_ThenCutsOnRuneBoundaryAndStaysValidUTF8
+// guards the same rune-boundary contract for a base character followed by a
+// combining mark ("e" + COMBINING ACUTE ACCENT U+0301, not the precomposed
+// "é"): cutting between them separates the accent from its letter but must
+// still produce valid UTF-8, never a truncated multi-byte sequence.
+func TestTruncate_GivenCombiningCharacterAtBoundary_ThenCutsOnRuneBoundaryAndStaysValidUTF8(t *testing.T) {
+	eWithCombiningAccent := "é"
+	if len([]rune(eWithCombiningAccent)) != 2 {
+		t.Fatalf("test setup: %q has %d runes, want 2", eWithCombiningAccent, len([]rune(eWithCombiningAccent)))
+	}
+
+	got := Truncate(eWithCombiningAccent, 1)
+	if !utf8.ValidString(got) {
+		t.Fatalf("Truncate(%q, 1) = %q is not valid UTF-8", eWithCombiningAccent, got)
+	}
+	if got != "e" {
+		t.Fatalf("Truncate(%q, 1) = %q, want %q (bare base character, accent dropped)", eWithCombiningAccent, got, "e")
+	}
+}
+
+// TestTruncate_GivenEmptyString_ThenReturnsEmpty guards the degenerate input:
+// no runes to slice, so both the byte fast-path and the rune path must
+// return "" without allocating a rune slice or indexing out of range.
+func TestTruncate_GivenEmptyString_ThenReturnsEmpty(t *testing.T) {
+	if got := Truncate("", 10); got != "" {
+		t.Fatalf("Truncate(\"\", 10) = %q, want empty", got)
+	}
+}
+
+// TestTruncate_GivenZeroRuneLimit_ThenReturnsEmptyString guards the maxRunes=0
+// boundary: runes[:0] must not panic and must yield "", distinct from the
+// byte-length fast path (len(s) <= 0 is only true for an empty string).
+func TestTruncate_GivenZeroRuneLimit_ThenReturnsEmptyString(t *testing.T) {
+	if got := Truncate("hello", 0); got != "" {
+		t.Fatalf("Truncate(\"hello\", 0) = %q, want empty", got)
+	}
+}
+
 func TestFirstLine(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -141,6 +218,22 @@ func TestFirstLine(t *testing.T) {
 			name:     "given all whitespace then returns empty",
 			s:        "   \n\t  \n  ",
 			maxRunes: 80,
+			want:     "",
+		},
+		{
+			// CJK first line cut mid-string: must land on a rune boundary via
+			// the shared Truncate helper, never a half-character.
+			name:     "given CJK first line over budget then cuts on rune boundary",
+			s:        "甲乙丙丁\nsecond",
+			maxRunes: 2,
+			want:     "甲乙",
+		},
+		{
+			// Zero rune limit: the first line exists but the budget allows no
+			// runes at all, so the result must be "" rather than panicking.
+			name:     "given zero rune limit then returns empty",
+			s:        "hello\nworld",
+			maxRunes: 0,
 			want:     "",
 		},
 	}
@@ -290,6 +383,124 @@ func TestToolResultSummary(t *testing.T) {
 				t.Fatalf("Summary() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// --- ADR-003 decision 2: error excerpts skip noise lines ---
+
+// TestToolResultSummary_GivenFailureTextWithNoiseLines_ThenExcerptSkipsNoiseAndWidensBudget
+// guards the bug described in ADR-003: before this fix, a failed result's
+// summary blindly took the first line, which was often noise (a cat -n line
+// number prefix, the bare "Exit code N" line itself, or hook rejection
+// boilerplate) rather than the actual error. It also pins the widened
+// single-line budget (~200 chars) failures get versus successes (~80).
+func TestToolResultSummary_GivenFailureTextWithNoiseLines_ThenExcerptSkipsNoiseAndWidensBudget(t *testing.T) {
+	longError := "compiler error: " + strings.Repeat("x", 190)
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		{
+			name: "given bare exit code line then skips it for the real error beneath",
+			text: "Exit code 1\ncompiler error: unexpected token",
+			want: " -> FAILED: compiler error: unexpected token",
+		},
+		{
+			name: "given cat -n line number prefix then skips it",
+			text: "   12\tfunc broken() {\nsyntax error: missing }",
+			want: " -> FAILED: syntax error: missing }",
+		},
+		{
+			name: "given hook error boilerplate then skips it for the detail beneath",
+			text: "PreToolUse:Bash hook error: blocked\nactual reason: policy violation",
+			want: " -> FAILED: actual reason: policy violation",
+		},
+		{
+			name: "given only noise lines then falls back to the first noise line",
+			text: "Exit code 1",
+			want: " -> FAILED: Exit code 1",
+		},
+		{
+			name: "given non-noise first line then keeps prior single-line behavior",
+			text: "bad",
+			want: " -> FAILED: bad",
+		},
+		{
+			name: "given long error line then truncates to the 200-char failure budget",
+			text: longError,
+			want: " -> FAILED: " + Truncate(longError, failureExcerptMaxRunes),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ToolResult{Success: false, Text: tt.text}
+			if got := result.Summary(); got != tt.want {
+				t.Fatalf("Summary() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// --- ADR-003 decision 3: diff summaries for Edit/Write ---
+
+// TestToolResultSummary_GivenEditDiffStat_ThenRendersDiffAnnotation pins the
+// Edit diff summary format: "+A, -D @ L<newStart>" for a single hunk, and the
+// same with a trailing ", H hunks" once more than one hunk is present.
+func TestToolResultSummary_GivenEditDiffStat_ThenRendersDiffAnnotation(t *testing.T) {
+	tests := []struct {
+		name   string
+		result ToolResult
+		want   string
+	}{
+		{
+			name: "given single hunk then omits hunk count",
+			result: ToolResult{Success: true, RawName: ToolEdit, DiffStat: &DiffStat{
+				Additions: 2, Deletions: 1, NewStartLine: 10, HunkCount: 1,
+			}},
+			want: " -> ok (+2, -1 @ L10)",
+		},
+		{
+			name: "given multiple hunks then appends hunk count",
+			result: ToolResult{Success: true, RawName: ToolEdit, DiffStat: &DiffStat{
+				Additions: 5, Deletions: 3, NewStartLine: 5, HunkCount: 2,
+			}},
+			want: " -> ok (+5, -3 @ L5, 2 hunks)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.result.Summary(); got != tt.want {
+				t.Fatalf("Summary() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestToolResultSummary_GivenWriteDiffStatNewFile_ThenRendersLineCount pins
+// the Write new-file summary format from ADR-003 decision 3.
+func TestToolResultSummary_GivenWriteDiffStatNewFile_ThenRendersLineCount(t *testing.T) {
+	result := ToolResult{Success: true, RawName: ToolWrite, DiffStat: &DiffStat{
+		IsNewFile: true, NewFileLines: 42,
+	}}
+	want := " -> ok (new file, 42 lines)"
+	if got := result.Summary(); got != want {
+		t.Fatalf("Summary() = %q, want %q", got, want)
+	}
+}
+
+// TestToolResultSummary_GivenNoDiffStat_ThenFallsBackToBareOk guards the
+// ADR-003 decision 3 fallback: when the codec couldn't parse structuredPatch
+// (missing or unparsable), DiffStat is nil and Summary() must not panic or
+// render a bogus diff annotation — it keeps the plain "-> ok" the tool
+// already got before diff summaries existed.
+func TestToolResultSummary_GivenNoDiffStat_ThenFallsBackToBareOk(t *testing.T) {
+	result := ToolResult{Success: true, RawName: ToolEdit, Text: "irrelevant body"}
+	want := " -> ok"
+	if got := result.Summary(); got != want {
+		t.Fatalf("Summary() = %q, want %q", got, want)
 	}
 }
 

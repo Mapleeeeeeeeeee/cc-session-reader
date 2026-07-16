@@ -4,6 +4,7 @@ package summarizer
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
@@ -13,9 +14,21 @@ const (
 	maxCommandLen  = 80
 	maxSkillLen    = 80
 	maxQuestionLen = 90
+
+	// unknownToolMaxKeys caps how many input keys are shown for a tool with no
+	// dedicated summarizer branch (ADR-003 decision 4) — enough to identify
+	// the call without dumping its whole payload.
+	unknownToolMaxKeys = 3
+	// unknownToolValueMaxLen truncates each shown value so a large payload
+	// (e.g. a long prompt) can't blow up the one-line fallback summary.
+	unknownToolValueMaxLen = 60
 )
 
-func cleanPath(path string, cwd string) string {
+// CleanPath shortens an absolute file path for display: relative to cwd when
+// possible, otherwise the last two path segments. Exported so callers that
+// need to display the same short form outside a one-line tool summary (e.g.
+// formatter's same-file-Read collapsing) don't have to reimplement it.
+func CleanPath(path string, cwd string) string {
 	if path == "" || path == "?" {
 		return path
 	}
@@ -47,7 +60,7 @@ func SummarizeToolUse(name string, inp session.ToolInput, cwd string) string {
 		if path == "" {
 			path = "?"
 		}
-		short := cleanPath(path, cwd)
+		short := CleanPath(path, cwd)
 		var offset, limit int
 		var hasOffset, hasLimit bool
 		if o, ok := inp.Raw["offset"]; ok {
@@ -82,7 +95,7 @@ func SummarizeToolUse(name string, inp session.ToolInput, cwd string) string {
 		if path == "" {
 			path = "?"
 		}
-		short := cleanPath(path, cwd)
+		short := CleanPath(path, cwd)
 		return fmt.Sprintf("[%s] %s", name, short)
 
 	case session.ToolAgent:
@@ -158,6 +171,33 @@ func SummarizeToolUse(name string, inp session.ToolInput, cwd string) string {
 		return fmt.Sprintf("[ToolSearch] %s", query)
 
 	default:
-		return fmt.Sprintf("[%s]", name)
+		return fmt.Sprintf("[%s]%s", name, summarizeUnknownInput(inp))
 	}
+}
+
+// summarizeUnknownInput renders the first few input key/value pairs for a
+// tool with no dedicated summarizer branch (ADR-003 decision 4), so tools
+// added to Claude Code after this release degrade gracefully instead of
+// silently losing all input context. Returns "" for an empty input map.
+// Keys are sorted alphabetically: map iteration order is not stable in Go,
+// and an unstable key order would make the rendered summary flaky.
+func summarizeUnknownInput(inp session.ToolInput) string {
+	if len(inp.Raw) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(inp.Raw))
+	for key := range inp.Raw {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if len(keys) > unknownToolMaxKeys {
+		keys = keys[:unknownToolMaxKeys]
+	}
+
+	pairs := make([]string, 0, len(keys))
+	for _, key := range keys {
+		value := session.Truncate(fmt.Sprintf("%v", inp.Raw[key]), unknownToolValueMaxLen)
+		pairs = append(pairs, fmt.Sprintf("%s=%s", key, value))
+	}
+	return " " + strings.Join(pairs, ", ")
 }

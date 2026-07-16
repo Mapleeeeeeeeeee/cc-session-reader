@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -73,12 +74,15 @@ func TestComputeStats_SeparatesRawFromFilteredByContent(t *testing.T) {
 	assertCategory(t, result, "user_answers", 0)
 }
 
-// TestComputeStats_CountsCharsForSingleUserMessage pins the exact char-count
-// arithmetic on a case trivial enough to verify by eye: a single ASCII user
-// message becomes both the entire raw and filtered stream with no join
-// separators and no summarizer formatting involved.
+// TestComputeStats_CountsCharsForSingleUserMessage pins RawChars as a pure
+// event-content join (no rendering involved) and documents that
+// FilteredChars now includes the real read-pipeline template (timestamp +
+// "user:" label + blank-line separator) around the message, because
+// FilteredText is measured by rendering through the exact pipeline
+// `cc-session inherit` uses to inject context (see stats.go) — not a second,
+// decoration-free reimplementation.
 func TestComputeStats_CountsCharsForSingleUserMessage(t *testing.T) {
-	const message = "hello" // 5 ASCII runes, the whole stream
+	const message = "hello" // 5 ASCII runes, the whole raw stream
 
 	events := []session.Event{
 		{
@@ -92,14 +96,25 @@ func TestComputeStats_CountsCharsForSingleUserMessage(t *testing.T) {
 	if result.RawChars != 5 {
 		t.Fatalf("RawChars = %d, want 5", result.RawChars)
 	}
-	if result.FilteredChars != 5 {
-		t.Fatalf("FilteredChars = %d, want 5", result.FilteredChars)
-	}
 	if result.RawText != message {
 		t.Fatalf("RawText = %q, want %q", result.RawText, message)
 	}
-	if result.FilteredText != message {
-		t.Fatalf("FilteredText = %q, want %q", result.FilteredText, message)
+
+	// "??-?? ??:??" is the placeholder parser.FormatTimestamp("") returns for a
+	// missing timestamp; that contract is pinned independently by
+	// parser.TestFormatTimestamp, so it is hardcoded here rather than
+	// re-invoking the SUT to build its own expected value.
+	wantFiltered := fmt.Sprintf("[%s] user:\n%s\n\n", "??-?? ??:??", message)
+	if result.FilteredText != wantFiltered {
+		t.Fatalf("FilteredText = %q, want %q", result.FilteredText, wantFiltered)
+	}
+	if want := utf8.RuneCountInString(wantFiltered); result.FilteredChars != want {
+		t.Fatalf("FilteredChars = %d, want %d", result.FilteredChars, want)
+	}
+	// The message itself is still measured as pure content in user_text; the
+	// timestamp/label/blank-line template around it lands in render_overhead.
+	if got := result.Categories["user_text"]; got != len([]rune(message)) {
+		t.Fatalf("user_text category = %d, want %d", got, len([]rune(message)))
 	}
 }
 
@@ -163,6 +178,103 @@ func TestComputeStats_CommandMarkerIsKeptContent(t *testing.T) {
 	assertCategory(t, result, "command_noise", 0)
 	assertContains(t, "FilteredText", result.FilteredText, marker)
 	assertContains(t, "RawText", result.RawText, marker)
+}
+
+// TestComputeStats_GivenNestedCCSessionCalls_WhenComputed_ThenKeptCategoriesReconcileWithFilteredChars
+// is a regression test for two bugs found in a real session (62e7e52a), where
+// the KEPT category sum (39,851) did not match FilteredChars (37,130):
+//
+//  1. ComputeStats measured Filtered from its own pass over events, while the
+//     real `cc-session read`/`inherit` pipeline (internal/formatter) collapses
+//     consecutive same-session cc-session calls into one summary line. Stats
+//     never applied that collapse, so it overcounted tool_summaries relative
+//     to what actually gets injected.
+//  2. Independent of collapse, ComputeStats' own KEPT categories and its own
+//     FilteredText join were computed from two different views of the same
+//     event (e.g. system-reminder/context-usage bytes were tallied into the
+//     "user_text" KEPT bucket even though they are dropped entirely from the
+//     filtered stream), so the two numbers could drift even without any
+//     cc-session nesting involved.
+//
+// This test pins the fix: FilteredChars must equal the real read-pipeline
+// output (collapse included), and every KEPT category plus the explicit
+// render_overhead line (the render pipeline's timestamps/labels/blank lines,
+// which are real injected bytes but not attributable to a single content
+// category) must reconcile with FilteredChars exactly.
+func TestComputeStats_GivenNestedCCSessionCalls_WhenComputed_ThenKeptCategoriesReconcileWithFilteredChars(t *testing.T) {
+	events := buildNestedCCSessionEvents()
+
+	result := ComputeStats(events)
+
+	// Regression guard for bug 1: the real pipeline collapses these 4 calls
+	// into a single "(cc-session#...)" summary line.
+	if got := strings.Count(result.FilteredText, "cc-session#"); got != 1 {
+		t.Fatalf("expected exactly one collapsed cc-session marker in FilteredText, got %d\nFilteredText:\n%s", got, result.FilteredText)
+	}
+	if strings.Count(result.FilteredText, "[Bash") != 0 {
+		t.Fatalf("individual cc-session Bash calls must not survive collapsing\nFilteredText:\n%s", result.FilteredText)
+	}
+
+	// Regression guard for bug 2: every KEPT category plus the explicit
+	// structural-overhead line must sum to exactly FilteredChars.
+	kept := result.Categories["user_text"] + result.Categories["user_answers"] +
+		result.Categories["assistant_text"] + result.Categories["tool_summaries"] +
+		result.Categories["render_overhead"]
+	if kept != result.FilteredChars {
+		t.Fatalf("KEPT categories + render_overhead = %d, want FilteredChars = %d (categories: %+v)",
+			kept, result.FilteredChars, result.Categories)
+	}
+	// render_overhead is pure render-template decoration (timestamps, "user:"
+	// labels, blank-line separators) layered on top of content that is
+	// already accounted for elsewhere; it can only add bytes, never remove.
+	if result.Categories["render_overhead"] < 0 {
+		t.Fatalf("render_overhead = %d, want >= 0 (structural formatting only adds bytes, never removes)", result.Categories["render_overhead"])
+	}
+}
+
+// buildNestedCCSessionEvents builds a fixture with a plain user turn, four
+// consecutive "cc-session inherit" tool calls against the same nested session
+// id (which formatter.collapseCCSessionTools collapses into one line), and a
+// closing assistant reply — mirroring formatter_test.go's makeCCSessionEvents
+// pattern so the regression exercises the same collapsing behavior.
+func buildNestedCCSessionEvents() []session.Event {
+	const nestedSessionID = "16d06326-977b-4c82-a38f-9b2358aa80ca"
+	events := []session.Event{
+		{Kind: session.EventUserMessage, User: &session.UserMessage{Text: "please inherit the earlier session"}},
+	}
+	for p := 1; p <= 4; p++ {
+		toolID := fmt.Sprintf("inherit-tool-%d", p)
+		events = append(events,
+			session.Event{
+				Kind: session.EventAssistantMessage,
+				Assistant: &session.AssistantMessage{
+					ToolUses: []session.ToolUse{
+						{
+							ID:   toolID,
+							Name: "Bash",
+							Input: session.ToolInput{Raw: map[string]any{
+								"command":     fmt.Sprintf("cc-session inherit %s", nestedSessionID),
+								"description": "Load session",
+							}},
+						},
+					},
+				},
+			},
+			session.Event{
+				Kind: session.EventToolResult,
+				Tool: &session.ToolResult{
+					ToolUseID: toolID,
+					Success:   true,
+					Text:      fmt.Sprintf("ok: [page %d/4 | lines 1-100 of 400]", p),
+				},
+			},
+		)
+	}
+	events = append(events, session.Event{
+		Kind:      session.EventAssistantMessage,
+		Assistant: &session.AssistantMessage{Text: "done inheriting"},
+	})
+	return events
 }
 
 func assertCategory(t *testing.T, result StatsResult, key string, want int) {

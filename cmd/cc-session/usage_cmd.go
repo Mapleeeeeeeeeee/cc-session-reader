@@ -1,10 +1,12 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,12 +17,69 @@ import (
 
 var usageWG sync.WaitGroup
 
-// logUsageAsync logs a usage entry in a background goroutine.
-// Call waitUsageLog before process exit to ensure the write completes.
-func logUsageAsync(cmd string, target string) {
+// pendingUsageCmd, pendingUsageTarget, and pendingUsageToolIDs describe the
+// in-progress command invocation to be recorded once its outcome is known.
+// There is at most one command per process, so package-level state is safe:
+// main's dispatch sets pendingUsageCmd before running a tracked command (see
+// beginUsageTracking), and the command itself may later refine
+// pendingUsageTarget (and, for "expand", pendingUsageToolIDs) once it
+// resolves a concrete target (see logUsageAsync). finalizeUsageLog consumes
+// and clears all three when the command returns.
+var (
+	pendingUsageCmd     string
+	pendingUsageTarget  string
+	pendingUsageToolIDs []string
+)
+
+// beginUsageTracking marks cmd as the subcommand whose result should be
+// recorded to usage.jsonl once it finishes. Called once from main's dispatch
+// for every command with tracksUsage set, before its run executes — this way
+// a command that fails before it ever resolves a target (e.g. an unknown
+// session ID) still produces a usage entry, just with an empty target.
+func beginUsageTracking(cmd string) {
+	pendingUsageCmd = cmd
+}
+
+// logUsageAsync records target as the resolved session for the current
+// tracked invocation (see beginUsageTracking), along with any requested tool
+// IDs (currently only "expand" passes these, e.g. the "Q1hv" in an argument
+// like "expand abc123 Q1hv"). It no longer writes to disk itself: the actual
+// entry is written by finalizeUsageLog once the command's outcome is known,
+// so a single JSONL line always carries the correct result.
+func logUsageAsync(cmd string, target string, toolIDs ...string) {
+	pendingUsageCmd = cmd
+	pendingUsageTarget = target
+	pendingUsageToolIDs = toolIDs
+}
+
+// finalizeUsageLog writes the usage entry for the invocation that just
+// finished with cmdErr (nil on success), in a background goroutine. It is a
+// no-op when no command started tracking this invocation (beginUsageTracking
+// was never called — e.g. "help"/"usage" itself), when CC_SESSION_NO_USAGE is
+// set, or when cmdErr is flag.ErrHelp (a deliberate -h request, not a
+// failure). Call waitUsageLog before process exit to ensure the write
+// completes.
+func finalizeUsageLog(cmdErr error) {
+	if pendingUsageCmd == "" {
+		return
+	}
+	cmd, target, toolIDs := pendingUsageCmd, pendingUsageTarget, pendingUsageToolIDs
+	pendingUsageCmd, pendingUsageTarget, pendingUsageToolIDs = "", "", nil
+
 	if config.Get().NoUsage {
 		return
 	}
+	if errors.Is(cmdErr, flag.ErrHelp) {
+		return
+	}
+
+	result := "ok"
+	errMsg := ""
+	if cmdErr != nil {
+		result = "error"
+		errMsg = firstLine(cmdErr.Error())
+	}
+
 	usageWG.Add(1)
 	go func() {
 		defer usageWG.Done()
@@ -40,9 +99,21 @@ func logUsageAsync(cmd string, target string) {
 			Caller:    caller,
 			Version:   version,
 			Commit:    commit,
+			Result:    result,
+			Error:     errMsg,
+			ToolIDs:   toolIDs,
 		}
 		_ = tracker.LogUsage(entry)
 	}()
+}
+
+// firstLine truncates s to its first line, so a multi-line error message
+// doesn't break usage.jsonl's one-entry-per-line format.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 func waitUsageLog() { usageWG.Wait() }
@@ -91,8 +162,21 @@ func runUsage(args []string, out io.Writer, errOut io.Writer) error {
 			callerShort = "caller:" + session.ShortID(e.Caller, 8)
 		}
 
-		fmt.Fprintf(out, "%s  %-8s %s  %s  %s\n",
-			dateStr, e.Command, target, callerShort, e.Cwd)
+		// Result is only present on entries recorded after the result field
+		// was added; older entries render no marker rather than a
+		// misleading "ok".
+		resultMarker := ""
+		if e.Result == "error" {
+			resultMarker = " [ERR]"
+		}
+
+		toolIDsSuffix := ""
+		if len(e.ToolIDs) > 0 {
+			toolIDsSuffix = "  tools:" + strings.Join(e.ToolIDs, ",")
+		}
+
+		fmt.Fprintf(out, "%s  %-8s %s  %s  %s%s%s\n",
+			dateStr, e.Command, target, callerShort, e.Cwd, resultMarker, toolIDsSuffix)
 	}
 	return nil
 }

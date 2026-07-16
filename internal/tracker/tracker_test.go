@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -222,12 +223,149 @@ func TestDetectCallerSessionWithBase_GivenMissingDir_WhenDetected_ThenReturnsEmp
 	}
 }
 
+func TestLogUsageToPath_GivenResultAndError_WhenAppended_ThenRoundTrips(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	entry := UsageEntry{Command: "read", Target: "x", Result: "error", Error: "transcript not found: abc"}
+
+	writeEntry(t, path, entry)
+
+	entries, err := ReadUsageLogFromPath(0, "", path)
+	if err != nil {
+		t.Fatalf("ReadUsageLogFromPath returned error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entry count = %d, want 1", len(entries))
+	}
+	if entries[0].Result != "error" {
+		t.Errorf("Result = %q, want %q", entries[0].Result, "error")
+	}
+	if entries[0].Error != entry.Error {
+		t.Errorf("Error = %q, want %q", entries[0].Error, entry.Error)
+	}
+}
+
+func TestLogUsageToPath_GivenToolIDs_WhenAppended_ThenRoundTrips(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	entry := UsageEntry{Command: "expand", Target: "abc123", ToolIDs: []string{"Q1hv", "ooQF"}}
+
+	writeEntry(t, path, entry)
+
+	entries, err := ReadUsageLogFromPath(0, "", path)
+	if err != nil {
+		t.Fatalf("ReadUsageLogFromPath returned error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entry count = %d, want 1", len(entries))
+	}
+	if !reflect.DeepEqual(entries[0].ToolIDs, entry.ToolIDs) {
+		t.Errorf("ToolIDs = %v, want %v", entries[0].ToolIDs, entry.ToolIDs)
+	}
+}
+
+func TestLogUsageToPath_GivenNoToolIDs_WhenAppended_ThenOmitsToolIDsFromJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	entry := UsageEntry{Command: "read", Target: "abc123"}
+
+	writeEntry(t, path, entry)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	line := strings.TrimSpace(string(data))
+	if strings.Contains(line, "tool_ids") {
+		t.Errorf("expected tool_ids to be omitted for a command with no tool IDs, got: %s", line)
+	}
+}
+
+// Regression: entries written before the ToolIDs field existed have no
+// "tool_ids" key at all. Without this, unmarshaling a legacy line must still
+// succeed and yield a nil/empty slice rather than an error.
+func TestReadUsageLogFromPath_GivenLegacyEntryWithoutToolIDsField_WhenRead_ThenToolIDsIsEmpty(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	raw := `{"ts":"2026-06-15T10:00:00Z","cmd":"expand","target":"legacy","cwd":"/x","caller":"c"}` + "\n"
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatalf("write legacy entry: %v", err)
+	}
+
+	entries, err := ReadUsageLogFromPath(0, "", path)
+	if err != nil {
+		t.Fatalf("ReadUsageLogFromPath returned error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entry count = %d, want 1", len(entries))
+	}
+	if len(entries[0].ToolIDs) != 0 {
+		t.Errorf("ToolIDs = %v, want empty for a pre-existing entry", entries[0].ToolIDs)
+	}
+}
+
+// Regression: entries written before the Result field existed have no
+// "result" key at all. Without this, an empty Result on unmarshal could be
+// mistaken for a known failure instead of "we don't know".
+func TestReadUsageLogFromPath_GivenLegacyEntryWithoutResultField_WhenRead_ThenResultIsEmptyNotError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	raw := `{"ts":"2026-06-15T10:00:00Z","cmd":"read","target":"legacy","cwd":"/x","caller":"c"}` + "\n"
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatalf("write legacy entry: %v", err)
+	}
+
+	entries, err := ReadUsageLogFromPath(0, "", path)
+	if err != nil {
+		t.Fatalf("ReadUsageLogFromPath returned error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entry count = %d, want 1", len(entries))
+	}
+	if entries[0].Result != "" {
+		t.Errorf("Result = %q, want empty (unknown) for a pre-existing entry", entries[0].Result)
+	}
+}
+
+// Regression: "inject" was renamed to "inherit" in 554e57b, but binaries built
+// before the rename wrote entries with Command == "inject". Without alias
+// normalization, "usage -cmd inherit" can't find that history.
+func TestReadUsageLogFromPath_GivenLegacyInjectEntries_WhenFilteredByInherit_ThenMatchesAndNormalizesDisplay(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	writeEntry(t, path, UsageEntry{Command: "inject", Target: "legacy"})
+	writeEntry(t, path, UsageEntry{Command: "inherit", Target: "current"})
+	writeEntry(t, path, UsageEntry{Command: "read", Target: "unrelated"})
+
+	entries, err := ReadUsageLogFromPath(0, "inherit", path)
+	if err != nil {
+		t.Fatalf("ReadUsageLogFromPath returned error: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("entry count = %d, want 2 (legacy inject + current inherit)", len(entries))
+	}
+	for _, e := range entries {
+		if e.Command != "inherit" {
+			t.Errorf("Command = %q, want normalized %q", e.Command, "inherit")
+		}
+	}
+}
+
+// Regression: filtering by the deprecated alias itself ("-cmd inject") should
+// still surface entries recorded under the current name, for anyone who
+// still types the old command out of habit.
+func TestReadUsageLogFromPath_GivenLegacyInjectFilter_WhenFiltered_ThenAlsoMatchesCurrentInheritEntries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	writeEntry(t, path, UsageEntry{Command: "inherit", Target: "current"})
+
+	entries, err := ReadUsageLogFromPath(0, "inject", path)
+	if err != nil {
+		t.Fatalf("ReadUsageLogFromPath returned error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entry count = %d, want 1 (alias filter should also match current entries)", len(entries))
+	}
+}
+
 func TestDetectCallerSessionWithBase_GivenMultipleJSONL_WhenDetected_ThenReturnsNewestSession(t *testing.T) {
 	projectsDir := t.TempDir()
 	cwd := "/Users/maple/Desktop"
 
-	// Claude Code maps the cwd by replacing "/" with "-".
-	projectDir := filepath.Join(projectsDir, strings.ReplaceAll(cwd, "/", "-"))
+	projectDir := filepath.Join(projectsDir, ProjectDirName(cwd))
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
 		t.Fatalf("create project dir: %v", err)
 	}
@@ -253,5 +391,32 @@ func TestDetectCallerSessionWithBase_GivenMultipleJSONL_WhenDetected_ThenReturns
 	got := DetectCallerSessionWithBase(cwd, projectsDir)
 	if got != "newer-session-uuid" {
 		t.Errorf("DetectCallerSessionWithBase = %q, want %q", got, "newer-session-uuid")
+	}
+}
+
+func TestProjectDirName_GivenUnixStylePath_ThenReplacesSlashWithDash(t *testing.T) {
+	got := ProjectDirName("/Users/maple/Desktop")
+	want := "-Users-maple-Desktop"
+	if got != want {
+		t.Errorf("ProjectDirName = %q, want %q", got, want)
+	}
+}
+
+// Regression: a Windows CI runner's cwd (e.g. from os.Getwd() under
+// D:\a\repo\repo) uses "\" separators and a drive-letter colon.
+// ProjectDirName used to only replace "/", so "\" and ":" survived into the
+// mapped name; once joined under ~/.claude/projects, "D:" then exists as a
+// mid-path segment, which os.MkdirAll refuses to create on Windows ("The
+// filename, directory name, or volume label syntax is incorrect"). Every
+// separator and colon must collapse to "-" so the mapped name is always one
+// legal path segment, regardless of which OS produced the cwd.
+func TestProjectDirName_GivenWindowsStyleCwd_ThenReplacesBackslashAndColon(t *testing.T) {
+	got := ProjectDirName(`D:\a\claude-code-session-reader\claude-code-session-reader`)
+	want := "D--a-claude-code-session-reader-claude-code-session-reader"
+	if got != want {
+		t.Errorf("ProjectDirName = %q, want %q", got, want)
+	}
+	if strings.ContainsAny(got, `/\:`) {
+		t.Errorf("ProjectDirName = %q, contains a separator or colon that MkdirAll would reject as a mid-path segment", got)
 	}
 }

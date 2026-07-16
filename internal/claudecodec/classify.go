@@ -11,6 +11,8 @@ import (
 const (
 	tagCommandNameOpen  = "<command-name>"
 	tagCommandNameClose = "</command-name>"
+	tagCommandArgsOpen  = "<command-args>"
+	tagCommandArgsClose = "</command-args>"
 	tagBashInputOpen    = "<bash-input>"
 	tagBashInputClose   = "</bash-input>"
 	tagLocalStdout      = "<local-command-stdout>"

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/config"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/parser"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/tracker"
 )
 
 // testReader is the concrete reader used by all tests.
@@ -613,6 +615,61 @@ func TestRunExpand_GivenExistingToolID_WhenExpanded_ThenShowsFullInputAndResult(
 	}
 	if !strings.Contains(got, "hello") {
 		t.Fatalf("expand output missing result text\ngot:\n%s", got)
+	}
+}
+
+// expand's usage entry must record every requested tool ID (not just the
+// ones that resolved), so usage analysis can tell what a caller wanted to
+// inspect even when a lookup missed.
+func TestRunExpand_GivenToolIDs_WhenExpanded_ThenUsageLogRecordsRequestedToolIDs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Claude Code sessions only exist on macOS/Linux")
+	}
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
+	t.Setenv("CC_SESSION_NO_USAGE", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	config.Reset()
+	t.Cleanup(config.Reset)
+	usageTestCallerSession(t, root)
+
+	sid := "12345678-1234-1234-1234-123456789abc"
+	projectDir := filepath.Join(root, "fixture-projects", "proj")
+	metaDir := filepath.Join(root, "fixture-usage-data", "session-meta")
+	_ = os.MkdirAll(projectDir, 0o755)
+	_ = os.MkdirAll(metaDir, 0o755)
+	transcript := strings.Join([]string{
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"hi"},{"type":"tool_use","name":"Bash","id":"toolu_01XYZabcdefgABCDuCVa","input":{"command":"echo hello","description":"Say hello"}}]}}`,
+		`{"type":"user","timestamp":"2026-05-28T00:00:02Z","toolUseResult":{"success":true,"commandName":"Bash"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01XYZabcdefgABCDuCVa","content":"hello"}]}}`,
+		"",
+	}, "\n")
+	_ = os.WriteFile(filepath.Join(projectDir, sid+".jsonl"), []byte(transcript), 0o644)
+	writeListMeta(t, metaDir, sid, "/tmp/proj", "hello")
+
+	store := parser.Store{
+		ProjectsDir:    filepath.Join(root, "fixture-projects"),
+		SessionMetaDir: metaDir,
+	}
+
+	var stdout, stderr bytes.Buffer
+	beginUsageTracking("expand")
+	// "uCVa" resolves; "ZZZZ" doesn't, but must still be recorded as requested.
+	err := runExpand([]string{sid, "uCVa", "ZZZZ"}, &stdout, &stderr, store, testReader)
+	if err != nil {
+		t.Fatalf("runExpand returned error: %v", err)
+	}
+	finalizeUsageLog(err)
+	waitUsageLog()
+
+	usagePath := filepath.Join(root, ".claude", "skills", "cc-session", "usage.jsonl")
+	data, readErr := os.ReadFile(usagePath)
+	if readErr != nil {
+		t.Fatalf("usage.jsonl not created: %v", readErr)
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.Contains(line, `"tool_ids":["uCVa","ZZZZ"]`) {
+		t.Errorf("usage.jsonl missing requested tool_ids, got: %s", line)
 	}
 }
 
@@ -1272,6 +1329,30 @@ func TestRunUsage_GivenHelpFlag_ThenReturnsErrHelp(t *testing.T) {
 	}
 }
 
+func TestRunUsage_GivenExpandEntryWithToolIDs_WhenDisplayed_ThenShowsToolIDs(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
+
+	if err := tracker.LogUsage(tracker.UsageEntry{
+		Timestamp: "2026-06-15T10:00:00Z",
+		Command:   "expand",
+		Target:    "abc12345",
+		ToolIDs:   []string{"Q1hv", "ooQF"},
+	}); err != nil {
+		t.Fatalf("tracker.LogUsage: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := runUsage(nil, &stdout, &stderr); err != nil {
+		t.Fatalf("runUsage returned error: %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "tools:Q1hv,ooQF") {
+		t.Fatalf("usage output missing tool IDs, got: %s", got)
+	}
+}
+
 func TestRunHelp_GivenHelpFlag_ThenReturnsErrHelp(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := runHelp([]string{"-h"}, &stdout, &stderr)
@@ -1366,6 +1447,23 @@ func TestCheatSheet_GivenRegistry_ThenCoversExactlyNonHiddenHintedCommands(t *te
 	}
 }
 
+// argumentHintFromSkillMD extracts the "argument-hint: ..." frontmatter
+// value from SKILL.md's raw content, stripping the surrounding quotes. It
+// trims a trailing "\r" off each line first, since a Windows checkout
+// converts this repo's LF line endings to CRLF and strings.Split(content,
+// "\n") would otherwise leave "\r" attached to the line (and thus inside
+// the trimmed value). Returns false if no argument-hint line is found.
+func argumentHintFromSkillMD(content string) (string, bool) {
+	const linePrefix = "argument-hint: "
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.HasPrefix(line, linePrefix) {
+			return strings.Trim(strings.TrimPrefix(line, linePrefix), `"`), true
+		}
+	}
+	return "", false
+}
+
 // Regression guard for finding 4: SKILL.md's argument-hint frontmatter is a
 // hand-written literal with no compiler-enforced link to buildArgumentHint.
 // This asserts it matches verbatim, so a registry change that isn't synced
@@ -1376,22 +1474,31 @@ func TestSkillMD_GivenArgumentHintFrontmatter_ThenMatchesBuildArgumentHint(t *te
 		t.Fatalf("read SKILL.md: %v", err)
 	}
 
-	const linePrefix = "argument-hint: "
-	var hintLine string
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, linePrefix) {
-			hintLine = line
-			break
-		}
-	}
-	if hintLine == "" {
+	got, ok := argumentHintFromSkillMD(string(data))
+	if !ok {
 		t.Fatal("SKILL.md frontmatter has no argument-hint line")
 	}
 
-	got := strings.Trim(strings.TrimPrefix(hintLine, linePrefix), `"`)
 	want := buildArgumentHint()
 	if got != want {
 		t.Fatalf("SKILL.md argument-hint = %q, want %q (buildArgumentHint output); sync SKILL.md's frontmatter with the registry", got, want)
+	}
+}
+
+// Regression: on a Windows CI runner, the checkout's CRLF line endings left
+// "\r" attached to each split line, so the closing-quote trim never matched
+// (e.g. `"read <id>"` + "\r" stayed as `read <id>"` + "\r" instead of
+// `read <id>`). Feeds a CRLF frontmatter line directly so this is verified
+// on any OS instead of depending on the checkout's actual line endings.
+func TestArgumentHintFromSkillMD_GivenCRLFLineEndings_ThenStripsCarriageReturn(t *testing.T) {
+	content := "---\r\nargument-hint: \"read <id>\"\r\n---\r\n"
+
+	got, ok := argumentHintFromSkillMD(content)
+	if !ok {
+		t.Fatal("argumentHintFromSkillMD ok = false, want true")
+	}
+	if got != "read <id>" {
+		t.Fatalf("argumentHintFromSkillMD = %q, want %q", got, "read <id>")
 	}
 }
 
@@ -1442,7 +1549,28 @@ func TestExitOnError_GivenErrHelp_ThenNoStderrOutput(t *testing.T) {
 	}
 }
 
-func TestLogUsageAsync_GivenNoUsageEnabled_ThenDoesNotWriteToLog(t *testing.T) {
+// usageTestCallerSession creates a fake Claude Code session under root so
+// DetectCallerSession(cwd) returns non-empty, the precondition finalizeUsageLog
+// checks before writing any entry.
+func usageTestCallerSession(t *testing.T, root string) {
+	t.Helper()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = resolved
+	}
+	projectDir := filepath.Join(root, ".claude", "projects", tracker.ProjectDirName(cwd))
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "fake-session-id.jsonl"), []byte{}, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+}
+
+func TestFinalizeUsageLog_GivenNoUsageEnabled_ThenDoesNotWriteToLog(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", root)
 	t.Setenv("USERPROFILE", root)
@@ -1451,7 +1579,9 @@ func TestLogUsageAsync_GivenNoUsageEnabled_ThenDoesNotWriteToLog(t *testing.T) {
 	config.Reset()
 	t.Cleanup(config.Reset)
 
+	beginUsageTracking("read")
 	logUsageAsync("read", "abc12345")
+	finalizeUsageLog(nil)
 	waitUsageLog()
 
 	usagePath := filepath.Join(root, ".claude", "skills", "cc-session", "usage.jsonl")
@@ -1460,7 +1590,49 @@ func TestLogUsageAsync_GivenNoUsageEnabled_ThenDoesNotWriteToLog(t *testing.T) {
 	}
 }
 
-func TestLogUsageAsync_GivenCallerSession_ThenWritesToLog(t *testing.T) {
+func TestFinalizeUsageLog_GivenNoCallerSession_ThenDoesNotWriteToLog(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
+	t.Setenv("CC_SESSION_NO_USAGE", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	config.Reset()
+	t.Cleanup(config.Reset)
+
+	// No Claude Code project directory created, so DetectCallerSession returns "".
+	beginUsageTracking("read")
+	logUsageAsync("read", "abc12345")
+	finalizeUsageLog(nil)
+	waitUsageLog()
+
+	usagePath := filepath.Join(root, ".claude", "skills", "cc-session", "usage.jsonl")
+	if _, err := os.Stat(usagePath); err == nil {
+		t.Error("usage.jsonl was created despite no caller session")
+	}
+}
+
+func TestFinalizeUsageLog_GivenNoBeginUsageTracking_ThenDoesNotWriteToLog(t *testing.T) {
+	// Regression: "help"/"usage" never call beginUsageTracking, so their
+	// exitOnError call must stay a no-op instead of logging a bogus entry.
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
+	t.Setenv("CC_SESSION_NO_USAGE", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	config.Reset()
+	t.Cleanup(config.Reset)
+	usageTestCallerSession(t, root)
+
+	finalizeUsageLog(nil)
+	waitUsageLog()
+
+	usagePath := filepath.Join(root, ".claude", "skills", "cc-session", "usage.jsonl")
+	if _, err := os.Stat(usagePath); err == nil {
+		t.Error("usage.jsonl was created despite no tracked command")
+	}
+}
+
+func TestFinalizeUsageLog_GivenSuccessfulCommand_ThenRecordsOkResult(t *testing.T) {
 	// DetectCallerSession uses forward-slash path mapping that only works on
 	// macOS/Linux where Claude Code actually creates session files.
 	if runtime.GOOS == "windows" {
@@ -1473,24 +1645,11 @@ func TestLogUsageAsync_GivenCallerSession_ThenWritesToLog(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	config.Reset()
 	t.Cleanup(config.Reset)
+	usageTestCallerSession(t, root)
 
-	// Create a fake Claude Code session so DetectCallerSession returns non-empty.
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("os.Getwd: %v", err)
-	}
-	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
-		cwd = resolved
-	}
-	projectDir := filepath.Join(root, ".claude", "projects", strings.ReplaceAll(cwd, "/", "-"))
-	if err := os.MkdirAll(projectDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(projectDir, "fake-session-id.jsonl"), []byte{}, 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
+	beginUsageTracking("read")
 	logUsageAsync("read", "abc12345")
+	finalizeUsageLog(nil)
 	waitUsageLog()
 
 	usagePath := filepath.Join(root, ".claude", "skills", "cc-session", "usage.jsonl")
@@ -1505,9 +1664,23 @@ func TestLogUsageAsync_GivenCallerSession_ThenWritesToLog(t *testing.T) {
 	if !strings.Contains(line, `"target":"abc12345"`) {
 		t.Errorf("usage.jsonl missing target field, got: %s", line)
 	}
+	if !strings.Contains(line, `"result":"ok"`) {
+		t.Errorf("usage.jsonl missing result:ok, got: %s", line)
+	}
+	if strings.Contains(line, `"error"`) {
+		t.Errorf("usage.jsonl should omit error field on success, got: %s", line)
+	}
 }
 
-func TestLogUsageAsync_GivenNoCallerSession_ThenDoesNotWriteToLog(t *testing.T) {
+// Bug this guards against: a command that failed before ever resolving a
+// target (e.g. "read" given an unknown session ID) used to log nothing at
+// all, so failures were invisible in usage.jsonl. beginUsageTracking starts
+// tracking before the command's own logic runs, so this now produces an
+// entry with an empty target and result:error.
+func TestFinalizeUsageLog_GivenCommandFailedBeforeResolvingTarget_ThenRecordsErrorResultWithEmptyTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Claude Code sessions only exist on macOS/Linux")
+	}
 	root := t.TempDir()
 	t.Setenv("HOME", root)
 	t.Setenv("USERPROFILE", root)
@@ -1515,13 +1688,134 @@ func TestLogUsageAsync_GivenNoCallerSession_ThenDoesNotWriteToLog(t *testing.T) 
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	config.Reset()
 	t.Cleanup(config.Reset)
+	usageTestCallerSession(t, root)
 
-	// No Claude Code project directory created, so DetectCallerSession returns "".
-	logUsageAsync("read", "abc12345")
+	// Simulate main's dispatch starting tracking, then the command failing
+	// (e.g. resolveSession erroring) before it ever calls logUsageAsync.
+	beginUsageTracking("read")
+	finalizeUsageLog(fmt.Errorf("transcript not found: no-such-session-id"))
+	waitUsageLog()
+
+	usagePath := filepath.Join(root, ".claude", "skills", "cc-session", "usage.jsonl")
+	data, err := os.ReadFile(usagePath)
+	if err != nil {
+		t.Fatalf("usage.jsonl not created: %v", err)
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.Contains(line, `"cmd":"read"`) {
+		t.Errorf("usage.jsonl missing cmd field, got: %s", line)
+	}
+	if !strings.Contains(line, `"target":""`) {
+		t.Errorf("usage.jsonl should record an empty target (never resolved), got: %s", line)
+	}
+	if !strings.Contains(line, `"result":"error"`) {
+		t.Errorf("usage.jsonl missing result:error, got: %s", line)
+	}
+	if !strings.Contains(line, `"error":"transcript not found: no-such-session-id"`) {
+		t.Errorf("usage.jsonl missing error message, got: %s", line)
+	}
+}
+
+func TestFinalizeUsageLog_GivenMultilineError_ThenTruncatesToFirstLine(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Claude Code sessions only exist on macOS/Linux")
+	}
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
+	t.Setenv("CC_SESSION_NO_USAGE", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	config.Reset()
+	t.Cleanup(config.Reset)
+	usageTestCallerSession(t, root)
+
+	beginUsageTracking("stats")
+	finalizeUsageLog(fmt.Errorf("count filtered tokens: boom\nrequest id: abc"))
+	waitUsageLog()
+
+	usagePath := filepath.Join(root, ".claude", "skills", "cc-session", "usage.jsonl")
+	data, err := os.ReadFile(usagePath)
+	if err != nil {
+		t.Fatalf("usage.jsonl not created: %v", err)
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.Contains(line, `"error":"count filtered tokens: boom"`) {
+		t.Errorf("usage.jsonl error field should be truncated to the first line, got: %s", line)
+	}
+	if strings.Contains(line, "request id") {
+		t.Errorf("usage.jsonl error field leaked a second line, got: %s", line)
+	}
+}
+
+func TestFinalizeUsageLog_GivenErrHelp_ThenDoesNotWriteToLog(t *testing.T) {
+	// A "-h" request is a deliberate UX flow, not a command failure — it
+	// shouldn't show up as a tracked error.
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
+	t.Setenv("CC_SESSION_NO_USAGE", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	config.Reset()
+	t.Cleanup(config.Reset)
+	usageTestCallerSession(t, root)
+
+	beginUsageTracking("read")
+	finalizeUsageLog(flag.ErrHelp)
 	waitUsageLog()
 
 	usagePath := filepath.Join(root, ".claude", "skills", "cc-session", "usage.jsonl")
 	if _, err := os.Stat(usagePath); err == nil {
-		t.Error("usage.jsonl was created despite no caller session")
+		t.Error("usage.jsonl was created for a flag.ErrHelp invocation")
+	}
+}
+
+func TestResolveVersion_GivenLdflagsVersion_ThenReturnsItUnchanged(t *testing.T) {
+	// ldflags -X main.version=... (goreleaser) always takes priority over
+	// build-info fallback.
+	got := resolveVersion("v1.2.3")
+	if got != "v1.2.3" {
+		t.Errorf("resolveVersion(%q) = %q, want unchanged", "v1.2.3", got)
+	}
+}
+
+func TestResolveVersion_GivenDevWithModuleVersion_ThenReturnsModuleVersion(t *testing.T) {
+	old := readBuildInfo
+	t.Cleanup(func() { readBuildInfo = old })
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Main: debug.Module{Version: "v0.5.0"}}, true
+	}
+
+	got := resolveVersion("dev")
+	if got != "v0.5.0" {
+		t.Errorf("resolveVersion(\"dev\") = %q, want %q (go install pkg@version)", got, "v0.5.0")
+	}
+}
+
+func TestResolveVersion_GivenDevWithNoModuleVersionButVCSRevision_ThenReturnsShortRevision(t *testing.T) {
+	old := readBuildInfo
+	t.Cleanup(func() { readBuildInfo = old })
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{
+			Main: debug.Module{Version: "(devel)"},
+			Settings: []debug.BuildSetting{
+				{Key: "vcs.revision", Value: "95712a4abcdef1234567890"},
+			},
+		}, true
+	}
+
+	got := resolveVersion("dev")
+	if got != "dev+95712a4abcde" {
+		t.Errorf("resolveVersion(\"dev\") = %q, want short vcs revision fallback", got)
+	}
+}
+
+func TestResolveVersion_GivenDevWithNoBuildInfo_ThenReturnsDevUnchanged(t *testing.T) {
+	old := readBuildInfo
+	t.Cleanup(func() { readBuildInfo = old })
+	readBuildInfo = func() (*debug.BuildInfo, bool) { return nil, false }
+
+	got := resolveVersion("dev")
+	if got != "dev" {
+		t.Errorf("resolveVersion(\"dev\") = %q, want %q when build info is unavailable", got, "dev")
 	}
 }

@@ -22,6 +22,36 @@ type UsageEntry struct {
 	Caller    string `json:"caller"`
 	Version   string `json:"version,omitempty"`
 	Commit    string `json:"commit,omitempty"`
+	// Result is "ok" or "error", recorded once the invocation finishes.
+	// Empty on entries written before this field existed (and on entries
+	// for commands that don't track a result) — treat as unknown, not as
+	// a failure.
+	Result string `json:"result,omitempty"`
+	// Error holds the first line of the failing command's error message.
+	// Empty unless Result == "error".
+	Error string `json:"error,omitempty"`
+	// ToolIDs holds the short tool IDs requested by an "expand" invocation
+	// (e.g. the "Q1hv" in [Grep#Q1hv]), so usage analysis can tell what a
+	// caller wanted to inspect. Empty for every other command, and for
+	// entries written before this field existed.
+	ToolIDs []string `json:"tool_ids,omitempty"`
+}
+
+// commandAliases maps a deprecated subcommand name recorded by older
+// binaries to its current name, so usage queries and stats treat historical
+// entries the same as new ones. "inject" was renamed to "inherit" in
+// 554e57b; see commands.go's hidden "inject" registry entry.
+var commandAliases = map[string]string{
+	"inject": "inherit",
+}
+
+// canonicalCommand resolves cmd through commandAliases, returning cmd
+// unchanged if it has no alias.
+func canonicalCommand(cmd string) string {
+	if canon, ok := commandAliases[cmd]; ok {
+		return canon
+	}
+	return cmd
 }
 
 // DefaultLogPath returns the canonical path for the usage log.
@@ -80,7 +110,10 @@ func ReadUsageLog(limit int, cmdFilter string) ([]UsageEntry, error) {
 // ReadUsageLogFromPath reads and parses the JSONL file at path.
 // Returns entries in reverse chronological order (most-recent first).
 // If the file does not exist, returns an empty slice and nil error.
-// Blank or unparseable lines are silently skipped.
+// Blank or unparseable lines are silently skipped. cmdFilter and each
+// entry's Command are both resolved through canonicalCommand first, so a
+// deprecated alias (e.g. "inject") matches its current name ("inherit") in
+// either direction, and the returned entries always display the current name.
 func ReadUsageLogFromPath(limit int, cmdFilter string, path string) ([]UsageEntry, error) {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
@@ -90,6 +123,8 @@ func ReadUsageLogFromPath(limit int, cmdFilter string, path string) ([]UsageEntr
 		return nil, err
 	}
 	defer f.Close()
+
+	cmdFilter = canonicalCommand(cmdFilter)
 
 	var entries []UsageEntry
 	scanner := bufio.NewScanner(f)
@@ -102,6 +137,7 @@ func ReadUsageLogFromPath(limit int, cmdFilter string, path string) ([]UsageEntr
 		if err := json.Unmarshal([]byte(line), &e); err != nil {
 			continue
 		}
+		e.Command = canonicalCommand(e.Command)
 		if cmdFilter != "" && e.Command != cmdFilter {
 			continue
 		}
@@ -173,15 +209,26 @@ func DetectCallerSession(cwd string) string {
 	return DetectCallerSessionWithBase(cwd, filepath.Join(home, ".claude", "projects"))
 }
 
+// ProjectDirName maps an absolute working directory path to the directory
+// name Claude Code uses under ~/.claude/projects, by replacing every path
+// separator with "-" (e.g. /Users/maple/Desktop -> -Users-maple-Desktop).
+// A Windows cwd uses "\" as its separator and may carry a drive letter
+// (e.g. "C:"); both "\" and ":" are illegal inside a single path segment,
+// so they are normalized the same way as "/" — otherwise the mapped name
+// would embed an OS-illegal segment (e.g. "D:") that os.MkdirAll refuses to
+// create. This is a no-op for a macOS/Linux cwd, which never contains
+// "\" or ":".
+func ProjectDirName(cwd string) string {
+	return strings.NewReplacer("\\", "-", "/", "-", ":", "-").Replace(cwd)
+}
+
 // DetectCallerSessionWithBase is the testable variant of DetectCallerSession
 // that accepts an explicit projectsDir.
 func DetectCallerSessionWithBase(cwd string, projectsDir string) string {
 	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
 		cwd = resolved
 	}
-	// Claude Code maps an absolute path to a project dir by replacing every
-	// "/" with "-", e.g. /Users/maple/Desktop -> -Users-maple-Desktop.
-	projectDir := filepath.Join(projectsDir, strings.ReplaceAll(cwd, "/", "-"))
+	projectDir := filepath.Join(projectsDir, ProjectDirName(cwd))
 
 	entries, err := os.ReadDir(projectDir)
 	if err != nil {
