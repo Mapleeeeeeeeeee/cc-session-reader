@@ -103,6 +103,83 @@ func TestTruncate(t *testing.T) {
 	}
 }
 
+// --- UTF-8 truncation boundary safety ---
+//
+// Truncate slices a []rune, so every result is by construction a sequence of
+// complete Unicode code points — it can never split a multi-byte code point
+// in half. These tests pin that guarantee at the trickiest boundaries: a
+// multi-rune emoji ZWJ sequence and a base+combining-mark pair, both of which
+// are made of more than one code point per visual character.
+//
+// Known limitation (not fixed here, by design): Truncate guarantees valid
+// UTF-8 output, not grapheme-cluster integrity. Cutting mid-sequence can
+// still separate a ZWJ joiner from its neighbour or a combining mark from its
+// base character, which may render as an unintended glyph (e.g. a lone
+// zero-width-joiner, or an accent detached from its letter). Fixing that
+// would require a grapheme-aware segmentation library; the project has no
+// such dependency, and the task brief for this test explicitly calls out not
+// to introduce one just to guard this boundary.
+
+// TestTruncate_GivenEmojiZWJSequenceAtBoundary_ThenCutsOnRuneBoundaryAndStaysValidUTF8
+// guards against a regression that reintroduces byte-based slicing (e.g.
+// `s[:n]`) instead of rune-based slicing, which would produce invalid UTF-8
+// for any input needing genuine truncation.
+func TestTruncate_GivenEmojiZWJSequenceAtBoundary_ThenCutsOnRuneBoundaryAndStaysValidUTF8(t *testing.T) {
+	// "👨‍👩‍👧" (family emoji) is 5 runes: 👨 ZWJ 👩 ZWJ 👧.
+	family := "👨‍👩‍👧"
+	familyRunes := []rune(family)
+	if len(familyRunes) != 5 {
+		t.Fatalf("test setup: family emoji has %d runes, want 5", len(familyRunes))
+	}
+
+	got := Truncate(family, 2)
+	if !utf8.ValidString(got) {
+		t.Fatalf("Truncate(%q, 2) = %q is not valid UTF-8", family, got)
+	}
+	want := string(familyRunes[:2]) // 👨 + ZWJ: a broken cluster, but valid UTF-8 runes
+	if got != want {
+		t.Fatalf("Truncate(%q, 2) = %q, want %q", family, got, want)
+	}
+}
+
+// TestTruncate_GivenCombiningCharacterAtBoundary_ThenCutsOnRuneBoundaryAndStaysValidUTF8
+// guards the same rune-boundary contract for a base character followed by a
+// combining mark ("e" + COMBINING ACUTE ACCENT U+0301, not the precomposed
+// "é"): cutting between them separates the accent from its letter but must
+// still produce valid UTF-8, never a truncated multi-byte sequence.
+func TestTruncate_GivenCombiningCharacterAtBoundary_ThenCutsOnRuneBoundaryAndStaysValidUTF8(t *testing.T) {
+	eWithCombiningAccent := "é"
+	if len([]rune(eWithCombiningAccent)) != 2 {
+		t.Fatalf("test setup: %q has %d runes, want 2", eWithCombiningAccent, len([]rune(eWithCombiningAccent)))
+	}
+
+	got := Truncate(eWithCombiningAccent, 1)
+	if !utf8.ValidString(got) {
+		t.Fatalf("Truncate(%q, 1) = %q is not valid UTF-8", eWithCombiningAccent, got)
+	}
+	if got != "e" {
+		t.Fatalf("Truncate(%q, 1) = %q, want %q (bare base character, accent dropped)", eWithCombiningAccent, got, "e")
+	}
+}
+
+// TestTruncate_GivenEmptyString_ThenReturnsEmpty guards the degenerate input:
+// no runes to slice, so both the byte fast-path and the rune path must
+// return "" without allocating a rune slice or indexing out of range.
+func TestTruncate_GivenEmptyString_ThenReturnsEmpty(t *testing.T) {
+	if got := Truncate("", 10); got != "" {
+		t.Fatalf("Truncate(\"\", 10) = %q, want empty", got)
+	}
+}
+
+// TestTruncate_GivenZeroRuneLimit_ThenReturnsEmptyString guards the maxRunes=0
+// boundary: runes[:0] must not panic and must yield "", distinct from the
+// byte-length fast path (len(s) <= 0 is only true for an empty string).
+func TestTruncate_GivenZeroRuneLimit_ThenReturnsEmptyString(t *testing.T) {
+	if got := Truncate("hello", 0); got != "" {
+		t.Fatalf("Truncate(\"hello\", 0) = %q, want empty", got)
+	}
+}
+
 func TestFirstLine(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -141,6 +218,22 @@ func TestFirstLine(t *testing.T) {
 			name:     "given all whitespace then returns empty",
 			s:        "   \n\t  \n  ",
 			maxRunes: 80,
+			want:     "",
+		},
+		{
+			// CJK first line cut mid-string: must land on a rune boundary via
+			// the shared Truncate helper, never a half-character.
+			name:     "given CJK first line over budget then cuts on rune boundary",
+			s:        "甲乙丙丁\nsecond",
+			maxRunes: 2,
+			want:     "甲乙",
+		},
+		{
+			// Zero rune limit: the first line exists but the budget allows no
+			// runes at all, so the result must be "" rather than panicking.
+			name:     "given zero rune limit then returns empty",
+			s:        "hello\nworld",
+			maxRunes: 0,
 			want:     "",
 		},
 	}

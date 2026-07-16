@@ -402,6 +402,191 @@ func TestParseLine_UnknownEntryWithoutMessageIsSkipped(t *testing.T) {
 	}
 }
 
+// --- Malformed JSONL robustness ---
+//
+// These tests pin the reader's actual contract for malformed input, per the
+// project's own decision (see reader.go's parseLineWithToolNames): a line
+// that fails json.Unmarshal returns an explicit "parse transcript line"
+// error and aborts the read, rather than panicking or silently dropping the
+// line to produce a truncated-but-successful result. Read/ReadAll callers
+// that check the returned error (as every call site does) can never mistake
+// a partially-read transcript for a complete one.
+
+// TestParseLine_GivenTruncatedJSON_ThenReturnsErrorNotPanic guards the exact
+// truncation shape a killed/crashed Claude Code process can leave mid-write:
+// a line cut off inside a string value. ParseLine must surface this as an
+// error rather than panicking, since a panic here would crash every command
+// that reads a transcript ending on such a line.
+func TestParseLine_GivenTruncatedJSON_ThenReturnsErrorNotPanic(t *testing.T) {
+	_, ok, err := ParseLine([]byte(`{"type":"user","message":{"role":"user","con`))
+	if err == nil {
+		t.Fatal("ParseLine returned nil error for truncated JSON, want an explicit error")
+	}
+	if ok {
+		t.Fatal("ParseLine returned ok=true for truncated JSON, want ok=false")
+	}
+}
+
+// TestParseLine_GivenMalformedInputVariants_ThenReturnsErrorWithoutPanic covers
+// the other shapes a corrupt or foreign line can take: a null byte (not
+// whitespace, so it reaches the JSON parser) and plain non-JSON text. Both
+// must fail the same way truncated JSON does.
+func TestParseLine_GivenMalformedInputVariants_ThenReturnsErrorWithoutPanic(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+	}{
+		{name: "null byte line", line: "\x00"},
+		{name: "plain non-JSON text", line: "this is not json at all"},
+		{name: "truncated at top level", line: `{"type":"user"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			event, ok, err := ParseLine([]byte(tt.line))
+			if err == nil {
+				t.Fatalf("ParseLine(%q) returned nil error, want an explicit error", tt.line)
+			}
+			if ok {
+				t.Fatalf("ParseLine(%q) returned ok=true, want ok=false", tt.line)
+			}
+			if event != (session.Event{}) {
+				t.Fatalf("ParseLine(%q) returned non-zero event %#v alongside an error", tt.line, event)
+			}
+		})
+	}
+}
+
+// TestReadFile_GivenBlankOrWhitespaceOnlyLinesInterleaved_ThenSkippedWithoutLoss
+// guards the whitespace-trim skip in ReadFile: blank lines and lines
+// containing only spaces/tabs must be skipped silently, and must not shift
+// or drop the valid events surrounding them.
+func TestReadFile_GivenBlankOrWhitespaceOnlyLinesInterleaved_ThenSkippedWithoutLoss(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	lines := []string{
+		`{"type":"user","message":{"role":"user","content":"first"}}`,
+		"",
+		"   \t  ",
+		`{"type":"user","message":{"role":"user","content":"second"}}`,
+		"",
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	var events []session.Event
+	if err := ReadFile(path, func(event session.Event) error {
+		events = append(events, event)
+		return nil
+	}); err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+
+	if len(events) != 2 || events[0].User.Text != "first" || events[1].User.Text != "second" {
+		t.Fatalf("events = %#v, want exactly [first, second]", events)
+	}
+}
+
+// TestReadFile_GivenInvalidLineAmongValidLines_ThenErrorSurfacesWithoutSilentlyDroppingPriorEvents
+// guards the "silent data loss" failure mode the task brief calls out
+// explicitly: a null-byte or non-JSON line anywhere in the file must abort
+// the read with an explicit error (never silently skipped as if it were
+// blank), while the valid line already handled before it is not retroactively
+// lost — the caller sees both the earlier event and the error, never a
+// silently truncated success.
+func TestReadFile_GivenInvalidLineAmongValidLines_ThenErrorSurfacesWithoutSilentlyDroppingPriorEvents(t *testing.T) {
+	tests := []struct {
+		name        string
+		invalidLine string
+	}{
+		{name: "null byte line", invalidLine: "\x00"},
+		{name: "non-JSON garbage line", invalidLine: "not json at all"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "session.jsonl")
+			lines := []string{
+				`{"type":"user","message":{"role":"user","content":"before the bad line"}}`,
+				tt.invalidLine,
+				`{"type":"user","message":{"role":"user","content":"after the bad line"}}`,
+				"",
+			}
+			if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+				t.Fatalf("write fixture: %v", err)
+			}
+
+			var events []session.Event
+			err := ReadFile(path, func(event session.Event) error {
+				events = append(events, event)
+				return nil
+			})
+			if err == nil {
+				t.Fatal("ReadFile returned nil error, want an explicit parse error")
+			}
+			if !strings.Contains(err.Error(), "parse transcript line") {
+				t.Fatalf("error = %v, want parse transcript line", err)
+			}
+			if len(events) != 1 || events[0].User.Text != "before the bad line" {
+				t.Fatalf("events before the error = %#v, want exactly the one line handled before the bad line", events)
+			}
+		})
+	}
+}
+
+// TestReadFile_GivenSingleLineLargerThanDefaultScannerTokenLimit_ThenReadsWithoutError
+// guards the classic bufio.Scanner landmine: Scanner's default MaxScanTokenSize
+// is 64KB, and Claude Code transcripts routinely carry multi-megabyte single
+// lines (large file reads/writes embedded in a tool_result). ReadFile uses
+// bufio.Reader.ReadBytes, which has no such cap, but a future refactor to
+// bufio.Scanner without an explicit Buffer() call would silently truncate the
+// read (Scanner.Scan returns false with bufio.ErrTooLong) on exactly this
+// shape. A multi-MB content field pins that ReadFile keeps working past the
+// 64KB boundary.
+func TestReadFile_GivenSingleLineLargerThanDefaultScannerTokenLimit_ThenReadsWithoutError(t *testing.T) {
+	const oversizedContentBytes = 1 * 1024 * 1024 // well past bufio.MaxScanTokenSize (64KB)
+	hugeContent := strings.Repeat("x", oversizedContentBytes)
+	contentJSON, err := json.Marshal(hugeContent)
+	if err != nil {
+		t.Fatalf("marshal huge content: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	line := `{"type":"user","message":{"role":"user","content":` + string(contentJSON) + `}}`
+	if err := os.WriteFile(path, []byte(line+"\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	events, err := ReadAll(path)
+	if err != nil {
+		t.Fatalf("ReadAll returned error on oversized line: %v", err)
+	}
+	if len(events) != 1 || events[0].User == nil || len(events[0].User.Text) != oversizedContentBytes {
+		t.Fatalf("got %d events, want 1 event with %d-byte text (got %d)",
+			len(events), oversizedContentBytes, len(events[0].User.Text))
+	}
+}
+
+// TestReadFile_GivenFileContainingOnlyNewlines_ThenNoEventsNoError guards the
+// boundary next to TestReadAll_GivenEmptyFile_ThenReturnsNoEvents: a file
+// that is not byte-empty but contains nothing except newline characters must
+// still read as zero events with no error, since every line is blank after
+// trimming.
+func TestReadFile_GivenFileContainingOnlyNewlines_ThenNoEventsNoError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "blank-lines.jsonl")
+	if err := os.WriteFile(path, []byte("\n\n\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	var events []session.Event
+	if err := ReadFile(path, func(event session.Event) error {
+		events = append(events, event)
+		return nil
+	}); err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("got %d events, want 0: %#v", len(events), events)
+	}
+}
+
 func TestReadFile_WhenLineIsMalformed_ThenReturnsError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bad.jsonl")
 	data := strings.Join([]string{
