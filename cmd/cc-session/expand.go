@@ -29,7 +29,7 @@ func runExpand(args []string, out io.Writer, errOut io.Writer, store parser.Stor
 	if resolved.Path == "" {
 		return fmt.Errorf("transcript not found: %s", resolved.ID)
 	}
-	logUsageAsync("expand", session.ShortID(resolved.ID, 8))
+	logUsageAsync("expand", session.ShortID(resolved.ID, 8), requestedIDs...)
 
 	events, err := reader.ReadAll(resolved.Path)
 	if err != nil {

@@ -30,6 +30,11 @@ type UsageEntry struct {
 	// Error holds the first line of the failing command's error message.
 	// Empty unless Result == "error".
 	Error string `json:"error,omitempty"`
+	// ToolIDs holds the short tool IDs requested by an "expand" invocation
+	// (e.g. the "Q1hv" in [Grep#Q1hv]), so usage analysis can tell what a
+	// caller wanted to inspect. Empty for every other command, and for
+	// entries written before this field existed.
+	ToolIDs []string `json:"tool_ids,omitempty"`
 }
 
 // commandAliases maps a deprecated subcommand name recorded by older

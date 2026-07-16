@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -240,6 +241,62 @@ func TestLogUsageToPath_GivenResultAndError_WhenAppended_ThenRoundTrips(t *testi
 	}
 	if entries[0].Error != entry.Error {
 		t.Errorf("Error = %q, want %q", entries[0].Error, entry.Error)
+	}
+}
+
+func TestLogUsageToPath_GivenToolIDs_WhenAppended_ThenRoundTrips(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	entry := UsageEntry{Command: "expand", Target: "abc123", ToolIDs: []string{"Q1hv", "ooQF"}}
+
+	writeEntry(t, path, entry)
+
+	entries, err := ReadUsageLogFromPath(0, "", path)
+	if err != nil {
+		t.Fatalf("ReadUsageLogFromPath returned error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entry count = %d, want 1", len(entries))
+	}
+	if !reflect.DeepEqual(entries[0].ToolIDs, entry.ToolIDs) {
+		t.Errorf("ToolIDs = %v, want %v", entries[0].ToolIDs, entry.ToolIDs)
+	}
+}
+
+func TestLogUsageToPath_GivenNoToolIDs_WhenAppended_ThenOmitsToolIDsFromJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	entry := UsageEntry{Command: "read", Target: "abc123"}
+
+	writeEntry(t, path, entry)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	line := strings.TrimSpace(string(data))
+	if strings.Contains(line, "tool_ids") {
+		t.Errorf("expected tool_ids to be omitted for a command with no tool IDs, got: %s", line)
+	}
+}
+
+// Regression: entries written before the ToolIDs field existed have no
+// "tool_ids" key at all. Without this, unmarshaling a legacy line must still
+// succeed and yield a nil/empty slice rather than an error.
+func TestReadUsageLogFromPath_GivenLegacyEntryWithoutToolIDsField_WhenRead_ThenToolIDsIsEmpty(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	raw := `{"ts":"2026-06-15T10:00:00Z","cmd":"expand","target":"legacy","cwd":"/x","caller":"c"}` + "\n"
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatalf("write legacy entry: %v", err)
+	}
+
+	entries, err := ReadUsageLogFromPath(0, "", path)
+	if err != nil {
+		t.Fatalf("ReadUsageLogFromPath returned error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entry count = %d, want 1", len(entries))
+	}
+	if len(entries[0].ToolIDs) != 0 {
+		t.Errorf("ToolIDs = %v, want empty for a pre-existing entry", entries[0].ToolIDs)
 	}
 }
 

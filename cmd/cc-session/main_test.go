@@ -19,6 +19,7 @@ import (
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/config"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/parser"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/tracker"
 )
 
 // testReader is the concrete reader used by all tests.
@@ -614,6 +615,61 @@ func TestRunExpand_GivenExistingToolID_WhenExpanded_ThenShowsFullInputAndResult(
 	}
 	if !strings.Contains(got, "hello") {
 		t.Fatalf("expand output missing result text\ngot:\n%s", got)
+	}
+}
+
+// expand's usage entry must record every requested tool ID (not just the
+// ones that resolved), so usage analysis can tell what a caller wanted to
+// inspect even when a lookup missed.
+func TestRunExpand_GivenToolIDs_WhenExpanded_ThenUsageLogRecordsRequestedToolIDs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Claude Code sessions only exist on macOS/Linux")
+	}
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
+	t.Setenv("CC_SESSION_NO_USAGE", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	config.Reset()
+	t.Cleanup(config.Reset)
+	usageTestCallerSession(t, root)
+
+	sid := "12345678-1234-1234-1234-123456789abc"
+	projectDir := filepath.Join(root, "fixture-projects", "proj")
+	metaDir := filepath.Join(root, "fixture-usage-data", "session-meta")
+	_ = os.MkdirAll(projectDir, 0o755)
+	_ = os.MkdirAll(metaDir, 0o755)
+	transcript := strings.Join([]string{
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"hi"},{"type":"tool_use","name":"Bash","id":"toolu_01XYZabcdefgABCDuCVa","input":{"command":"echo hello","description":"Say hello"}}]}}`,
+		`{"type":"user","timestamp":"2026-05-28T00:00:02Z","toolUseResult":{"success":true,"commandName":"Bash"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01XYZabcdefgABCDuCVa","content":"hello"}]}}`,
+		"",
+	}, "\n")
+	_ = os.WriteFile(filepath.Join(projectDir, sid+".jsonl"), []byte(transcript), 0o644)
+	writeListMeta(t, metaDir, sid, "/tmp/proj", "hello")
+
+	store := parser.Store{
+		ProjectsDir:    filepath.Join(root, "fixture-projects"),
+		SessionMetaDir: metaDir,
+	}
+
+	var stdout, stderr bytes.Buffer
+	beginUsageTracking("expand")
+	// "uCVa" resolves; "ZZZZ" doesn't, but must still be recorded as requested.
+	err := runExpand([]string{sid, "uCVa", "ZZZZ"}, &stdout, &stderr, store, testReader)
+	if err != nil {
+		t.Fatalf("runExpand returned error: %v", err)
+	}
+	finalizeUsageLog(err)
+	waitUsageLog()
+
+	usagePath := filepath.Join(root, ".claude", "skills", "cc-session", "usage.jsonl")
+	data, readErr := os.ReadFile(usagePath)
+	if readErr != nil {
+		t.Fatalf("usage.jsonl not created: %v", readErr)
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.Contains(line, `"tool_ids":["uCVa","ZZZZ"]`) {
+		t.Errorf("usage.jsonl missing requested tool_ids, got: %s", line)
 	}
 }
 
@@ -1270,6 +1326,30 @@ func TestRunUsage_GivenHelpFlag_ThenReturnsErrHelp(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "-cmd") {
 		t.Fatalf("stderr should contain flag descriptions, got: %q", stderr.String())
+	}
+}
+
+func TestRunUsage_GivenExpandEntryWithToolIDs_WhenDisplayed_ThenShowsToolIDs(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
+
+	if err := tracker.LogUsage(tracker.UsageEntry{
+		Timestamp: "2026-06-15T10:00:00Z",
+		Command:   "expand",
+		Target:    "abc12345",
+		ToolIDs:   []string{"Q1hv", "ooQF"},
+	}); err != nil {
+		t.Fatalf("tracker.LogUsage: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := runUsage(nil, &stdout, &stderr); err != nil {
+		t.Fatalf("runUsage returned error: %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "tools:Q1hv,ooQF") {
+		t.Fatalf("usage output missing tool IDs, got: %s", got)
 	}
 }
 

@@ -17,16 +17,18 @@ import (
 
 var usageWG sync.WaitGroup
 
-// pendingUsageCmd and pendingUsageTarget describe the in-progress command
-// invocation to be recorded once its outcome is known. There is at most one
-// command per process, so package-level state is safe: main's dispatch sets
-// pendingUsageCmd before running a tracked command (see beginUsageTracking),
-// and the command itself may later refine pendingUsageTarget once it
+// pendingUsageCmd, pendingUsageTarget, and pendingUsageToolIDs describe the
+// in-progress command invocation to be recorded once its outcome is known.
+// There is at most one command per process, so package-level state is safe:
+// main's dispatch sets pendingUsageCmd before running a tracked command (see
+// beginUsageTracking), and the command itself may later refine
+// pendingUsageTarget (and, for "expand", pendingUsageToolIDs) once it
 // resolves a concrete target (see logUsageAsync). finalizeUsageLog consumes
-// and clears both when the command returns.
+// and clears all three when the command returns.
 var (
-	pendingUsageCmd    string
-	pendingUsageTarget string
+	pendingUsageCmd     string
+	pendingUsageTarget  string
+	pendingUsageToolIDs []string
 )
 
 // beginUsageTracking marks cmd as the subcommand whose result should be
@@ -39,12 +41,15 @@ func beginUsageTracking(cmd string) {
 }
 
 // logUsageAsync records target as the resolved session for the current
-// tracked invocation (see beginUsageTracking). It no longer writes to disk
-// itself: the actual entry is written by finalizeUsageLog once the command's
-// outcome is known, so a single JSONL line always carries the correct result.
-func logUsageAsync(cmd string, target string) {
+// tracked invocation (see beginUsageTracking), along with any requested tool
+// IDs (currently only "expand" passes these, e.g. the "Q1hv" in an argument
+// like "expand abc123 Q1hv"). It no longer writes to disk itself: the actual
+// entry is written by finalizeUsageLog once the command's outcome is known,
+// so a single JSONL line always carries the correct result.
+func logUsageAsync(cmd string, target string, toolIDs ...string) {
 	pendingUsageCmd = cmd
 	pendingUsageTarget = target
+	pendingUsageToolIDs = toolIDs
 }
 
 // finalizeUsageLog writes the usage entry for the invocation that just
@@ -58,8 +63,8 @@ func finalizeUsageLog(cmdErr error) {
 	if pendingUsageCmd == "" {
 		return
 	}
-	cmd, target := pendingUsageCmd, pendingUsageTarget
-	pendingUsageCmd, pendingUsageTarget = "", ""
+	cmd, target, toolIDs := pendingUsageCmd, pendingUsageTarget, pendingUsageToolIDs
+	pendingUsageCmd, pendingUsageTarget, pendingUsageToolIDs = "", "", nil
 
 	if config.Get().NoUsage {
 		return
@@ -96,6 +101,7 @@ func finalizeUsageLog(cmdErr error) {
 			Commit:    commit,
 			Result:    result,
 			Error:     errMsg,
+			ToolIDs:   toolIDs,
 		}
 		_ = tracker.LogUsage(entry)
 	}()
@@ -164,8 +170,13 @@ func runUsage(args []string, out io.Writer, errOut io.Writer) error {
 			resultMarker = " [ERR]"
 		}
 
-		fmt.Fprintf(out, "%s  %-8s %s  %s  %s%s\n",
-			dateStr, e.Command, target, callerShort, e.Cwd, resultMarker)
+		toolIDsSuffix := ""
+		if len(e.ToolIDs) > 0 {
+			toolIDsSuffix = "  tools:" + strings.Join(e.ToolIDs, ",")
+		}
+
+		fmt.Fprintf(out, "%s  %-8s %s  %s  %s%s%s\n",
+			dateStr, e.Command, target, callerShort, e.Cwd, resultMarker, toolIDsSuffix)
 	}
 	return nil
 }
