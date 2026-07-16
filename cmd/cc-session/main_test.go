@@ -1447,6 +1447,23 @@ func TestCheatSheet_GivenRegistry_ThenCoversExactlyNonHiddenHintedCommands(t *te
 	}
 }
 
+// argumentHintFromSkillMD extracts the "argument-hint: ..." frontmatter
+// value from SKILL.md's raw content, stripping the surrounding quotes. It
+// trims a trailing "\r" off each line first, since a Windows checkout
+// converts this repo's LF line endings to CRLF and strings.Split(content,
+// "\n") would otherwise leave "\r" attached to the line (and thus inside
+// the trimmed value). Returns false if no argument-hint line is found.
+func argumentHintFromSkillMD(content string) (string, bool) {
+	const linePrefix = "argument-hint: "
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.HasPrefix(line, linePrefix) {
+			return strings.Trim(strings.TrimPrefix(line, linePrefix), `"`), true
+		}
+	}
+	return "", false
+}
+
 // Regression guard for finding 4: SKILL.md's argument-hint frontmatter is a
 // hand-written literal with no compiler-enforced link to buildArgumentHint.
 // This asserts it matches verbatim, so a registry change that isn't synced
@@ -1457,22 +1474,31 @@ func TestSkillMD_GivenArgumentHintFrontmatter_ThenMatchesBuildArgumentHint(t *te
 		t.Fatalf("read SKILL.md: %v", err)
 	}
 
-	const linePrefix = "argument-hint: "
-	var hintLine string
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, linePrefix) {
-			hintLine = line
-			break
-		}
-	}
-	if hintLine == "" {
+	got, ok := argumentHintFromSkillMD(string(data))
+	if !ok {
 		t.Fatal("SKILL.md frontmatter has no argument-hint line")
 	}
 
-	got := strings.Trim(strings.TrimPrefix(hintLine, linePrefix), `"`)
 	want := buildArgumentHint()
 	if got != want {
 		t.Fatalf("SKILL.md argument-hint = %q, want %q (buildArgumentHint output); sync SKILL.md's frontmatter with the registry", got, want)
+	}
+}
+
+// Regression: on a Windows CI runner, the checkout's CRLF line endings left
+// "\r" attached to each split line, so the closing-quote trim never matched
+// (e.g. `"read <id>"` + "\r" stayed as `read <id>"` + "\r" instead of
+// `read <id>`). Feeds a CRLF frontmatter line directly so this is verified
+// on any OS instead of depending on the checkout's actual line endings.
+func TestArgumentHintFromSkillMD_GivenCRLFLineEndings_ThenStripsCarriageReturn(t *testing.T) {
+	content := "---\r\nargument-hint: \"read <id>\"\r\n---\r\n"
+
+	got, ok := argumentHintFromSkillMD(content)
+	if !ok {
+		t.Fatal("argumentHintFromSkillMD ok = false, want true")
+	}
+	if got != "read <id>" {
+		t.Fatalf("argumentHintFromSkillMD = %q, want %q", got, "read <id>")
 	}
 }
 
@@ -1535,7 +1561,7 @@ func usageTestCallerSession(t *testing.T, root string) {
 	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
 		cwd = resolved
 	}
-	projectDir := filepath.Join(root, ".claude", "projects", strings.ReplaceAll(cwd, "/", "-"))
+	projectDir := filepath.Join(root, ".claude", "projects", tracker.ProjectDirName(cwd))
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}

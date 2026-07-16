@@ -209,15 +209,26 @@ func DetectCallerSession(cwd string) string {
 	return DetectCallerSessionWithBase(cwd, filepath.Join(home, ".claude", "projects"))
 }
 
+// ProjectDirName maps an absolute working directory path to the directory
+// name Claude Code uses under ~/.claude/projects, by replacing every path
+// separator with "-" (e.g. /Users/maple/Desktop -> -Users-maple-Desktop).
+// A Windows cwd uses "\" as its separator and may carry a drive letter
+// (e.g. "C:"); both "\" and ":" are illegal inside a single path segment,
+// so they are normalized the same way as "/" — otherwise the mapped name
+// would embed an OS-illegal segment (e.g. "D:") that os.MkdirAll refuses to
+// create. This is a no-op for a macOS/Linux cwd, which never contains
+// "\" or ":".
+func ProjectDirName(cwd string) string {
+	return strings.NewReplacer("\\", "-", "/", "-", ":", "-").Replace(cwd)
+}
+
 // DetectCallerSessionWithBase is the testable variant of DetectCallerSession
 // that accepts an explicit projectsDir.
 func DetectCallerSessionWithBase(cwd string, projectsDir string) string {
 	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
 		cwd = resolved
 	}
-	// Claude Code maps an absolute path to a project dir by replacing every
-	// "/" with "-", e.g. /Users/maple/Desktop -> -Users-maple-Desktop.
-	projectDir := filepath.Join(projectsDir, strings.ReplaceAll(cwd, "/", "-"))
+	projectDir := filepath.Join(projectsDir, ProjectDirName(cwd))
 
 	entries, err := os.ReadDir(projectDir)
 	if err != nil {

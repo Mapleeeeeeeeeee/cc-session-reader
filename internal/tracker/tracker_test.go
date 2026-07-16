@@ -365,8 +365,7 @@ func TestDetectCallerSessionWithBase_GivenMultipleJSONL_WhenDetected_ThenReturns
 	projectsDir := t.TempDir()
 	cwd := "/Users/maple/Desktop"
 
-	// Claude Code maps the cwd by replacing "/" with "-".
-	projectDir := filepath.Join(projectsDir, strings.ReplaceAll(cwd, "/", "-"))
+	projectDir := filepath.Join(projectsDir, ProjectDirName(cwd))
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
 		t.Fatalf("create project dir: %v", err)
 	}
@@ -392,5 +391,32 @@ func TestDetectCallerSessionWithBase_GivenMultipleJSONL_WhenDetected_ThenReturns
 	got := DetectCallerSessionWithBase(cwd, projectsDir)
 	if got != "newer-session-uuid" {
 		t.Errorf("DetectCallerSessionWithBase = %q, want %q", got, "newer-session-uuid")
+	}
+}
+
+func TestProjectDirName_GivenUnixStylePath_ThenReplacesSlashWithDash(t *testing.T) {
+	got := ProjectDirName("/Users/maple/Desktop")
+	want := "-Users-maple-Desktop"
+	if got != want {
+		t.Errorf("ProjectDirName = %q, want %q", got, want)
+	}
+}
+
+// Regression: a Windows CI runner's cwd (e.g. from os.Getwd() under
+// D:\a\repo\repo) uses "\" separators and a drive-letter colon.
+// ProjectDirName used to only replace "/", so "\" and ":" survived into the
+// mapped name; once joined under ~/.claude/projects, "D:" then exists as a
+// mid-path segment, which os.MkdirAll refuses to create on Windows ("The
+// filename, directory name, or volume label syntax is incorrect"). Every
+// separator and colon must collapse to "-" so the mapped name is always one
+// legal path segment, regardless of which OS produced the cwd.
+func TestProjectDirName_GivenWindowsStyleCwd_ThenReplacesBackslashAndColon(t *testing.T) {
+	got := ProjectDirName(`D:\a\claude-code-session-reader\claude-code-session-reader`)
+	want := "D--a-claude-code-session-reader-claude-code-session-reader"
+	if got != want {
+		t.Errorf("ProjectDirName = %q, want %q", got, want)
+	}
+	if strings.ContainsAny(got, `/\:`) {
+		t.Errorf("ProjectDirName = %q, contains a separator or colon that MkdirAll would reject as a mid-path segment", got)
 	}
 }
