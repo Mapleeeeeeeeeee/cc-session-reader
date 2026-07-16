@@ -77,7 +77,7 @@ func TestCLI_WhenSessionExists_ThenListReadContextAndAuditWorkEndToEnd(t *testin
 			name: "audit samples cut tool results",
 			args: []string{"audit", sid, "-n", "5"},
 			want: []string{
-				"=== tool_result_cut (1 items, showing 1) ===",
+				"=== success_output_bash (1 items, showing 1) ===",
 			},
 		},
 		{

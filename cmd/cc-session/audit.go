@@ -39,13 +39,34 @@ func runAudit(args []string, out io.Writer, errOut io.Writer, store parser.Store
 
 	result := analyzer.ComputeAudit(events)
 
-	for _, catName := range []string{"tool_result_cut", "system_noise", "thinking"} {
-		items := result.Categories[catName]
+	fmt.Fprintln(out, "=== CUT-content histogram (risk-descending) ===")
+	for _, bucket := range analyzer.BucketOrder {
+		items := result.Samples[bucket]
+		if len(items) == 0 {
+			continue
+		}
+		fmt.Fprintf(out, "  %-24s %6s items  %12s chars\n",
+			bucket, analyzer.FormatNumber(len(items)), analyzer.FormatNumber(result.BucketChars[bucket]))
+	}
+
+	fmt.Fprintln(out, "\n=== Failed tool result length (chars) ===")
+	if result.Failures.Count == 0 {
+		fmt.Fprintln(out, "  no failed tool results in this session")
+	} else {
+		f := result.Failures
+		fmt.Fprintf(out, "  count: %s   median: %s   p90: %s   max: %s\n",
+			analyzer.FormatNumber(f.Count), analyzer.FormatNumber(f.Median),
+			analyzer.FormatNumber(f.P90), analyzer.FormatNumber(f.Max))
+	}
+
+	fmt.Fprintln(out, "\n=== Samples ===")
+	for _, bucket := range analyzer.BucketOrder {
+		items := result.Samples[bucket]
 		if len(items) == 0 {
 			continue
 		}
 		shown := sampleCount(*samples, len(items))
-		fmt.Fprintf(out, "=== %s (%d items, showing %d) ===\n", catName, len(items), shown)
+		fmt.Fprintf(out, "=== %s (%d items, showing %d) ===\n", bucket, len(items), shown)
 		for _, item := range items[:shown] {
 			fmt.Fprintf(out, "  %s\n\n", item)
 		}
