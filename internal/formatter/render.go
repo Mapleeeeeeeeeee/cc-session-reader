@@ -114,6 +114,34 @@ type pendingTool struct {
 	injectSessionID  string // non-empty when this is a cc-session inherit/inject/read/context call
 	injectTotalLines int    // total lines from the last page marker
 	ccSubcommand     string // "inherit", "inject" (legacy), "read", or "context"
+
+	// callLabel is the tagged call summary as summarizeToolUse first produced
+	// it (e.g. "[Bash#id] description"), kept alongside summary — which
+	// appendToolResult mutates by appending the result — so collapseRetryLoops
+	// can rebuild a single collapsed line from the last attempt's own label.
+	callLabel string
+
+	// retrySignature is the normalized identity collapseRetryLoops keys a
+	// retry loop on: the first line of the Bash command, or of the raw input
+	// for any other tool, with whitespace collapsed. Empty when there is
+	// nothing meaningful to key on, which makes the call ineligible for
+	// retry-loop collapsing rather than risking a false match against an
+	// equally-empty, unrelated call.
+	retrySignature string
+
+	// readFilePath is Read's raw file_path input (grouping key) and
+	// readDisplayPath its cleaned display form, both used by
+	// collapseSameFileReads to detect and render consecutive reads of the
+	// same file. Empty for non-Read tools.
+	readFilePath    string
+	readDisplayPath string
+
+	// resultReceived and resultSuccess record whether a tool_result has been
+	// merged into this pendingTool yet and its outcome. Both collapse passes
+	// need to tell "this call finished and failed/succeeded" apart from
+	// "this call is still awaiting its result".
+	resultReceived bool
+	resultSuccess  bool
 }
 
 func loadEvents(transcriptPath string, isVerboseAgents bool, reader session.TranscriptReader) ([]session.Event, map[string]bool, error) {
@@ -143,6 +171,8 @@ func appendToolResult(result *session.ToolResult, pendingTools *[]pendingTool, o
 			pt := &(*pendingTools)[i]
 			if pt.toolUseID == result.ToolUseID {
 				applyInjectResult(pt, result)
+				pt.resultReceived = true
+				pt.resultSuccess = result.Success
 				if opts.VerboseBash && pt.name == session.ToolBash {
 					pt.summary += formatVerboseBashResult(result)
 					return
@@ -155,6 +185,8 @@ func appendToolResult(result *session.ToolResult, pendingTools *[]pendingTool, o
 	if len(*pendingTools) > 0 {
 		last := &(*pendingTools)[len(*pendingTools)-1]
 		applyInjectResult(last, result)
+		last.resultReceived = true
+		last.resultSuccess = result.Success
 		if opts.VerboseBash && last.name == session.ToolBash {
 			last.summary += formatVerboseBashResult(result)
 			return
@@ -171,8 +203,10 @@ func appendToolResult(result *session.ToolResult, pendingTools *[]pendingTool, o
 		summary = fmt.Sprintf("[%s]%s", name, formatVerboseBashResult(result))
 	}
 	*pendingTools = append(*pendingTools, pendingTool{
-		summary: summary,
-		name:    name,
+		summary:        summary,
+		name:           name,
+		resultReceived: true,
+		resultSuccess:  result.Success,
 	})
 }
 
@@ -207,9 +241,11 @@ func summarizeToolUse(tool session.ToolUse) pendingTool {
 	// "[Agent(general)] desc" becomes "[Agent(general)#ol-1] desc".
 	tagged := injectShortID(summary, shortID)
 	pt := pendingTool{
-		toolUseID: tool.ID,
-		summary:   tagged,
-		name:      name,
+		toolUseID:      tool.ID,
+		summary:        tagged,
+		callLabel:      tagged,
+		name:           name,
+		retrySignature: retrySignature(name, tool.Input),
 	}
 	if name == session.ToolBash {
 		cmd := tool.Input.String("command")
@@ -218,7 +254,34 @@ func summarizeToolUse(tool session.ToolUse) pendingTool {
 			pt.ccSubcommand = sub
 		}
 	}
+	if name == session.ToolRead {
+		path := tool.Input.String("file_path")
+		pt.readFilePath = path
+		if path != "" {
+			pt.readDisplayPath = summarizer.CleanPath(path, tool.Cwd)
+		}
+	}
 	return pt
+}
+
+// retrySignature returns the normalized identity collapseRetryLoops keys a
+// retry loop on: the first line of the Bash command (multi-line scripts
+// don't defeat the match), or the first line of the raw input JSON for any
+// other tool. Returns "" when there is nothing to key on.
+func retrySignature(name string, input session.ToolInput) string {
+	raw := input.String("command")
+	if name != session.ToolBash {
+		raw = input.MarshalNoEscape()
+	}
+	firstLine := strings.SplitN(strings.TrimSpace(raw), "\n", 2)[0]
+	return normalizeWhitespace(firstLine)
+}
+
+// normalizeWhitespace collapses runs of whitespace to single spaces so
+// cosmetic formatting differences (extra spaces, tabs) don't defeat the
+// retry-loop prefix comparison.
+func normalizeWhitespace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // injectShortID inserts "#id" before the first ']' in summary.
@@ -334,11 +397,119 @@ func collapseCCSessionTools(tools []pendingTool) []pendingTool {
 	return result
 }
 
+// collapseRetryLoops collapses a consecutive run (>=2) of pendingTools that
+// share the same tool name, the same (whitespace-normalized, prefix-matched)
+// retrySignature, and all FAILED, into a single "FAILED xN" line — a retry
+// loop that repeats the same failing call N times otherwise contributes N
+// near-identical lines. A run of exactly 1 is left untouched (no "x1" label);
+// a success or an unrelated call in between breaks the run so its individual
+// failure information is never silently dropped.
+func collapseRetryLoops(tools []pendingTool) []pendingTool {
+	result := make([]pendingTool, 0, len(tools))
+	for i := 0; i < len(tools); i++ {
+		pt := tools[i]
+		if !isRetryEligible(pt) {
+			result = append(result, pt)
+			continue
+		}
+		j := i + 1
+		for j < len(tools) && isRetryEligible(tools[j]) &&
+			tools[j].name == pt.name &&
+			sameRetryCommand(pt.retrySignature, tools[j].retrySignature) {
+			j++
+		}
+		count := j - i
+		if count < 2 {
+			result = append(result, pt)
+			continue
+		}
+		last := tools[j-1]
+		last.summary = formatRetryCollapse(last, count)
+		result = append(result, last)
+		i = j - 1
+	}
+	return result
+}
+
+// isRetryEligible reports whether pt finished with a failure and carries a
+// non-empty retry signature to key on — the precondition for taking part in
+// a retry-loop group at all.
+func isRetryEligible(pt pendingTool) bool {
+	return pt.resultReceived && !pt.resultSuccess && pt.retrySignature != ""
+}
+
+// sameRetryCommand reports whether a and b identify the same retried call:
+// exact match, or one is a non-empty prefix of the other (covers "only the
+// trailing argument differs" retries, e.g. a script rerun with a new seed).
+func sameRetryCommand(a, b string) bool {
+	if a == b {
+		return true
+	}
+	shorter, longer := a, b
+	if len(longer) < len(shorter) {
+		shorter, longer = longer, shorter
+	}
+	return shorter != "" && strings.HasPrefix(longer, shorter)
+}
+
+// formatRetryCollapse rebuilds the collapsed retry-loop line from the last
+// attempt's own call label (tool id + description) plus its failure
+// excerpt, annotated with how many attempts failed. last.summary is always
+// last.callLabel followed by exactly the tail appendToolResult appended
+// (ToolResult.Summary(), which contains the literal "FAILED" once), so
+// inserting the count there mirrors the string-surgery injectShortID already
+// uses to tag summaries.
+func formatRetryCollapse(last pendingTool, count int) string {
+	tail := strings.TrimPrefix(last.summary, last.callLabel)
+	tail = strings.Replace(tail, "FAILED", fmt.Sprintf("FAILED ×%d", count), 1)
+	return last.callLabel + tail
+}
+
+// collapseSameFileReads collapses a consecutive run (>=2) of successful Read
+// calls against the same file into a single "[Read#id xN] path -> ok" line.
+// offset/limit differing across the run is expected (progressive paging
+// through a long file) and does not break the collapse; any failure, a
+// different file, or another tool in between does.
+func collapseSameFileReads(tools []pendingTool) []pendingTool {
+	result := make([]pendingTool, 0, len(tools))
+	for i := 0; i < len(tools); i++ {
+		pt := tools[i]
+		if !isCollapsibleRead(pt) {
+			result = append(result, pt)
+			continue
+		}
+		j := i + 1
+		for j < len(tools) && isCollapsibleRead(tools[j]) && tools[j].readFilePath == pt.readFilePath {
+			j++
+		}
+		count := j - i
+		if count < 2 {
+			result = append(result, pt)
+			continue
+		}
+		last := tools[j-1]
+		shortID := session.ToolShortID(last.toolUseID)
+		last.summary = fmt.Sprintf("[Read#%s ×%d] %s -> ok", shortID, count, pt.readDisplayPath)
+		result = append(result, last)
+		i = j - 1
+	}
+	return result
+}
+
+// isCollapsibleRead reports whether pt is a successful Read call carrying a
+// known file path — the precondition for taking part in a same-file-read
+// group at all.
+func isCollapsibleRead(pt pendingTool) bool {
+	return pt.name == session.ToolRead && pt.resultReceived && pt.resultSuccess && pt.readFilePath != ""
+}
+
 func flushPendingTools(pendingTools *[]pendingTool, rc renderContext) {
 	tools := *pendingTools
 	if !rc.opts.VerboseBash {
 		tools = collapseCCSessionTools(tools)
+		tools = collapseRetryLoops(tools)
 	}
+	tools = collapseSameFileReads(tools)
 	for _, pt := range tools {
 		fmt.Fprintf(rc.out, "  %s\n", pt.summary)
 		if rc.sink != nil {

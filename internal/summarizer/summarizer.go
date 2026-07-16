@@ -24,7 +24,11 @@ const (
 	unknownToolValueMaxLen = 60
 )
 
-func cleanPath(path string, cwd string) string {
+// CleanPath shortens an absolute file path for display: relative to cwd when
+// possible, otherwise the last two path segments. Exported so callers that
+// need to display the same short form outside a one-line tool summary (e.g.
+// formatter's same-file-Read collapsing) don't have to reimplement it.
+func CleanPath(path string, cwd string) string {
 	if path == "" || path == "?" {
 		return path
 	}
@@ -56,7 +60,7 @@ func SummarizeToolUse(name string, inp session.ToolInput, cwd string) string {
 		if path == "" {
 			path = "?"
 		}
-		short := cleanPath(path, cwd)
+		short := CleanPath(path, cwd)
 		var offset, limit int
 		var hasOffset, hasLimit bool
 		if o, ok := inp.Raw["offset"]; ok {
@@ -91,7 +95,7 @@ func SummarizeToolUse(name string, inp session.ToolInput, cwd string) string {
 		if path == "" {
 			path = "?"
 		}
-		short := cleanPath(path, cwd)
+		short := CleanPath(path, cwd)
 		return fmt.Sprintf("[%s] %s", name, short)
 
 	case session.ToolAgent:
