@@ -86,7 +86,36 @@ func writeBashAttemptsWithNarrationFixture(t *testing.T, before, after []bashAtt
 	return transcriptPath
 }
 
-func TestFormatRead_GivenConsecutiveFailedRetriesWithSameCommand_ThenCollapsesIntoFailedCountLine(t *testing.T) {
+func TestFormatRead_GivenConsecutiveFailedRetriesWithSameCommandAndSameError_ThenCollapsesIntoFailedCountLine(t *testing.T) {
+	transcriptPath := writeBashAttemptsFixture(t, []bashAttempt{
+		{toolID: "retry-tool-1", command: "npm test", description: "Run tests", success: false, resultText: "Error: connection refused"},
+		{toolID: "retry-tool-2", command: "npm test", description: "Run tests", success: false, resultText: "Error: connection refused"},
+		{toolID: "retry-tool-3", command: "npm test", description: "Run tests", success: false, resultText: "Error: connection refused"},
+	})
+
+	var out bytes.Buffer
+	if err := FormatRead(transcriptPath, 0, 0, FormatOptions{}, &out, claudecodec.Codec{}); err != nil {
+		t.Fatalf("FormatRead returned error: %v", err)
+	}
+	got := out.String()
+
+	want := "[Bash#ol-3] Run tests -> FAILED ×3: Error: connection refused"
+	if !strings.Contains(got, want) {
+		t.Fatalf("expected collapsed retry-loop line\nwant substring: %q\ngot:\n%s", want, got)
+	}
+	if strings.Count(got, "[Bash#") != 1 {
+		t.Fatalf("expected exactly one Bash summary line after collapsing, got:\n%s", got)
+	}
+}
+
+func TestFormatRead_GivenConsecutiveFailedRetriesWithSameCommandButDifferentErrors_ThenDoesNotCollapse(t *testing.T) {
+	// Regression guard: collapseRetryLoops used to key only on tool name +
+	// command signature + failure status, so three attempts of the same
+	// command failing with three *different* errors collapsed into one
+	// "FAILED ×3" line carrying only the last attempt's error — silently
+	// hiding the first two. That violates ADR-005's invariant that failure
+	// information is never lost, so attempts whose error excerpts differ
+	// must stay split even when the command matches.
 	transcriptPath := writeBashAttemptsFixture(t, []bashAttempt{
 		{toolID: "retry-tool-1", command: "npm test", description: "Run tests", success: false, resultText: "Error: 2 tests failed"},
 		{toolID: "retry-tool-2", command: "npm test", description: "Run tests", success: false, resultText: "Error: 3 tests failed"},
@@ -99,12 +128,16 @@ func TestFormatRead_GivenConsecutiveFailedRetriesWithSameCommand_ThenCollapsesIn
 	}
 	got := out.String()
 
-	want := "[Bash#ol-3] Run tests -> FAILED ×3: Error: TypeError: cannot read prop"
-	if !strings.Contains(got, want) {
-		t.Fatalf("expected collapsed retry-loop line\nwant substring: %q\ngot:\n%s", want, got)
+	if strings.Contains(got, "×") {
+		t.Fatalf("attempts with different error excerpts must not collapse, got:\n%s", got)
 	}
-	if strings.Count(got, "[Bash#") != 1 {
-		t.Fatalf("expected exactly one Bash summary line after collapsing, got:\n%s", got)
+	if strings.Count(got, "[Bash#") != 3 {
+		t.Fatalf("expected all three attempts to render individually, got:\n%s", got)
+	}
+	for _, want := range []string{"Error: 2 tests failed", "Error: 3 tests failed", "Error: TypeError: cannot read prop"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected every distinct error to remain visible, missing %q, got:\n%s", want, got)
+		}
 	}
 }
 
@@ -182,6 +215,81 @@ func TestFormatRead_GivenMixedSuccessAndFailureSameCommand_ThenDoesNotCollapse(t
 	}
 	if strings.Count(got, "[Bash#") != 3 {
 		t.Fatalf("expected all three attempts to render individually, got:\n%s", got)
+	}
+}
+
+func TestFormatRead_GivenCommandSharesWordPrefixWithoutTokenBoundary_ThenDoesNotCollapse(t *testing.T) {
+	// Regression guard: sameRetryCommand used a bare strings.HasPrefix, so
+	// "git add" matched as a prefix of "git add-on-something" even though
+	// "add" and "add-on-something" are different tokens — a false-positive
+	// retry match. A prefix only counts when the longer command's next
+	// character after the shorter one is a token boundary (whitespace).
+	transcriptPath := writeBashAttemptsFixture(t, []bashAttempt{
+		{toolID: "prefix-tool-1", command: "git add", description: "Stage file", success: false, resultText: "Error: pathspec 'a' did not match any files"},
+		{toolID: "prefix-tool-2", command: "git add-on-something", description: "Stage file", success: false, resultText: "Error: pathspec 'a' did not match any files"},
+	})
+
+	var out bytes.Buffer
+	if err := FormatRead(transcriptPath, 0, 0, FormatOptions{}, &out, claudecodec.Codec{}); err != nil {
+		t.Fatalf("FormatRead returned error: %v", err)
+	}
+	got := out.String()
+
+	if strings.Contains(got, "×") {
+		t.Fatalf("commands sharing a word prefix without a token boundary must not collapse, got:\n%s", got)
+	}
+	if strings.Count(got, "[Bash#") != 2 {
+		t.Fatalf("expected both attempts to render individually, got:\n%s", got)
+	}
+}
+
+func TestFormatRead_GivenBareCommandFollowedByLongerCommand_ThenDoesNotCollapse(t *testing.T) {
+	// Regression guard: when the first attempt's command is a bare word
+	// (e.g. "git"), the old prefix check let it absorb any later command
+	// starting with that word ("git add", "git commit", ...) into the same
+	// retry group, even though they are unrelated calls.
+	transcriptPath := writeBashAttemptsFixture(t, []bashAttempt{
+		{toolID: "bare-tool-1", command: "git", description: "Check status", success: false, resultText: "Error: not a git repository"},
+		{toolID: "bare-tool-2", command: "git add", description: "Stage file", success: false, resultText: "Error: not a git repository"},
+	})
+
+	var out bytes.Buffer
+	if err := FormatRead(transcriptPath, 0, 0, FormatOptions{}, &out, claudecodec.Codec{}); err != nil {
+		t.Fatalf("FormatRead returned error: %v", err)
+	}
+	got := out.String()
+
+	if strings.Contains(got, "×") {
+		t.Fatalf("a bare command must not absorb a longer, unrelated command, got:\n%s", got)
+	}
+	if strings.Count(got, "[Bash#") != 2 {
+		t.Fatalf("expected both attempts to render individually, got:\n%s", got)
+	}
+}
+
+func TestFormatRead_GivenRetryCommandExtendedWithTrailingArgs_ThenStillCollapses(t *testing.T) {
+	// A legitimate prefix retry — same base command, an extra trailing
+	// argument, separated by a token boundary — must keep collapsing. This
+	// guards against the token-boundary fix above becoming so strict it
+	// breaks the "only the trailing argument differs" case the prefix match
+	// was originally added for.
+	transcriptPath := writeBashAttemptsFixture(t, []bashAttempt{
+		{toolID: "extend-tool-1", command: "npm test", description: "Run tests", success: false, resultText: "Error: connection refused"},
+		{toolID: "extend-tool-2", command: "npm test -- --seed=42", description: "Run tests", success: false, resultText: "Error: connection refused"},
+	})
+
+	var out bytes.Buffer
+	if err := FormatRead(transcriptPath, 0, 0, FormatOptions{}, &out, claudecodec.Codec{}); err != nil {
+		t.Fatalf("FormatRead returned error: %v", err)
+	}
+	got := out.String()
+
+	want := "[Bash#ol-2] Run tests -> FAILED ×2: Error: connection refused"
+	if !strings.Contains(got, want) {
+		t.Fatalf("expected collapsed retry-loop line\nwant substring: %q\ngot:\n%s", want, got)
+	}
+	if strings.Count(got, "[Bash#") != 1 {
+		t.Fatalf("expected exactly one Bash summary line after collapsing, got:\n%s", got)
 	}
 }
 

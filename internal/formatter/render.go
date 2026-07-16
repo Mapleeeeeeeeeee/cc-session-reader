@@ -399,11 +399,12 @@ func collapseCCSessionTools(tools []pendingTool) []pendingTool {
 
 // collapseRetryLoops collapses a consecutive run (>=2) of pendingTools that
 // share the same tool name, the same (whitespace-normalized, prefix-matched)
-// retrySignature, and all FAILED, into a single "FAILED xN" line — a retry
-// loop that repeats the same failing call N times otherwise contributes N
-// near-identical lines. A run of exactly 1 is left untouched (no "x1" label);
-// a success or an unrelated call in between breaks the run so its individual
-// failure information is never silently dropped.
+// retrySignature, the same failure excerpt, and all FAILED, into a single
+// "FAILED xN" line — a retry loop that repeats the same failing call N times
+// otherwise contributes N near-identical lines. A run of exactly 1 is left
+// untouched (no "x1" label); a success, an unrelated call, or an attempt
+// whose error excerpt differs breaks the run so its individual failure
+// information is never silently dropped (ADR-005).
 func collapseRetryLoops(tools []pendingTool) []pendingTool {
 	result := make([]pendingTool, 0, len(tools))
 	for i := 0; i < len(tools); i++ {
@@ -415,7 +416,8 @@ func collapseRetryLoops(tools []pendingTool) []pendingTool {
 		j := i + 1
 		for j < len(tools) && isRetryEligible(tools[j]) &&
 			tools[j].name == pt.name &&
-			sameRetryCommand(pt.retrySignature, tools[j].retrySignature) {
+			sameRetryCommand(pt.retrySignature, tools[j].retrySignature) &&
+			retryFailureExcerpt(tools[j]) == retryFailureExcerpt(pt) {
 			j++
 		}
 		count := j - i
@@ -431,6 +433,17 @@ func collapseRetryLoops(tools []pendingTool) []pendingTool {
 	return result
 }
 
+// retryFailureExcerpt isolates the part of a failed pendingTool's summary
+// that appendToolResult appended after callLabel (the " -> FAILED: <excerpt>"
+// tail) so collapseRetryLoops can compare failure content across attempts.
+// Two attempts of the same command that fail with different errors must not
+// merge into one "FAILED xN" line showing only the last error — that would
+// silently drop the earlier, distinct failures (ADR-005: failure information
+// is never lost).
+func retryFailureExcerpt(pt pendingTool) string {
+	return strings.TrimPrefix(pt.summary, pt.callLabel)
+}
+
 // isRetryEligible reports whether pt finished with a failure and carries a
 // non-empty retry signature to key on — the precondition for taking part in
 // a retry-loop group at all.
@@ -439,8 +452,15 @@ func isRetryEligible(pt pendingTool) bool {
 }
 
 // sameRetryCommand reports whether a and b identify the same retried call:
-// exact match, or one is a non-empty prefix of the other (covers "only the
-// trailing argument differs" retries, e.g. a script rerun with a new seed).
+// exact match, or one is a non-empty prefix of the other ending exactly at a
+// token boundary and already committing to more than a bare program name
+// (covers "only the trailing argument differs" retries, e.g. a script rerun
+// with a new seed). Both conditions matter: the boundary check keeps "git
+// add" from matching "git add-on-thing" — they share a byte prefix but
+// "add" and "add-on-thing" are different tokens — and the multi-token
+// requirement keeps a bare "git" from absorbing "git add" or "git commit":
+// a single bare word is too generic to identify which call is being
+// retried, so it can't anchor a prefix match on its own.
 func sameRetryCommand(a, b string) bool {
 	if a == b {
 		return true
@@ -449,7 +469,10 @@ func sameRetryCommand(a, b string) bool {
 	if len(longer) < len(shorter) {
 		shorter, longer = longer, shorter
 	}
-	return shorter != "" && strings.HasPrefix(longer, shorter)
+	if shorter == "" || !strings.HasPrefix(longer, shorter) {
+		return false
+	}
+	return longer[len(shorter)] == ' ' && strings.Contains(shorter, " ")
 }
 
 // formatRetryCollapse rebuilds the collapsed retry-loop line from the last
@@ -460,7 +483,7 @@ func sameRetryCommand(a, b string) bool {
 // inserting the count there mirrors the string-surgery injectShortID already
 // uses to tag summaries.
 func formatRetryCollapse(last pendingTool, count int) string {
-	tail := strings.TrimPrefix(last.summary, last.callLabel)
+	tail := retryFailureExcerpt(last)
 	tail = strings.Replace(tail, "FAILED", fmt.Sprintf("FAILED ×%d", count), 1)
 	return last.callLabel + tail
 }
