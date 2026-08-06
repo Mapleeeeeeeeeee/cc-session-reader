@@ -1,13 +1,23 @@
 # cc-session-reader
 
-讀取 Claude Code session 記錄，產出精簡摘要的 CLI 工具。
-每個 tool call 壓成一行摘要（tool name + 關鍵參數 + result 狀態），對話文字完整保留。
-純靜態提取，不使用 LLM。
+[![CI](https://github.com/Mapleeeeeeeeeee/cc-session-reader/actions/workflows/ci.yml/badge.svg)](https://github.com/Mapleeeeeeeeeee/cc-session-reader/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Mapleeeeeeeeeee/cc-session-reader?logo=github)](https://github.com/Mapleeeeeeeeeee/cc-session-reader/releases)
+[![Go Reference](https://pkg.go.dev/badge/github.com/Mapleeeeeeeeeee/cc-session-reader.svg)](https://pkg.go.dev/github.com/Mapleeeeeeeeeee/cc-session-reader)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Mapleeeeeeeeeee/cc-session-reader)](https://goreportcard.com/report/github.com/Mapleeeeeeeeeee/cc-session-reader)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/Mapleeeeeeeeeee/cc-session-reader)](go.mod)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](https://github.com/Mapleeeeeeeeeee/cc-session-reader/releases)
 
-token reduction 視 session 組成而定：tool I/O 為主的 session 典型可達 **80–88%**；
-以大型 plan 文件或純對話為主的 session 較低（實測約 40–65%），因為使用者／assistant 文字會完整保留、不壓縮。
+**English** | [繁體中文](README.zh-TW.md)
 
-## 安裝
+A CLI tool that reads Claude Code session transcripts and emits a compact summary.
+Every tool call is collapsed into a single line (tool name + key arguments + result status), while conversation text is preserved in full.
+Purely static extraction — no LLM involved.
+
+Token reduction depends on what the session is made of: tool-I/O-heavy sessions typically reach **80–88%**;
+sessions dominated by large plan documents or plain conversation reduce less (measured around 40–65%), because user/assistant text is kept verbatim and never compressed.
+
+## Installation
 
 ### macOS / Linux
 
@@ -15,8 +25,8 @@ token reduction 視 session 組成而定：tool I/O 為主的 session 典型可�
 curl -fsSL https://raw.githubusercontent.com/Mapleeeeeeeeeee/cc-session-reader/main/install.sh | bash
 ```
 
-腳本會自動下載對應平台的 binary 並放到 `~/.local/bin/cc-session`（可透過 `INSTALL_DIR` 環境變數覆蓋），
-並預設安裝 Claude Code Skill。不需要 Skill 時加 `--no-skill`。
+The script downloads the binary for your platform into `~/.local/bin/cc-session` (override with the `INSTALL_DIR` environment variable)
+and installs the Claude Code Skill by default. Pass `--no-skill` if you don't want the Skill.
 
 ### Windows (PowerShell)
 
@@ -24,49 +34,49 @@ curl -fsSL https://raw.githubusercontent.com/Mapleeeeeeeeeee/cc-session-reader/m
 irm https://raw.githubusercontent.com/Mapleeeeeeeeeee/cc-session-reader/main/install.ps1 | iex
 ```
 
-安裝到 `$env:LOCALAPPDATA\cc-session\`，互動模式下詢問是否加入 PATH 和安裝 Skill。
+Installs into `$env:LOCALAPPDATA\cc-session\`; in interactive mode it asks whether to add the directory to PATH and install the Skill.
 
-### 其他安裝方式
+### Other installation methods
 
-- **下載 Binary**：從 [GitHub Releases](https://github.com/Mapleeeeeeeeeee/cc-session-reader/releases) 下載對應平台壓縮檔，解壓後放到 PATH。
-- **go install**：`go install github.com/Mapleeeeeeeeeee/cc-session-reader/cmd/cc-session@latest`（binary 放在 `$GOPATH/bin`）。
-- **僅安裝 Skill**：`mkdir -p ~/.claude/skills/cc-session && curl -o ~/.claude/skills/cc-session/SKILL.md https://raw.githubusercontent.com/Mapleeeeeeeeeee/cc-session-reader/main/SKILL.md`
+- **Download a binary**: grab the archive for your platform from [GitHub Releases](https://github.com/Mapleeeeeeeeeee/cc-session-reader/releases), extract it, and put it on your PATH.
+- **go install**: `go install github.com/Mapleeeeeeeeeee/cc-session-reader/cmd/cc-session@latest` (binary lands in `$GOPATH/bin`).
+- **Skill only**: `mkdir -p ~/.claude/skills/cc-session && curl -o ~/.claude/skills/cc-session/SKILL.md https://raw.githubusercontent.com/Mapleeeeeeeeeee/cc-session-reader/main/SKILL.md`
 
-## 子命令
+## Subcommands
 
-| 命令 | 說明 | 範例 |
-|------|------|------|
-| `list` | 瀏覽最近的 session（用過 cc-session 的標 `[refs]`） | `cc-session list -n 10 -p myproject` |
-| `read` | 完整對話 + inline tool 摘要 | `cc-session read <id> -max-lines 200` |
-| `context` | 精簡注入格式，含 session metadata header | `cc-session context <id>` |
-| `inherit` | 分頁 context 繼承（每頁 ≤20K chars，自動追蹤進度，`-reset` 重來） | `cc-session inherit <id>` |
-| `stats` | 字元與 token 分佈統計及壓縮比 | `cc-session stats <id> -no-tokens` |
-| `audit` | 取樣被過濾的內容，確認沒漏掉重要資訊 | `cc-session audit <id> -n 10` |
-| `expand` | 展開特定 tool call 的完整 input/result | `cc-session expand <id> uCVa` |
-| `usage` | 查看此 CLI 的使用紀錄 | `cc-session usage -cmd read` |
+| Command | Description | Example |
+|---------|-------------|---------|
+| `list` | Browse recent sessions (those that already used cc-session are marked `[refs]`) | `cc-session list -n 10 -p myproject` |
+| `read` | Full conversation with inline tool summaries | `cc-session read <id> -max-lines 200` |
+| `context` | Compact injection format, including a session metadata header | `cc-session context <id>` |
+| `inherit` | Paginated context inheritance (≤20K chars per page, progress tracked automatically, `-reset` starts over) | `cc-session inherit <id>` |
+| `stats` | Character and token distribution plus compression ratio | `cc-session stats <id> -no-tokens` |
+| `audit` | Sample the filtered-out content to confirm nothing important was dropped | `cc-session audit <id> -n 10` |
+| `expand` | Expand the full input/result of a specific tool call | `cc-session expand <id> uCVa` |
+| `usage` | Inspect this CLI's own usage history | `cc-session usage -cmd read` |
 
-Session ID 支援 prefix match，通常前 8 碼就夠。`read` 和 `context` 預設截斷 200 行（`-max-lines` 可調），截斷時印出總行數和建議的下一段 offset。
+Session IDs support prefix matching — the first 8 characters are usually enough. `read` and `context` truncate at 200 lines by default (`-max-lines` adjusts it); when truncated they print the total line count and the suggested offset for the next chunk.
 
-`list` 來源是 session metadata（`~/.claude/usage-data/session-meta/`），數量少於磁碟全部 transcript；`read`／`context`／`stats` 可直接存取任何 transcript，不限於 `list` 列出的。
+`list` reads from session metadata (`~/.claude/usage-data/session-meta/`), so it shows fewer entries than the transcripts on disk; `read`/`context`/`stats` can access any transcript, not just the ones `list` shows.
 
-### Verbose flags（適用 read / context）
+### Verbose flags (for read / context)
 
-| Flag | 效果 |
-|------|------|
-| `-verbose-agents` | 完整保留 Agent subagent 回傳結果（預設只留一行摘要） |
-| `-verbose-bash` | 完整顯示 Bash 工具的 stdout/stderr（預設摘要） |
-| `-verbose-thinking` | 顯示 assistant 的 thinking 區塊（預設隱藏） |
-| `-verbose-commands` | 展開 slash／bash 指令完整輸出（預設只留 marker） |
+| Flag | Effect |
+|------|--------|
+| `-verbose-agents` | Keep Agent subagent results in full (default: one-line summary) |
+| `-verbose-bash` | Show full stdout/stderr from the Bash tool (default: summarized) |
+| `-verbose-thinking` | Show assistant thinking blocks (hidden by default) |
+| `-verbose-commands` | Expand full output of slash/bash commands (default: marker only) |
 
-## 壓縮邏輯
+## Compression logic
 
-工具呼叫、Bash 輸出、Agent 結果、thinking 都預設壓成摘要或一行 marker；User／Assistant 對話文字完整保留。當 session 內有 cc-session inherit/read/context 呼叫時，連續呼叫壓成一行（如 `(cc-session#id: inherited session X here, N lines omitted)`），`-verbose-bash` 跳過此壓縮。舊 session 裡的 `cc-session inject` 呼叫（改名前的舊命令名）也會比照壓成一行，維持 `injected session X here` 的措辭。Skill injection、teammate warning、command injection、Context Usage 區塊、system-reminder 等 injection 類型會額外壓縮或整段移除，減少 context 噪音。詳細過濾規則見 [SKILL.md](SKILL.md)。
+Tool calls, Bash output, Agent results, and thinking blocks are collapsed into summaries or one-line markers by default; user/assistant conversation text is preserved in full. When a session contains cc-session inherit/read/context calls, consecutive calls are collapsed into a single line (e.g. `(cc-session#id: inherited session X here, N lines omitted)`); `-verbose-bash` skips this collapsing. `cc-session inject` calls in older sessions (the pre-rename command name) are collapsed the same way, keeping the `injected session X here` wording. Injection types such as Skill injection, teammate warnings, command injection, Context Usage blocks, and system-reminders are compressed further or removed entirely to cut context noise. See [SKILL.md](SKILL.md) for the detailed filtering rules.
 
-## Config 設定
+## Configuration
 
-> 💡 **提示**：此設定檔為**選擇性（Optional）**。若未配置，僅會影響 `stats` 與 `benchmark` 的 Token 計算；其他讀取、過濾與注入等核心功能均不受影響。
+> 💡 **Note**: this config file is **optional**. Without it, only the token calculations in `stats` and `benchmark` are affected; reading, filtering, injection, and every other core feature work fine.
 
-若需要 Token 統計或自訂行為，可在 `~/.claude/skills/cc-session/config.json` 進行配置。您可以使用專案根目錄的 `config.json.template` 作為範本建立設定：
+If you want token statistics or custom behavior, configure `~/.claude/skills/cc-session/config.json`. You can use `config.json.template` from the repository root as a starting point:
 
 ```bash
 mkdir -p ~/.claude/skills/cc-session
@@ -74,7 +84,7 @@ curl -o ~/.claude/skills/cc-session/config.json \
   https://raw.githubusercontent.com/Mapleeeeeeeeeee/cc-session-reader/main/config.json.template
 ```
 
-該設定檔支援以下欄位：
+The config file supports these fields:
 
 ```json
 {
@@ -84,34 +94,34 @@ curl -o ~/.claude/skills/cc-session/config.json \
 }
 ```
 
-| 欄位 | 用途 |
-|------|------|
-| `anthropic_api_key_file` | 指向含 `ANTHROPIC_API_KEY` 的檔案路徑，啟用精確 token 計算 |
-| `integration_test_session` | 本地 integration test 使用的 session ID |
-| `no_usage` | 設為 `true` 停用 CLI usage 追蹤（不寫入 `usage.jsonl`） |
+| Field | Purpose |
+|-------|---------|
+| `anthropic_api_key_file` | Path to a file containing `ANTHROPIC_API_KEY`, enabling exact token counting |
+| `integration_test_session` | Session ID used by local integration tests |
+| `no_usage` | Set to `true` to disable CLI usage tracking (nothing written to `usage.jsonl`) |
 
-也可透過環境變數 `CC_SESSION_NO_USAGE=1` 達到相同效果（覆蓋 config.json 設定）。
+The environment variable `CC_SESSION_NO_USAGE=1` has the same effect and overrides the config.json setting.
 
-## 架構
+## Architecture
 
 ```
-cmd/cc-session/       CLI 入口，子命令路由
+cmd/cc-session/       CLI entry point, subcommand routing
 internal/
-  claudecodec/        JSONL 讀取、noise 過濾、raw→event 解析（TranscriptReader / HeaderScanner 介面）
-  session/            Domain model（Event, ToolUse, ToolResult, ToolInput）
-  parser/             Session 搜尋（找 transcript、解析 ID、metadata）
-  summarizer/         Tool call → 一行摘要
-  formatter/          輸出格式化（read mode、context mode）
-  analyzer/           Stats 計算、audit 取樣
+  claudecodec/        JSONL reading, noise filtering, raw→event parsing (TranscriptReader / HeaderScanner interfaces)
+  session/            Domain model (Event, ToolUse, ToolResult, ToolInput)
+  parser/             Session lookup (find transcript, parse IDs, metadata)
+  summarizer/         Tool call → one-line summary
+  formatter/          Output formatting (read mode, context mode)
+  analyzer/           Stats computation, audit sampling
   tokens/             Anthropic token counting API
-  inject/             分頁注入狀態管理
-  tracker/            CLI usage 追蹤
-  jsonutil/           JSON map 工具函數
+  inject/             Paginated injection state management
+  tracker/            CLI usage tracking
+  jsonutil/           JSON map helper functions
 ```
 
-`claudecodec` 是唯一與 JSONL 格式耦合的套件；其餘套件透過 `TranscriptReader` 和 `HeaderScanner` 介面存取 session 資料。
+`claudecodec` is the only package coupled to the JSONL format; every other package accesses session data through the `TranscriptReader` and `HeaderScanner` interfaces.
 
-## 移除
+## Uninstall
 
 ```bash
 rm ~/.local/bin/cc-session
@@ -120,7 +130,11 @@ rm -rf ~/.claude/skills/cc-session
 
 ## Contributing
 
-遇到 bug 或有功能需求，歡迎開 issue：
+Found a bug or want a feature? Open an issue:
 https://github.com/Mapleeeeeeeeeee/cc-session-reader/issues
 
-Pull requests 也歡迎。
+Pull requests are welcome too.
+
+## License
+
+[Apache License 2.0](LICENSE)
