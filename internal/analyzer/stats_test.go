@@ -52,7 +52,7 @@ func TestComputeStats_SeparatesRawFromFilteredByContent(t *testing.T) {
 	assertContains(t, "FilteredText", result.FilteredText, "hello user")
 	assertContains(t, "FilteredText", result.FilteredText, "hi there")
 	assertContains(t, "FilteredText", result.FilteredText, "[Bash] Echo ok")
-	assertContains(t, "FilteredText", result.FilteredText, " -> ok: tool-result-body")
+	assertContains(t, "FilteredText", result.FilteredText, " -> tool-result-body")
 	// Verbose raw content must NOT leak into the filtered stream.
 	assertNotContains(t, "FilteredText", result.FilteredText, "sys-noise-body")
 	assertNotContains(t, "FilteredText", result.FilteredText, `"command"`)

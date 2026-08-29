@@ -56,7 +56,7 @@ func TestSuccessExcerpt_GivenNoisyFirstLine_WhenSummarized_ThenSkipsToTheAnswer(
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			result := ToolResult{Success: true, RawName: ToolBash, Text: tc.output}
-			want := " -> ok: " + tc.want
+			want := " -> " + tc.want
 			if got := result.Summary(); got != want {
 				t.Errorf("Summary() = %q, want %q", got, want)
 			}
@@ -76,7 +76,7 @@ func TestSuccessExcerpt_GivenProseUsageBanner_WhenSummarized_ThenStillReportsIt(
 		Text:    "Work seamlessly with GitHub from the command line.\n{\"state\":\"success\"}",
 	}
 
-	if got, want := result.Summary(), " -> ok: Work seamlessly with GitHub from the command line."; got != want {
+	if got, want := result.Summary(), " -> Work seamlessly with GitHub from the command line."; got != want {
 		t.Errorf("Summary() = %q, want %q", got, want)
 	}
 }
@@ -84,7 +84,7 @@ func TestSuccessExcerpt_GivenProseUsageBanner_WhenSummarized_ThenStillReportsIt(
 func TestSuccessExcerpt_GivenEveryLineIsNoise_WhenSummarized_ThenKeepsTheFirstLineRatherThanDroppingIt(t *testing.T) {
 	result := ToolResult{Success: true, RawName: ToolBash, Text: "=== 規模 ===\n--- HEAD ---"}
 
-	if got, want := result.Summary(), " -> ok: === 規模 ==="; got != want {
+	if got, want := result.Summary(), " -> === 規模 ==="; got != want {
 		t.Errorf("Summary() = %q, want %q", got, want)
 	}
 }

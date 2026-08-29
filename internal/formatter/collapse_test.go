@@ -99,7 +99,7 @@ func TestFormatRead_GivenConsecutiveFailedRetriesWithSameCommandAndSameError_The
 	}
 	got := out.String()
 
-	want := "[Bash#ol-3] Run tests -> FAILED ×3: Error: connection refused"
+	want := "[Bash#ol-3] Run tests | npm test -> FAILED ×3: Error: connection refused"
 	if !strings.Contains(got, want) {
 		t.Fatalf("expected collapsed retry-loop line\nwant substring: %q\ngot:\n%s", want, got)
 	}
@@ -154,7 +154,7 @@ func TestFormatRead_GivenSingleFailedBashCall_ThenDoesNotShowMultiplier(t *testi
 	}
 	got := out.String()
 
-	want := "[Bash#ol-1] Run tests -> FAILED: Error: 1 test failed"
+	want := "[Bash#ol-1] Run tests | npm test -> FAILED: Error: 1 test failed"
 	if !strings.Contains(got, want) {
 		t.Fatalf("expected uncollapsed single failure line\nwant substring: %q\ngot:\n%s", want, got)
 	}
@@ -284,7 +284,7 @@ func TestFormatRead_GivenRetryCommandExtendedWithTrailingArgs_ThenStillCollapses
 	}
 	got := out.String()
 
-	want := "[Bash#ol-2] Run tests -> FAILED ×2: Error: connection refused"
+	want := "[Bash#ol-2] Run tests | npm test -> FAILED ×2: Error: connection refused"
 	if !strings.Contains(got, want) {
 		t.Fatalf("expected collapsed retry-loop line\nwant substring: %q\ngot:\n%s", want, got)
 	}
@@ -369,7 +369,7 @@ func TestFormatRead_GivenConsecutiveReadsOfSameFile_ThenCollapsesIntoReadCountLi
 	}
 	got := out.String()
 
-	want := "[Read#ol-3 ×3] src/main.go -> ok"
+	want := "[Read#ol-3 ×3] src/main.go"
 	if !strings.Contains(got, want) {
 		t.Fatalf("expected collapsed same-file-read line\nwant substring: %q\ngot:\n%s", want, got)
 	}

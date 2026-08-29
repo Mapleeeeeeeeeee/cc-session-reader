@@ -232,6 +232,14 @@ const (
 	failureExcerptMaxRunes = 200
 )
 
+// Summary renders the "-> ..." tail appended after a tool call's label.
+//
+// Success is the default state and carries no marker (ADR-007 decision 3):
+// 1,550 of 1,604 tool calls in the measured session succeeded, so naming it
+// on every line taxed every line for information the reader already assumes.
+// Only FAILED is announced. A successful call still shows its excerpt or diff
+// stat, introduced by the same "->" arrow so the call and its result stay
+// visually separable.
 func (r ToolResult) Summary() string {
 	if r.Success {
 		if diff := r.diffSummary(); diff != "" {
@@ -239,12 +247,12 @@ func (r ToolResult) Summary() string {
 		}
 		switch r.RawName {
 		case ToolRead, ToolWrite, ToolEdit, ToolAgent:
-			return fmt.Sprintf(" -> %s", r.Status())
+			return ""
 		}
 		if excerpt := firstMeaningfulSuccessLine(r.Text, successExcerptMaxRunes); excerpt != "" {
-			return fmt.Sprintf(" -> %s: %s", r.Status(), excerpt)
+			return fmt.Sprintf(" -> %s", excerpt)
 		}
-		return fmt.Sprintf(" -> %s", r.Status())
+		return ""
 	}
 	if excerpt := firstMeaningfulErrorLine(r.Text, failureExcerptMaxRunes); excerpt != "" {
 		return fmt.Sprintf(" -> %s: %s", r.Status(), excerpt)
@@ -260,10 +268,16 @@ func (r ToolResult) diffSummary() string {
 	if r.DiffStat == nil {
 		return ""
 	}
-	if r.DiffStat.IsNewFile {
-		return fmt.Sprintf(" -> %s (new file, %d lines)", r.Status(), r.DiffStat.NewFileLines)
+	// A failed Edit/Write keeps its FAILED marker; a successful one shows the
+	// diff stat alone, since the stat itself is proof the edit landed.
+	status := ""
+	if !r.Success {
+		status = " " + r.Status()
 	}
-	summary := fmt.Sprintf(" -> %s (+%d, -%d @ L%d", r.Status(), r.DiffStat.Additions, r.DiffStat.Deletions, r.DiffStat.NewStartLine)
+	if r.DiffStat.IsNewFile {
+		return fmt.Sprintf(" ->%s (new file, %d lines)", status, r.DiffStat.NewFileLines)
+	}
+	summary := fmt.Sprintf(" ->%s (+%d, -%d @ L%d", status, r.DiffStat.Additions, r.DiffStat.Deletions, r.DiffStat.NewStartLine)
 	if r.DiffStat.HunkCount > 1 {
 		summary += fmt.Sprintf(", %d hunks", r.DiffStat.HunkCount)
 	}

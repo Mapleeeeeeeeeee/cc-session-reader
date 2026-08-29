@@ -443,7 +443,7 @@ func TestFormatRead_WhenToolResultHasNoPendingTool_ThenStillWritesSummary(t *tes
 		t.Fatalf("FormatRead returned error: %v", err)
 	}
 
-	want := "  [Bash] -> ok: orphan output\n\n"
+	want := "  [Bash] -> orphan output\n\n"
 	if got := out.String(); got != want {
 		t.Fatalf("FormatRead orphan output mismatch\nwant:\n%q\ngot:\n%q", want, got)
 	}
@@ -592,8 +592,8 @@ func TestFormatReadEvents_WhenVerboseBash_ThenNonBashToolsStillCompressed(t *tes
 	if strings.Contains(got, "line4") {
 		t.Fatalf("non-Bash tool should remain compressed with verbose-bash, got:\n%s", got)
 	}
-	if !strings.Contains(got, "-> ok") {
-		t.Fatalf("non-Bash tool summary should contain ok status, got:\n%s", got)
+	if !strings.Contains(got, "[Read#ol-1] tmp/foo.go") {
+		t.Fatalf("non-Bash tool should still render its one-line summary, got:\n%s", got)
 	}
 }
 
@@ -829,7 +829,7 @@ func TestAppendToolResult_WhenParallelToolCalls_ThenMatchesByToolUseID(t *testin
 				{toolUseID: "aaa", summary: "[Read] main.go", name: "Read"},
 				{toolUseID: "bbb", summary: "[Read] util.go", name: "Read"},
 			},
-			result:      session.ToolResult{ToolUseID: "aaa", Success: true},
+			result:      session.ToolResult{ToolUseID: "aaa", Success: true, RawName: "Bash", Text: "attached"},
 			wantMatch:   0,
 			wantNoMatch: 1,
 		},
@@ -839,7 +839,7 @@ func TestAppendToolResult_WhenParallelToolCalls_ThenMatchesByToolUseID(t *testin
 				{toolUseID: "aaa", summary: "[Read] main.go", name: "Read"},
 				{toolUseID: "bbb", summary: "[Read] util.go", name: "Read"},
 			},
-			result:      session.ToolResult{ToolUseID: "", Success: true},
+			result:      session.ToolResult{ToolUseID: "", Success: true, RawName: "Bash", Text: "attached"},
 			wantMatch:   1,
 			wantNoMatch: 0,
 		},
@@ -849,14 +849,14 @@ func TestAppendToolResult_WhenParallelToolCalls_ThenMatchesByToolUseID(t *testin
 				{toolUseID: "aaa", summary: "[Read] main.go", name: "Read"},
 				{toolUseID: "bbb", summary: "[Read] util.go", name: "Read"},
 			},
-			result:      session.ToolResult{ToolUseID: "zzz", Success: true},
+			result:      session.ToolResult{ToolUseID: "zzz", Success: true, RawName: "Bash", Text: "attached"},
 			wantMatch:   1,
 			wantNoMatch: 0,
 		},
 		{
 			name:        "given no pending tools then creates orphan entry",
 			pending:     []pendingTool{},
-			result:      session.ToolResult{ToolUseID: "aaa", Success: true, RawName: "Bash"},
+			result:      session.ToolResult{ToolUseID: "aaa", Success: true, RawName: "Bash", Text: "attached"},
 			wantMatch:   -1,
 			wantNoMatch: -1,
 		},
@@ -873,16 +873,16 @@ func TestAppendToolResult_WhenParallelToolCalls_ThenMatchesByToolUseID(t *testin
 				if len(pending) != 1 {
 					t.Fatalf("expected 1 orphan entry, got %d", len(pending))
 				}
-				if !strings.Contains(pending[0].summary, "-> ok") {
+				if !strings.Contains(pending[0].summary, "-> attached") {
 					t.Fatalf("orphan entry missing result summary, got: %q", pending[0].summary)
 				}
 				return
 			}
 
-			if !strings.Contains(pending[tt.wantMatch].summary, "-> ok") {
+			if !strings.Contains(pending[tt.wantMatch].summary, "-> attached") {
 				t.Fatalf("pending[%d] should have result summary, got: %q", tt.wantMatch, pending[tt.wantMatch].summary)
 			}
-			if tt.wantNoMatch >= 0 && strings.Contains(pending[tt.wantNoMatch].summary, "-> ok") {
+			if tt.wantNoMatch >= 0 && strings.Contains(pending[tt.wantNoMatch].summary, "-> attached") {
 				t.Fatalf("pending[%d] should NOT have result summary, got: %q", tt.wantNoMatch, pending[tt.wantNoMatch].summary)
 			}
 		})

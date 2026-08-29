@@ -48,11 +48,14 @@ func CleanPath(path string, cwd string) string {
 func SummarizeToolUse(name string, inp session.ToolInput, cwd string) string {
 	switch name {
 	case session.ToolBash:
+		cmd := inp.String("command")
 		desc := inp.String("description")
 		if desc != "" {
+			if verb := commandVerb(cmd); verb != "" {
+				return fmt.Sprintf("[Bash] %s | %s", desc, session.Truncate(verb, maxVerbLen))
+			}
 			return fmt.Sprintf("[Bash] %s", desc)
 		}
-		cmd := inp.String("command")
 		return fmt.Sprintf("[Bash] %s", session.Truncate(cmd, maxCommandLen))
 
 	case session.ToolRead:

@@ -60,7 +60,7 @@ func TestCLI_WhenSessionExists_ThenListReadContextAndAuditWorkEndToEnd(t *testin
 			want: []string{
 				"[05-28 00:00] user:\nhello",
 				"[05-28 00:00] assistant:\nhi",
-				"[Bash#ol-1] Echo ok -> ok: ok",
+				"[Bash#ol-1] Echo ok",
 			},
 		},
 		{
@@ -70,7 +70,7 @@ func TestCLI_WhenSessionExists_ThenListReadContextAndAuditWorkEndToEnd(t *testin
 				"# Session 12345678 | proj | 1m",
 				"U: hello",
 				"A: hi",
-				"[Bash#ol-1] Echo ok -> ok: ok",
+				"[Bash#ol-1] Echo ok",
 			},
 		},
 		{
