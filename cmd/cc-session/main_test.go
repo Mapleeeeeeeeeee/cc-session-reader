@@ -350,7 +350,7 @@ func TestRunRead_WhenSessionExists_ThenWritesOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runRead returned error: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "[05-28 00:00] user:\nhello") {
+	if !strings.Contains(stdout.String(), "[00:00:00] user:\nhello") {
 		t.Fatalf("stdout missing read output:\n%s", stdout.String())
 	}
 }
@@ -1144,18 +1144,19 @@ func TestRunRead_GivenLargeSession_WhenOffsetFlag_ThenSkipsLines(t *testing.T) {
 	}
 	var stdout, stderr bytes.Buffer
 	// -max-lines 0 (unlimited) so we see whether offset works independently.
-	if err := runRead([]string{sid, "-offset", "3", "-max-lines", "0"}, &stdout, &stderr, store, testReader); err != nil {
-		t.Fatalf("runRead with -offset 3 returned error: %v", err)
+	// Offset 5 skips the two-line day marker plus the first message block
+	// (header, body, blank).
+	if err := runRead([]string{sid, "-offset", "5", "-max-lines", "0"}, &stdout, &stderr, store, testReader); err != nil {
+		t.Fatalf("runRead with -offset 5 returned error: %v", err)
 	}
 	got := stdout.String()
-	// With offset=3 the first message block (lines 0-2: header, body, blank) is
-	// skipped. "msgxxxxx 0" (message body on line 1) must be absent.
+	// "msgxxxxx 0" (message body) must be absent.
 	if strings.Contains(got, "msgxxxxx 0") {
-		t.Fatalf("offset=3 must skip message 0 body; still present:\n%s", got)
+		t.Fatalf("offset=5 must skip message 0 body; still present:\n%s", got)
 	}
 	// Later messages must still appear.
 	if !strings.Contains(got, "msgxxxxx 5") {
-		t.Fatalf("offset=3 output must include message 5:\n%s", got)
+		t.Fatalf("offset=5 output must include message 5:\n%s", got)
 	}
 }
 

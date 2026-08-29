@@ -35,6 +35,9 @@ type renderContext struct {
 	opts     FormatOptions
 	out      io.Writer
 	sink     ContentSink
+	// ts renders message-header clock times and the day markers that carry
+	// the date the per-message header no longer repeats (ADR-007 decision 4).
+	ts *timestampWriter
 }
 
 // Content categories reported to ContentSink. The values match the keys

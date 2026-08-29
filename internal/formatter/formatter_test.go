@@ -28,10 +28,10 @@ func TestFormatRead_WhenTranscriptHasDialogueAndToolUse_ThenWritesReadableTimeli
 	if !strings.Contains(got, "[Bash#ol-1] Echo ok") {
 		t.Fatalf("FormatRead output missing short ID tag in tool summary\ngot:\n%q", got)
 	}
-	if !strings.Contains(got, "[05-28 00:00] user:\nhello") {
+	if !strings.Contains(got, "[00:00:00] user:\nhello") {
 		t.Fatalf("FormatRead output missing user message\ngot:\n%q", got)
 	}
-	if !strings.Contains(got, "[05-28 00:00] assistant:\nhi") {
+	if !strings.Contains(got, "[00:00:01] assistant:\nhi") {
 		t.Fatalf("FormatRead output missing assistant message\ngot:\n%q", got)
 	}
 }
@@ -106,7 +106,7 @@ func TestFormatContext_WhenSessionMetadataMissing_ThenWritesMinimalHeaderFromTra
 // The leading "mode" line also guards a bug found during manual acceptance:
 // real transcripts open with noise entries (mode/permission-mode/bridge-
 // session/...) that carry no "timestamp" field, so reading events[0].Timestamp
-// directly produced "??-?? ??:??" even though a real timestamp was a few
+// directly produced "??:??:??" even though a real timestamp was a few
 // lines down.
 func TestFormatContext_WhenSessionMetadataMissingAndTranscriptHasNoCwd_ThenDerivesProjectFromTranscriptDirectory(t *testing.T) {
 	root := t.TempDir()
@@ -144,20 +144,20 @@ func TestFormatRead_WhenMaxLinesReached_ThenStopsWithTruncationMessage(t *testin
 	transcriptPath, _ := writeFormatterFixture(t)
 
 	var out bytes.Buffer
-	if err := FormatRead(transcriptPath, 3, 0, FormatOptions{}, &out, claudecodec.Codec{}); err != nil {
+	if err := FormatRead(transcriptPath, 4, 0, FormatOptions{}, &out, claudecodec.Codec{}); err != nil {
 		t.Fatalf("FormatRead returned error: %v", err)
 	}
 
 	got := out.String()
 	// First 3 lines of the user block must be present.
-	if !strings.Contains(got, "[05-28 00:00] user:\nhello") {
+	if !strings.Contains(got, "[00:00:00] user:\nhello") {
 		t.Fatalf("FormatRead truncated output missing user block\ngot:\n%q", got)
 	}
 	// Truncation message must name the resume offset so the user can continue.
-	if !strings.Contains(got, "--- truncated at line 3") {
+	if !strings.Contains(got, "--- truncated at line 4") {
 		t.Fatalf("FormatRead truncated output missing truncation marker\ngot:\n%q", got)
 	}
-	if !strings.Contains(got, "use --offset 3 to continue") {
+	if !strings.Contains(got, "use --offset 4 to continue") {
 		t.Fatalf("FormatRead truncated output missing offset continuation hint\ngot:\n%q", got)
 	}
 	// No assistant content should appear (it starts after line 3).
@@ -206,7 +206,7 @@ func TestFormatRead_WhenVerboseThinkingDisabled_ThenOmitsThinkingBlocks(t *testi
 	}
 	// The surrounding assistant text must still render so we know the fixture
 	// itself is non-empty and the absence above is meaningful.
-	if !strings.Contains(got, "[05-28 00:00] assistant:\nfinal answer") {
+	if !strings.Contains(got, "[00:00:00] assistant:\nfinal answer") {
 		t.Fatalf("read output missing assistant text\ngot:\n%q", got)
 	}
 }
@@ -224,10 +224,10 @@ func TestFormatRead_WhenVerboseThinkingEnabled_ThenRendersEachThinkingBlock(t *t
 	}
 
 	got := out.String()
-	if !strings.Contains(got, "[05-28 00:00] thinking:\n"+thinkingFixtureFirstBlock) {
+	if !strings.Contains(got, "[00:00:00] thinking:\n"+thinkingFixtureFirstBlock) {
 		t.Fatalf("verbose-thinking read output missing first thinking block\ngot:\n%q", got)
 	}
-	if !strings.Contains(got, "[05-28 00:00] thinking:\n"+thinkingFixtureSecondBlock) {
+	if !strings.Contains(got, "[00:00:00] thinking:\n"+thinkingFixtureSecondBlock) {
 		t.Fatalf("verbose-thinking read output missing second thinking block\ngot:\n%q", got)
 	}
 	// Thinking precedes the assistant text in the output (timeline order).
@@ -616,7 +616,7 @@ func TestFormatReadEvents_WhenToolResultIsUserAnswer_ThenWritesAnswerBlock(t *te
 		t.Fatalf("FormatReadEvents returned error: %v", err)
 	}
 
-	want := "[05-28 00:00] user (answer):\nship it\n\n"
+	want := "--- 2026-05-28 ---\n\n[00:00:00] user (answer):\nship it\n\n"
 	if got := out.String(); got != want {
 		t.Fatalf("answer block mismatch\nwant:\n%q\ngot:\n%q", want, got)
 	}
@@ -666,7 +666,7 @@ func generateManyEvents(n int) []session.Event {
 // footer when maxLines=200, offset=0.
 func TestFormatReadEvents_GivenManyLines_WhenDefaultMaxLines_ThenTruncatesAt200(t *testing.T) {
 	// Each user message renders as 3 output lines:
-	//   [05-28 00:00] user:
+	//   [00:00:00] user:
 	//   message N
 	//   (blank)
 	// 250 messages → 750 total lines. maxLines=200 must cut at line 200.
@@ -743,7 +743,7 @@ func TestFormatReadEvents_GivenOffsetAndMaxLines_WhenCombined_ThenWindowsCorrect
 	if err := FormatReadEvents(events, nil, 0, 0, FormatOptions{}, &full); err != nil {
 		t.Fatalf("FormatReadEvents (full) error: %v", err)
 	}
-	if err := FormatReadEvents(events, nil, 3, 2, FormatOptions{}, &windowed); err != nil {
+	if err := FormatReadEvents(events, nil, 3, 4, FormatOptions{}, &windowed); err != nil {
 		t.Fatalf("FormatReadEvents (windowed) error: %v", err)
 	}
 
@@ -764,11 +764,11 @@ func TestFormatReadEvents_GivenOffsetAndMaxLines_WhenCombined_ThenWindowsCorrect
 		windowedLines = windowedLines[:len(windowedLines)-1]
 	}
 
-	// Content lines must be exactly allLines[2:5].
+	// Content lines must be exactly allLines[4:7].
 	if len(windowedLines) != 3 {
 		t.Fatalf("expected 3 content lines, got %d: %q", len(windowedLines), windowedLines)
 	}
-	for i, want := range allLines[2:5] {
+	for i, want := range allLines[4:7] {
 		if windowedLines[i] != want {
 			t.Fatalf("windowed line %d mismatch\nwant: %q\ngot:  %q", i, want, windowedLines[i])
 		}
