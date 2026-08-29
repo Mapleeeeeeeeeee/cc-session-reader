@@ -10,6 +10,7 @@ import (
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/analyzer"
 	bm "github.com/Mapleeeeeeeeeee/cc-session-reader/internal/benchmark"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/inject"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/parser"
 )
 
@@ -600,6 +601,11 @@ func TestRunBenchmark_GivenFractionalK_ThenDerivesPromptFromFractionalCallsPerTu
 }
 
 func TestCountInjectPages_GivenBoundaryText_ThenMatchesInjectPagination(t *testing.T) {
+	// Each "x\n" pair costs 2 bytes, so half the limit in pairs fills a page
+	// exactly. Derived rather than written out so the table still describes the
+	// real boundary when inject.MaxPageBytes moves.
+	half := inject.MaxPageBytes / 2
+
 	tests := []struct {
 		name     string
 		fullText string
@@ -607,12 +613,12 @@ func TestCountInjectPages_GivenBoundaryText_ThenMatchesInjectPagination(t *testi
 	}{
 		{name: "empty", fullText: "", want: 0},
 		{name: "short single line", fullText: "abc", want: 1},
-		{name: "single line at newline-adjusted limit", fullText: strings.Repeat("x", 19_999), want: 1},
-		{name: "single line over newline-adjusted limit", fullText: strings.Repeat("x", 20_000), want: 1},
-		{name: "two lines exactly at limit", fullText: strings.Repeat("x", 9_999) + "\n" + strings.Repeat("x", 9_999), want: 1},
-		{name: "two lines one byte over limit", fullText: strings.Repeat("x", 9_999) + "\n" + strings.Repeat("x", 10_000), want: 2},
-		{name: "many tiny lines exactly at limit", fullText: strings.Repeat("x\n", 10_000), want: 1},
-		{name: "many tiny lines one line over limit", fullText: strings.Repeat("x\n", 10_001), want: 2},
+		{name: "single line at newline-adjusted limit", fullText: strings.Repeat("x", inject.MaxPageBytes-1), want: 1},
+		{name: "single line over newline-adjusted limit", fullText: strings.Repeat("x", inject.MaxPageBytes), want: 1},
+		{name: "two lines exactly at limit", fullText: strings.Repeat("x", half-1) + "\n" + strings.Repeat("x", half-1), want: 1},
+		{name: "two lines one byte over limit", fullText: strings.Repeat("x", half-1) + "\n" + strings.Repeat("x", half), want: 2},
+		{name: "many tiny lines exactly at limit", fullText: strings.Repeat("x\n", half), want: 1},
+		{name: "many tiny lines one line over limit", fullText: strings.Repeat("x\n", half+1), want: 2},
 		{name: "trailing newline is dropped", fullText: "line\n", want: 1},
 	}
 
