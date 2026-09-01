@@ -329,7 +329,7 @@ func TestReadAll_GivenEditToolResultWithoutCommandName_ThenRawNameResolvedFromPr
 	if tool.RawName != session.ToolEdit {
 		t.Fatalf("RawName = %q, want %q (resolved from preceding tool_use)", tool.RawName, session.ToolEdit)
 	}
-	wantSummary := " -> ok (+2, -1 @ L10)"
+	wantSummary := " -> (+2, -1 @ L10)"
 	if got := tool.Summary(); got != wantSummary {
 		t.Fatalf("Summary() = %q, want %q", got, wantSummary)
 	}
@@ -369,7 +369,7 @@ func TestReadAll_GivenReadToolResultWithoutCommandName_ThenBareOkSuppressionAppl
 	if tool.RawName != session.ToolRead {
 		t.Fatalf("RawName = %q, want %q (resolved from preceding tool_use)", tool.RawName, session.ToolRead)
 	}
-	wantSummary := " -> ok"
+	wantSummary := ""
 	if got := tool.Summary(); got != wantSummary {
 		t.Fatalf("Summary() = %q, want %q (boilerplate body content must be suppressed)", got, wantSummary)
 	}

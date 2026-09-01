@@ -96,6 +96,62 @@ type UserMessage struct {
 
 	// IsSystemReminder marks a <system-reminder> harness injection.
 	IsSystemReminder bool
+
+	// IsTaskNotification marks a <task-notification> background-task report.
+	IsTaskNotification bool
+
+	// IsCompactionSummary marks the harness-authored conversation summary
+	// injected when a session continues past a context compaction.
+	IsCompactionSummary bool
+
+	// IsInterrupted marks the "[Request interrupted by user]" sentinel.
+	IsInterrupted bool
+
+	// IsAgentsStopped marks the "N background agents were stopped" notice.
+	IsAgentsStopped   bool
+	StoppedAgentCount int
+
+	// IsStopHookGoal marks the session-scoped Stop hook activation notice.
+	// GoalCondition is the goal text, the only part of the ~490-character
+	// notice that is not fixed boilerplate.
+	IsStopHookGoal bool
+	GoalCondition  string
+}
+
+// CountsAsTurn reports whether this message starts a unit of agent work: an
+// incoming prompt that runs until the agent stops. It is the denominator of
+// the cost model's K.
+//
+// The numerator counts every API call regardless of what triggered it, so
+// anything that wakes the agent has to count here or the ratio divides two
+// different populations. Which kinds those are was measured rather than
+// argued, by checking what actually follows each kind in 120 transcripts: a
+// teammate message (94%), a background-task notification (89%) and a
+// compaction summary (100%) each drive an API call, while an interruption
+// sentinel and an agents-stopped notice drive none (0% each).
+//
+// The kinds that return false despite preceding an API call are the ones
+// that arrive as the tail of an invocation something else already started:
+// skill and command injections, the Stop hook notice that follows a /goal,
+// and the notice that a skill was re-invoked. Counting those would count one
+// turn twice. CommandMarker is false for the same reason; ADR-008's open
+// questions cover attributing a slash command's turn to one of its entries.
+func (u UserMessage) CountsAsTurn() bool {
+	if u.CommandMarker != "" {
+		return false
+	}
+	if u.IsTeammateMessage || u.IsTaskNotification || u.IsCompactionSummary {
+		return true
+	}
+	return !u.IsCommandNoise &&
+		!u.IsCaveat &&
+		!u.IsSkillInjection &&
+		!u.IsCommandInjection &&
+		!u.IsContextUsage &&
+		!u.IsSystemReminder &&
+		!u.IsInterrupted &&
+		!u.IsAgentsStopped &&
+		!u.IsStopHookGoal
 }
 
 type Usage struct {
@@ -232,6 +288,14 @@ const (
 	failureExcerptMaxRunes = 200
 )
 
+// Summary renders the "-> ..." tail appended after a tool call's label.
+//
+// Success is the default state and carries no marker (ADR-007 decision 3):
+// 1,550 of 1,604 tool calls in the measured session succeeded, so naming it
+// on every line taxed every line for information the reader already assumes.
+// Only FAILED is announced. A successful call still shows its excerpt or diff
+// stat, introduced by the same "->" arrow so the call and its result stay
+// visually separable.
 func (r ToolResult) Summary() string {
 	if r.Success {
 		if diff := r.diffSummary(); diff != "" {
@@ -239,12 +303,12 @@ func (r ToolResult) Summary() string {
 		}
 		switch r.RawName {
 		case ToolRead, ToolWrite, ToolEdit, ToolAgent:
-			return fmt.Sprintf(" -> %s", r.Status())
+			return ""
 		}
-		if firstLine := FirstLine(r.Text, successExcerptMaxRunes); firstLine != "" {
-			return fmt.Sprintf(" -> %s: %s", r.Status(), firstLine)
+		if excerpt := firstMeaningfulSuccessLine(r.Text, successExcerptMaxRunes); excerpt != "" {
+			return fmt.Sprintf(" -> %s", excerpt)
 		}
-		return fmt.Sprintf(" -> %s", r.Status())
+		return ""
 	}
 	if excerpt := firstMeaningfulErrorLine(r.Text, failureExcerptMaxRunes); excerpt != "" {
 		return fmt.Sprintf(" -> %s: %s", r.Status(), excerpt)
@@ -260,10 +324,16 @@ func (r ToolResult) diffSummary() string {
 	if r.DiffStat == nil {
 		return ""
 	}
-	if r.DiffStat.IsNewFile {
-		return fmt.Sprintf(" -> %s (new file, %d lines)", r.Status(), r.DiffStat.NewFileLines)
+	// A failed Edit/Write keeps its FAILED marker; a successful one shows the
+	// diff stat alone, since the stat itself is proof the edit landed.
+	status := ""
+	if !r.Success {
+		status = " " + r.Status()
 	}
-	summary := fmt.Sprintf(" -> %s (+%d, -%d @ L%d", r.Status(), r.DiffStat.Additions, r.DiffStat.Deletions, r.DiffStat.NewStartLine)
+	if r.DiffStat.IsNewFile {
+		return fmt.Sprintf(" ->%s (new file, %d lines)", status, r.DiffStat.NewFileLines)
+	}
+	summary := fmt.Sprintf(" ->%s (+%d, -%d @ L%d", status, r.DiffStat.Additions, r.DiffStat.Deletions, r.DiffStat.NewStartLine)
 	if r.DiffStat.HunkCount > 1 {
 		summary += fmt.Sprintf(", %d hunks", r.DiffStat.HunkCount)
 	}
@@ -292,22 +362,76 @@ func isNoiseExcerptLine(line string) bool {
 		hookErrorBoilerplate.MatchString(line)
 }
 
+// progressLine matches a line where a tool announces what it is about to do
+// rather than what it found: "Checking formatting...", "[STARTED] Backing up
+// original state...", "> nccu-toolkit@1.17.0 dev". The answer is below it.
+var progressLine = regexp.MustCompile(`^(?:\[[A-Z][A-Z ]*\]|>\s|(?:Checking|Running|Loading|Installing|Fetching|Building|Compiling|Starting)\b)`)
+
+// versionBanner matches a short line whose payload is a version stamp, the
+// shape a test runner prints before any result ("RUN v4.0.18").
+var versionBanner = regexp.MustCompile(`^.{0,40}\bv?\d+\.\d+\.\d+\b.{0,10}$`)
+
+// sectionHeaderMarkers are the rules a script echoes around its own headings.
+// A heading is recognized only when the same marker closes the line, so a
+// diff's "--- a/file.go" is not mistaken for one.
+var sectionHeaderMarkers = []string{"===", "---", "***"}
+
+// isEchoedSectionHeader reports whether line is a heading a script printed to
+// label the output beneath it ("=== branch 落後/超前 staging ===",
+// "--- HEAD ---") rather than output of its own.
+func isEchoedSectionHeader(line string) bool {
+	for _, marker := range sectionHeaderMarkers {
+		if len(line) > 2*len(marker) && strings.HasPrefix(line, marker) && strings.HasSuffix(line, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// isSuccessNoiseLine reports the extra shapes skipped when picking an excerpt
+// from a SUCCESSFUL result (ADR-007 decision 1). They are deliberately not
+// applied to failures: a line that is banner-shaped in passing output can be
+// the error itself in failing output, and ADR-004 keeps failure information.
+func isSuccessNoiseLine(line string) bool {
+	return isNoiseExcerptLine(line) ||
+		isEchoedSectionHeader(line) ||
+		progressLine.MatchString(line) ||
+		versionBanner.MatchString(line)
+}
+
 // firstMeaningfulErrorLine returns the first non-noise line of text, skipping
 // cat -n prefixes, bare "Exit code N" lines, and hook boilerplate so the
 // excerpt surfaces the actual error instead of the noise around it. If every
 // line is noise, it falls back to the first non-empty line rather than
 // dropping the excerpt entirely.
 func firstMeaningfulErrorLine(text string, maxRunes int) string {
+	return firstMeaningfulLine(text, maxRunes, isNoiseExcerptLine)
+}
+
+// firstMeaningfulSuccessLine is firstMeaningfulErrorLine's counterpart for a
+// successful result. Before ADR-007 the success path took the first non-empty
+// line with no filtering at all, which surfaced `gh`'s usage banner as the
+// state of a pull request and a script's own "--- HEAD ---" as the state of a
+// working tree.
+func firstMeaningfulSuccessLine(text string, maxRunes int) string {
+	return firstMeaningfulLine(text, maxRunes, isSuccessNoiseLine)
+}
+
+// firstMeaningfulLine returns the first line of text that isNoise rejects
+// nothing about, with terminal escape sequences removed. Falling back to the
+// first non-empty line keeps an excerpt when every line looks like noise,
+// rather than reporting a bare status for a call that did produce output.
+func firstMeaningfulLine(text string, maxRunes int, isNoise func(string) bool) string {
 	var firstNonEmpty string
 	for _, raw := range strings.Split(text, "\n") {
-		line := strings.TrimSpace(raw)
+		line := strings.TrimSpace(StripANSI(raw))
 		if line == "" {
 			continue
 		}
 		if firstNonEmpty == "" {
 			firstNonEmpty = line
 		}
-		if !isNoiseExcerptLine(line) {
+		if !isNoise(line) {
 			return Truncate(line, maxRunes)
 		}
 	}

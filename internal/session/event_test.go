@@ -372,9 +372,9 @@ func TestToolResultSummary(t *testing.T) {
 		result ToolResult
 		want   string
 	}{
-		{name: "success with text", result: ToolResult{Success: true, Text: "first\nsecond"}, want: " -> ok: first"},
+		{name: "success with text", result: ToolResult{Success: true, Text: "first\nsecond"}, want: " -> first"},
 		{name: "failure with text", result: ToolResult{Success: false, Text: "bad"}, want: " -> FAILED: bad"},
-		{name: "success without text", result: ToolResult{Success: true}, want: " -> ok"},
+		{name: "success without text", result: ToolResult{Success: true}, want: ""},
 	}
 
 	for _, tt := range tests {
@@ -459,14 +459,14 @@ func TestToolResultSummary_GivenEditDiffStat_ThenRendersDiffAnnotation(t *testin
 			result: ToolResult{Success: true, RawName: ToolEdit, DiffStat: &DiffStat{
 				Additions: 2, Deletions: 1, NewStartLine: 10, HunkCount: 1,
 			}},
-			want: " -> ok (+2, -1 @ L10)",
+			want: " -> (+2, -1 @ L10)",
 		},
 		{
 			name: "given multiple hunks then appends hunk count",
 			result: ToolResult{Success: true, RawName: ToolEdit, DiffStat: &DiffStat{
 				Additions: 5, Deletions: 3, NewStartLine: 5, HunkCount: 2,
 			}},
-			want: " -> ok (+5, -3 @ L5, 2 hunks)",
+			want: " -> (+5, -3 @ L5, 2 hunks)",
 		},
 	}
 
@@ -485,7 +485,7 @@ func TestToolResultSummary_GivenWriteDiffStatNewFile_ThenRendersLineCount(t *tes
 	result := ToolResult{Success: true, RawName: ToolWrite, DiffStat: &DiffStat{
 		IsNewFile: true, NewFileLines: 42,
 	}}
-	want := " -> ok (new file, 42 lines)"
+	want := " -> (new file, 42 lines)"
 	if got := result.Summary(); got != want {
 		t.Fatalf("Summary() = %q, want %q", got, want)
 	}
@@ -498,7 +498,7 @@ func TestToolResultSummary_GivenWriteDiffStatNewFile_ThenRendersLineCount(t *tes
 // already got before diff summaries existed.
 func TestToolResultSummary_GivenNoDiffStat_ThenFallsBackToBareOk(t *testing.T) {
 	result := ToolResult{Success: true, RawName: ToolEdit, Text: "irrelevant body"}
-	want := " -> ok"
+	want := ""
 	if got := result.Summary(); got != want {
 		t.Fatalf("Summary() = %q, want %q", got, want)
 	}

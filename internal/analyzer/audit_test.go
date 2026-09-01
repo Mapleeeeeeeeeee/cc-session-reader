@@ -90,12 +90,12 @@ func TestComputeAudit_GivenSuccessfulToolResults_ThenBucketedByToolFamily(t *tes
 		wantBucket string
 		wantKept   string
 	}{
-		{"Read collapses to bare ok", session.ToolRead, BucketSuccessReadFile, " -> ok"},
-		{"Write collapses to bare ok", session.ToolWrite, BucketSuccessReadFile, " -> ok"},
-		{"Edit collapses to bare ok", session.ToolEdit, BucketSuccessReadFile, " -> ok"},
-		{"Agent collapses to bare ok", session.ToolAgent, BucketSuccessAgent, " -> ok"},
-		{"Bash keeps a first-line excerpt", session.ToolBash, BucketSuccessBash, " -> ok: " + firstLine},
-		{"Grep (other) keeps a first-line excerpt", "Grep", BucketSuccessOther, " -> ok: " + firstLine},
+		{"Read collapses to bare ok", session.ToolRead, BucketSuccessReadFile, ""},
+		{"Write collapses to bare ok", session.ToolWrite, BucketSuccessReadFile, ""},
+		{"Edit collapses to bare ok", session.ToolEdit, BucketSuccessReadFile, ""},
+		{"Agent collapses to bare ok", session.ToolAgent, BucketSuccessAgent, ""},
+		{"Bash keeps a first-line excerpt", session.ToolBash, BucketSuccessBash, " -> " + firstLine},
+		{"Grep (other) keeps a first-line excerpt", "Grep", BucketSuccessOther, " -> " + firstLine},
 	}
 
 	for _, tt := range tests {

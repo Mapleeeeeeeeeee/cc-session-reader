@@ -20,7 +20,7 @@ func TestSummarizeToolUse_Bash(t *testing.T) {
 		{
 			name: "with description",
 			inp:  toolInput(map[string]any{"command": "ls -la /some/path", "description": "List files in directory"}),
-			want: "[Bash] List files in directory",
+			want: "[Bash] List files in directory | ls -la",
 		},
 		{
 			name: "without description",

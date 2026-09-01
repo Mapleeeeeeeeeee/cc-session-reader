@@ -49,7 +49,7 @@ irm https://raw.githubusercontent.com/Mapleeeeeeeeeee/cc-session-reader/main/ins
 | `list` | 瀏覽最近的 session（用過 cc-session 的標 `[refs]`） | `cc-session list -n 10 -p myproject` |
 | `read` | 完整對話 + inline tool 摘要 | `cc-session read <id> -max-lines 200` |
 | `context` | 精簡注入格式，含 session metadata header | `cc-session context <id>` |
-| `inherit` | 分頁 context 繼承（每頁 ≤20K chars，自動追蹤進度，`-reset` 重來） | `cc-session inherit <id>` |
+| `inherit` | 分頁 context 繼承（每頁 ≤28K chars，自動追蹤進度，`-reset` 重來） | `cc-session inherit <id>` |
 | `stats` | 字元與 token 分佈統計及壓縮比 | `cc-session stats <id> -no-tokens` |
 | `audit` | 取樣被過濾的內容，確認沒漏掉重要資訊 | `cc-session audit <id> -n 10` |
 | `expand` | 展開特定 tool call 的完整 input/result | `cc-session expand <id> uCVa` |

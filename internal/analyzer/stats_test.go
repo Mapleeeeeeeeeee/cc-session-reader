@@ -52,7 +52,7 @@ func TestComputeStats_SeparatesRawFromFilteredByContent(t *testing.T) {
 	assertContains(t, "FilteredText", result.FilteredText, "hello user")
 	assertContains(t, "FilteredText", result.FilteredText, "hi there")
 	assertContains(t, "FilteredText", result.FilteredText, "[Bash] Echo ok")
-	assertContains(t, "FilteredText", result.FilteredText, " -> ok: tool-result-body")
+	assertContains(t, "FilteredText", result.FilteredText, " -> tool-result-body")
 	// Verbose raw content must NOT leak into the filtered stream.
 	assertNotContains(t, "FilteredText", result.FilteredText, "sys-noise-body")
 	assertNotContains(t, "FilteredText", result.FilteredText, `"command"`)
@@ -100,11 +100,11 @@ func TestComputeStats_CountsCharsForSingleUserMessage(t *testing.T) {
 		t.Fatalf("RawText = %q, want %q", result.RawText, message)
 	}
 
-	// "??-?? ??:??" is the placeholder parser.FormatTimestamp("") returns for a
+	// "??:??:??" is the placeholder the timestamp writer emits for a
 	// missing timestamp; that contract is pinned independently by
 	// parser.TestFormatTimestamp, so it is hardcoded here rather than
 	// re-invoking the SUT to build its own expected value.
-	wantFiltered := fmt.Sprintf("[%s] user:\n%s\n\n", "??-?? ??:??", message)
+	wantFiltered := fmt.Sprintf("[%s] user:\n%s\n\n", "??:??:??", message)
 	if result.FilteredText != wantFiltered {
 		t.Fatalf("FilteredText = %q, want %q", result.FilteredText, wantFiltered)
 	}

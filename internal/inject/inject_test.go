@@ -70,7 +70,7 @@ func TestGivenManySmallLines_WhenSplitPages_ThenNoPagesExceedLimit(t *testing.T)
 			charCount += len(l) + 1
 		}
 		// Allow a single oversized line to push past, but normally must be under.
-		if charCount > 21_000 {
+		if charCount > inject.MaxPageBytes+1_000 {
 			t.Errorf("page %d has %d chars, exceeds limit", i, charCount)
 		}
 	}

@@ -49,7 +49,7 @@ Installs into `$env:LOCALAPPDATA\cc-session\`; in interactive mode it asks wheth
 | `list` | Browse recent sessions (those that already used cc-session are marked `[refs]`) | `cc-session list -n 10 -p myproject` |
 | `read` | Full conversation with inline tool summaries | `cc-session read <id> -max-lines 200` |
 | `context` | Compact injection format, including a session metadata header | `cc-session context <id>` |
-| `inherit` | Paginated context inheritance (≤20K chars per page, progress tracked automatically, `-reset` starts over) | `cc-session inherit <id>` |
+| `inherit` | Paginated context inheritance (≤28K chars per page, progress tracked automatically, `-reset` starts over) | `cc-session inherit <id>` |
 | `stats` | Character and token distribution plus compression ratio | `cc-session stats <id> -no-tokens` |
 | `audit` | Sample the filtered-out content to confirm nothing important was dropped | `cc-session audit <id> -n 10` |
 | `expand` | Expand the full input/result of a specific tool call | `cc-session expand <id> uCVa` |

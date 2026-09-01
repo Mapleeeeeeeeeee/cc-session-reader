@@ -1,6 +1,6 @@
 // Package inject implements paginated session output for the inherit subcommand
 // (formerly named "inject"; the CLI-facing name changed, this package did not).
-// Each page stays under 20K chars so Claude Code's Bash tool returns it as
+// Each page stays under MaxPageBytes so Claude Code's Bash tool returns it as
 // stdout rather than persisting it to a file.
 package inject
 
@@ -18,7 +18,19 @@ import (
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/skillpath"
 )
 
-const maxPageBytes = 20_000
+// MaxPageBytes bounds one page so Claude Code's Bash tool returns it as stdout
+// instead of persisting it to a file and handing back a 2KB preview.
+//
+// The real threshold is the harness's, not this program's: binary search on
+// 2026-08-29 put it at 30,000 characters (30,000 came back inline, 31,000 was
+// persisted). This leaves ~2,000 characters of headroom for the page marker,
+// the footer, and any future harness change. Re-measure before raising it, and
+// note the harness lets users configure that cap.
+//
+// Exported so tests can derive their boundary cases from it: the page limit is
+// an invariant, and a copy hard-coded in a test silently stops describing the
+// real boundary the moment this value changes.
+const MaxPageBytes = 28_000
 
 // State tracks pagination progress for one session.
 type State struct {
@@ -94,7 +106,7 @@ func ClearState(sessionID string) error {
 	return nil
 }
 
-// SplitPages divides lines into pages whose byte count stays under maxPageBytes.
+// SplitPages divides lines into pages whose byte count stays under MaxPageBytes.
 // Page breaks always fall on line boundaries.
 func SplitPages(lines []string) [][]string {
 	if len(lines) == 0 {
@@ -106,7 +118,7 @@ func SplitPages(lines []string) [][]string {
 
 	for _, line := range lines {
 		lineBytes := len(line) + 1 // +1 for newline
-		if currentBytes+lineBytes > maxPageBytes && len(current) > 0 {
+		if currentBytes+lineBytes > MaxPageBytes && len(current) > 0 {
 			pages = append(pages, current)
 			current = nil
 			currentBytes = 0

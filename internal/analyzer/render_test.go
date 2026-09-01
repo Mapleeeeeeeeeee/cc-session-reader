@@ -111,7 +111,7 @@ func TestRenderStats_GivenFullData_WhenRendered_ThenCharactersSectionPresent(t *
 	assertOutputContains(t, body, "=== Characters ===")
 	assertOutputLineContaining(t, body, "Raw:", "1,000")    // RawChars anchored to label
 	assertOutputLineContaining(t, body, "Filtered:", "600") // FilteredChars anchored to label
-	assertOutputContains(t, body, "40.0%") // (1000-600)/1000 = 40%
+	assertOutputContains(t, body, "40.0%")                  // (1000-600)/1000 = 40%
 }
 
 // --- RenderStats: Breakdown section ---

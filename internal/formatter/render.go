@@ -35,6 +35,9 @@ type renderContext struct {
 	opts     FormatOptions
 	out      io.Writer
 	sink     ContentSink
+	// ts renders message-header clock times and the day markers that carry
+	// the date the per-message header no longer repeats (ADR-007 decision 4).
+	ts *timestampWriter
 }
 
 // Content categories reported to ContentSink. The values match the keys
@@ -46,10 +49,20 @@ const (
 	CategoryToolSummary   = "tool_summaries"
 )
 
-// userRender is the rendered form of a user-message event: the body to print
-// and whether anything should be printed at all.
+// Role labels written in the per-message header. RoleHarness separates
+// messages the harness injected from messages the user typed: before ADR-008
+// both were labelled "user", so a reader inheriting the transcript could not
+// tell which lines a person actually wrote.
+const (
+	RoleUser    = "user"
+	RoleHarness = "harness"
+)
+
+// userRender is the rendered form of a user-message event: the body to print,
+// the role label to print it under, and whether anything should be printed.
 type userRender struct {
 	body string
+	role string
 	show bool
 }
 
@@ -65,7 +78,7 @@ func renderUserMessage(user *session.UserMessage, opts FormatOptions, seenSkills
 		return userRender{}
 	}
 	if user.CommandMarker != "" {
-		return userRender{body: user.CommandMarker, show: true}
+		return userRender{body: user.CommandMarker, role: RoleUser, show: true}
 	}
 	if user.IsCommandNoise {
 		if !opts.VerboseCommands || user.IsCaveat {
@@ -75,7 +88,7 @@ func renderUserMessage(user *session.UserMessage, opts FormatOptions, seenSkills
 		if body == "" {
 			return userRender{}
 		}
-		return userRender{body: body, show: true}
+		return userRender{body: body, role: RoleHarness, show: true}
 	}
 
 	// Harness-injected subtypes: strip or compact.
@@ -83,28 +96,47 @@ func renderUserMessage(user *session.UserMessage, opts FormatOptions, seenSkills
 		return userRender{}
 	}
 	if user.IsSkillInjection {
-		return userRender{body: session.CompactSkillInjection(user, seenSkills), show: true}
+		return harnessRender(session.CompactSkillInjection(user, seenSkills))
 	}
 	if user.IsTeammateMessage {
 		if body, ok := session.CompactTeammateMessage(user.Text); ok {
-			return userRender{body: body, show: true}
+			return harnessRender(body)
 		}
-		return userRender{body: user.Text, show: true}
+		return harnessRender(user.Text)
 	}
 	if user.IsCommandInjection {
 		if body, ok := session.CompactCommandInjection(user.Text); ok {
-			return userRender{body: body, show: true}
+			return harnessRender(body)
 		}
-		return userRender{body: user.Text, show: true}
+		return harnessRender(user.Text)
+	}
+	if user.IsTaskNotification {
+		if body, ok := session.CompactTaskNotification(user.Text); ok {
+			return harnessRender(body)
+		}
+		return harnessRender(user.Text)
+	}
+	if user.IsStopHookGoal {
+		return harnessRender(session.CompactStopHookGoal(user))
+	}
+	if user.IsAgentsStopped {
+		return harnessRender(session.CompactAgentsStopped(user))
+	}
+	if user.IsCompactionSummary {
+		return harnessRender(session.CompactCompactionSummary(user.Text))
+	}
+	if user.IsInterrupted {
+		return harnessRender("[interrupted]")
 	}
 
 	if strings.TrimSpace(user.Text) == "" {
 		return userRender{}
 	}
-	if body, ok := session.CompactTaskNotification(user.Text); ok {
-		return userRender{body: body, show: true}
-	}
-	return userRender{body: user.Text, show: true}
+	return userRender{body: user.Text, role: RoleUser, show: true}
+}
+
+func harnessRender(body string) userRender {
+	return userRender{body: body, role: RoleHarness, show: true}
 }
 
 type pendingTool struct {
