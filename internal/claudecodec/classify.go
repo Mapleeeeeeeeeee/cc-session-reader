@@ -32,8 +32,6 @@ const bangCommandMarkerMaxRunes = 80
 const (
 	skillInjectionPrefix = "Base directory for this skill:"
 	systemReminderOpen   = "<system-reminder>"
-	teammateOpen         = "<teammate-message"
-	teammatePrefix       = "Another Claude session sent a message:"
 	contextUsageHeader   = "## Context Usage"
 	contextUsageMarker   = "Estimated usage by category"
 	commandMessageOpen   = "<command-message>"
@@ -45,17 +43,6 @@ const (
 	stopHookPrefix       = "A session-scoped Stop hook is now active with condition:"
 	skillReloadedMarker  = "was loaded earlier"
 )
-
-// teammateWarnings are the harness disclaimers appended to a teammate message.
-// The wording has changed once already: the first form matched 0 of the 133
-// teammate messages in the 60 days before 2026-08-30, and detection survived
-// only because teammatePrefix happened to match all 133. Both are kept so a
-// transcript written by either harness version classifies, and so the next
-// rewording degrades to a miss on one marker rather than on all of them.
-var teammateWarnings = []string{
-	"IMPORTANT: This is NOT from your user",
-	"This came from another Claude session",
-}
 
 var agentsStoppedCount = regexp.MustCompile(`^(\d+) background agents? (?:was|were) stopped`)
 
@@ -158,10 +145,13 @@ func classifyHarnessUserMessage(text string) *session.UserMessage {
 		}
 	}
 
-	// Teammate message: the XML block plus either the opening line or one of
-	// the harness disclaimers. Two independent markers because the disclaimer
-	// wording has already changed once (see teammateWarnings).
-	if strings.Contains(trimmed, teammateOpen) && hasTeammateMarker(trimmed) {
+	// Teammate message: detected by the XML tag alone, not by the surrounding
+	// prose ("Another Claude session sent a message:", the disclaimer). Both
+	// have already been reworded once without the tag changing, and the
+	// harness has also been observed to skip the opening line and disclaimer
+	// entirely. session.TeammateTagVariants covers every tag shape seen so
+	// far; a rewording only breaks detection if it changes the tag itself.
+	if session.HasTeammateMessageTag(trimmed) {
 		return &session.UserMessage{Text: text, IsTeammateMessage: true}
 	}
 
@@ -220,20 +210,6 @@ func classifyHarnessUserMessage(text string) *session.UserMessage {
 	}
 
 	return nil
-}
-
-// hasTeammateMarker reports whether text carries any of the harness markers
-// that identify a teammate message.
-func hasTeammateMarker(text string) bool {
-	if strings.HasPrefix(text, teammatePrefix) {
-		return true
-	}
-	for _, warning := range teammateWarnings {
-		if strings.Contains(text, warning) {
-			return true
-		}
-	}
-	return false
 }
 
 // extractGoalCondition pulls the goal out of a Stop hook notice. The rest of

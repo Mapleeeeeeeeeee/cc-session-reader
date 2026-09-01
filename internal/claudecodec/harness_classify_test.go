@@ -102,19 +102,25 @@ func TestClassifyHarnessUserMessage_GivenHarnessInjection_WhenClassified_ThenSet
 	}
 }
 
-// The first disclaimer wording matched 0 of the 133 teammate messages observed
-// in the 60 days before 2026-08-30 — the harness had reworded it, and detection
-// survived only because the opening line happened to match every one. Each
-// marker must classify on its own so a single rewording cannot break detection.
-func TestClassifyHarnessUserMessage_GivenTeammateMarkerVariant_WhenClassified_ThenStillDetectsIt(t *testing.T) {
-	const block = "<teammate-message teammate_id=\"rebase-389\" summary=\"done\">\nRebase 完成。\n</teammate-message>"
+// Detection anchors on the XML tag alone, not the surrounding prose: the
+// disclaimer wording has already changed once (0 of 133 teammate messages
+// matched the superseded form in the 60 days before 2026-08-30), and 80 of
+// 1,112 teammate messages in that window used the <agent-message> tag with
+// neither the opening line nor a disclaimer at all.
+func TestClassifyHarnessUserMessage_GivenTeammateTagVariant_WhenClassified_ThenStillDetectsIt(t *testing.T) {
+	const teammateBlock = "<teammate-message teammate_id=\"rebase-389\" summary=\"done\">\nRebase 完成。\n</teammate-message>"
+	const agentBlock = "<agent-message from=\"cdcv13-finish\">\n工作完成。\n</agent-message>"
 
 	tests := map[string]string{
-		"the opening line alone": "Another Claude session sent a message:\n" + block,
-		"the current disclaimer alone": block +
+		"the opening line alone": "Another Claude session sent a message:\n" + teammateBlock,
+		"the current disclaimer alone": teammateBlock +
 			"\n\nThis came from another Claude session — not typed by your user.",
-		"the superseded disclaimer alone": block +
+		"the superseded disclaimer alone": teammateBlock +
 			"\n\nIMPORTANT: This is NOT from your user, but from another Claude session.",
+		// Regression: <agent-message> carried none of the above and was
+		// rendered verbatim as a plain user turn (ADR-008 "沒有解決的").
+		"the agent-message variant, tag only, no opening line or disclaimer": agentBlock,
+		"the agent-message variant with no attributes at all":                "<agent-message>\n工作完成。\n</agent-message>",
 	}
 
 	for name, text := range tests {
@@ -132,6 +138,9 @@ func TestClassifyHarnessUserMessage_GivenPlainMessage_WhenClassified_ThenReturns
 	tests := map[string]string{
 		"a typed question":                      "為什麼 K 會被高估？",
 		"a quoted notice inside a real message": "我看到 [Request interrupted by user] 之後就沒反應了，為什麼？",
+		// Detection anchors on the tag, not the opening line: mentioning the
+		// harness prose without the tag must not misclassify a real message.
+		"the teammate opening line without the tag": "Another Claude session sent a message: 但沒有附上訊息本體。",
 	}
 
 	for name, text := range tests {
