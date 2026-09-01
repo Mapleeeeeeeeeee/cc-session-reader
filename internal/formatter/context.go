@@ -53,7 +53,11 @@ func renderContextEvents(events []session.Event, agentIDs map[string]bool, opts 
 				continue
 			}
 			flush()
-			fmt.Fprintf(out, "U: %s\n\n", rendered.body)
+			prefix := "U"
+			if rendered.role == RoleHarness {
+				prefix = "H"
+			}
+			fmt.Fprintf(out, "%s: %s\n\n", prefix, rendered.body)
 
 		case session.EventAssistantMessage:
 			if event.Assistant == nil {

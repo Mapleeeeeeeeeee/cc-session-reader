@@ -28,6 +28,35 @@ func CompactTaskNotification(text string) (string, bool) {
 	return strings.TrimSpace(b.String()), true
 }
 
+// CompactStopHookGoal renders a Stop hook notice as "[goal] <condition>".
+// The rest of the notice describes how the hook behaves and is identical
+// every time. Returns the whole notice when no condition was extracted.
+func CompactStopHookGoal(user *UserMessage) string {
+	if user.GoalCondition == "" {
+		return user.Text
+	}
+	return "[goal] " + user.GoalCondition
+}
+
+// CompactAgentsStopped renders the notice as "[agents stopped: N]". The
+// notice also lists the stopped agents' prompts, but the harness has already
+// truncated each to an unusable fragment.
+func CompactAgentsStopped(user *UserMessage) string {
+	return fmt.Sprintf("[agents stopped: %d]", user.StoppedAgentCount)
+}
+
+// CompactCompactionSummary replaces the harness framing around an injected
+// conversation summary with a marker, keeping the body: the body is the
+// previous conversation, which is what a reader inheriting this session needs.
+func CompactCompactionSummary(text string) string {
+	const marker = "[compaction summary]"
+	idx := strings.Index(text, "Summary:")
+	if idx < 0 {
+		return marker + "\n" + strings.TrimSpace(text)
+	}
+	return marker + "\n" + strings.TrimSpace(text[idx:])
+}
+
 // CompactSkillInjection returns a one-line summary of a SKILL.md injection.
 // seenSkills tracks which skills have appeared; repeats get a shorter form.
 func CompactSkillInjection(user *UserMessage, seenSkills map[string]bool) string {

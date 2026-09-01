@@ -21,6 +21,15 @@ type rawEntry struct {
 	Message       *rawMessage     `json:"message"`
 	ToolUseResult json.RawMessage `json:"toolUseResult"`
 	Cwd           string          `json:"cwd"`
+
+	// IsMeta and SourceToolUseID identify a harness-injected user entry that
+	// is the tail of an earlier tool_use block (e.g. a skill body injection
+	// following a Skill tool call), correlated by tool_use_id. Not every
+	// isMeta entry is a skill injection — image placeholders and stop-hook
+	// feedback also carry it — so the link must be resolved against the
+	// preceding tool_use's name, not treated as a marker on its own.
+	IsMeta          bool   `json:"isMeta"`
+	SourceToolUseID string `json:"sourceToolUseID"`
 }
 
 type rawMessage struct {
@@ -142,12 +151,12 @@ func cleanCwdPaths(text string, cwd string) string {
 }
 
 // toToolResult builds a ToolResult from the entry's toolUseResult/tool_result
-// block. toolNames is the tool_use_id -> tool name map accumulated by the
-// caller's sequential read (nil when called from the stateless public
+// block. toolCalls is the tool_use_id -> tool call info map accumulated by
+// the caller's sequential read (nil when called from the stateless public
 // ParseLine): real transcripts carry no commandName/agentType field on
 // Bash/Edit/Write/Read results, so name falls back to the map, which is
 // populated from the preceding assistant tool_use block's declared name.
-func (e rawEntry) toToolResult(toolNames map[string]string) session.ToolResult {
+func (e rawEntry) toToolResult(toolCalls map[string]toolCallInfo) session.ToolResult {
 	var result rawToolUseResult
 	if len(e.ToolUseResult) > 0 {
 		_ = json.Unmarshal(e.ToolUseResult, &result)
@@ -158,7 +167,7 @@ func (e rawEntry) toToolResult(toolNames map[string]string) session.ToolResult {
 		name = result.AgentType
 	}
 	if name == "" {
-		name = toolNames[toolUseID]
+		name = toolCalls[toolUseID].Name
 	}
 	cleanText := cleanCwdPaths(text, e.Cwd)
 	success := determineSuccess(result.Success, isError, cleanText)

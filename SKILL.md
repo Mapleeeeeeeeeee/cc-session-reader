@@ -26,7 +26,7 @@ allowed-tools:
 ## 讀取 session 內容
 
 read 預設截斷在 200 行——大多數 session 遠超這個長度，只看得到開頭一小段。
-inherit 將完整 session 分頁載入（每頁 ≤20K chars），確保完整覆蓋。
+inherit 將完整 session 分頁載入（每頁 ≤28K chars），確保完整覆蓋。
 
 讀 session 時用 inherit。只在使用者明確指名要看某段特定內容時用 read 搭配 `-offset` 跳讀。
 
@@ -49,6 +49,10 @@ inherit 記住讀取進度，重複呼叫同一個命令即自動翻頁：
 
 ## 輸出行為
 
+- 每則訊息的 header 只帶時鐘 `[HH:MM:SS]`，日期在換日時以獨立一行 `--- YYYY-MM-DD ---` 標示
+- 角色標籤三種：`user:` 是人打的、`assistant:` 是 Claude 的回應、`harness:` 是 Claude Code 自己塞進對話的訊息
+  （stop hook 目標、背景任務完成通知、壓縮續接摘要、中斷標記等），不是使用者說的話
+- tool 摘要行只在失敗時標 `FAILED`，成功不另標記；Bash 行帶 `| <程式名 子命令>` 讓讀者知道實際跑了什麼
 - 當 session 內有 `cc-session inherit/read/context` 呼叫時，連續的同 session 呼叫會被壓成一行：
   `(cc-session#Y1dg: inherited session 16d06326 here, 1320 lines omitted)`
 - 舊 session 裡的 `cc-session inject`（改名前的舊命令名）也會比照壓成一行，維持 `injected session X here` 的措辭

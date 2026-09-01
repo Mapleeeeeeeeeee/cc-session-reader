@@ -77,6 +77,13 @@ func ComputeStats(events []session.Event) StatsResult {
 			if event.User == nil {
 				continue
 			}
+			// Counted before the character-accounting branches below, not by
+			// falling through them: each of those ends in `continue`, and a
+			// turn counter at the end of the loop inherits every one of those
+			// early exits (ADR-008).
+			if event.User.CountsAsTurn() {
+				userTurnCount++
+			}
 			// Command invocation marker: cheap and identical in both raw and
 			// filtered streams, so it contributes no reduction here. Its KEPT
 			// weight is measured below via the render pass, not here.
@@ -104,15 +111,17 @@ func ComputeStats(events []session.Event) StatsResult {
 				rawParts = append(rawParts, event.User.Text)
 				continue
 			}
-			// Skill/teammate/command injections are compacted rather than
-			// dropped; their KEPT (compacted) size is measured below via the
-			// render pass. Only the raw side is recorded here.
-			if event.User.IsSkillInjection || event.User.IsTeammateMessage || event.User.IsCommandInjection {
+			// Harness injections that are compacted rather than dropped;
+			// their KEPT (compacted) size is measured below via the render
+			// pass. Only the raw side is recorded here.
+			if event.User.IsSkillInjection || event.User.IsTeammateMessage ||
+				event.User.IsCommandInjection || event.User.IsTaskNotification ||
+				event.User.IsCompactionSummary || event.User.IsStopHookGoal ||
+				event.User.IsAgentsStopped || event.User.IsInterrupted {
 				rawParts = append(rawParts, event.User.Text)
 				continue
 			}
 
-			userTurnCount++
 			rawParts = append(rawParts, event.User.Text)
 
 		case session.EventAssistantMessage:

@@ -59,7 +59,7 @@ func renderReadEvents(events []session.Event, rc renderContext) error {
 				continue
 			}
 			flush()
-			writeEventBlock(rc, event.Timestamp, "user", rendered.body, true)
+			writeEventBlock(rc, event.Timestamp, rendered.role, rendered.body, true)
 			if rc.sink != nil {
 				rc.sink(CategoryUserText, rendered.body)
 			}

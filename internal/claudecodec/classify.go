@@ -1,6 +1,8 @@
 package claudecodec
 
 import (
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
@@ -31,12 +33,31 @@ const (
 	skillInjectionPrefix = "Base directory for this skill:"
 	systemReminderOpen   = "<system-reminder>"
 	teammateOpen         = "<teammate-message"
-	teammateWarning      = "IMPORTANT: This is NOT from your user"
+	teammatePrefix       = "Another Claude session sent a message:"
 	contextUsageHeader   = "## Context Usage"
 	contextUsageMarker   = "Estimated usage by category"
 	commandMessageOpen   = "<command-message>"
 	skillArgsPrefix      = "ARGUMENTS:"
+
+	taskNotificationOpen = "<task-notification>"
+	compactionSummary    = "This session is being continued from a previous conversation"
+	interruptedPrefix    = "[Request interrupted by user"
+	stopHookPrefix       = "A session-scoped Stop hook is now active with condition:"
+	skillReloadedMarker  = "was loaded earlier"
 )
+
+// teammateWarnings are the harness disclaimers appended to a teammate message.
+// The wording has changed once already: the first form matched 0 of the 133
+// teammate messages in the 60 days before 2026-08-30, and detection survived
+// only because teammatePrefix happened to match all 133. Both are kept so a
+// transcript written by either harness version classifies, and so the next
+// rewording degrades to a miss on one marker rather than on all of them.
+var teammateWarnings = []string{
+	"IMPORTANT: This is NOT from your user",
+	"This came from another Claude session",
+}
+
+var agentsStoppedCount = regexp.MustCompile(`^(\d+) background agents? (?:was|were) stopped`)
 
 // classifyCommandUserMessage inspects a user-role message body and returns a
 // classified UserMessage when the body is a slash/bang command invocation or
@@ -85,6 +106,34 @@ func classifyCommandUserMessage(text string) *session.UserMessage {
 	return nil
 }
 
+// classifySkillInjectionByLink detects a skill-body injection via the
+// isMeta/sourceToolUseID link Claude Code actually writes, rather than the
+// "Base directory for this skill:" line classifyHarnessUserMessage's
+// text-prefix path looks for. Bundled skills (e.g. artifact-design) inject
+// their body starting directly with prose and carry no such line, so the
+// text-prefix path misses them; this path resolves the injection against the
+// preceding Skill tool_use instead. toolCalls is nil when called from the
+// stateless public ParseLine, under which this path is skipped and the
+// caller falls back to the text-prefix path. Returns nil when isMeta is
+// unset, sourceToolUseID doesn't resolve to a Skill tool_use, or the tool
+// call carried no skill name — isMeta alone is not a skill marker, since
+// image placeholders and stop-hook feedback also carry it.
+func classifySkillInjectionByLink(text string, isMeta bool, sourceToolUseID string, toolCalls map[string]toolCallInfo) *session.UserMessage {
+	if !isMeta || sourceToolUseID == "" || toolCalls == nil {
+		return nil
+	}
+	call, ok := toolCalls[sourceToolUseID]
+	if !ok || call.Name != session.ToolSkill || call.Skill == "" {
+		return nil
+	}
+	return &session.UserMessage{
+		Text:             text,
+		IsSkillInjection: true,
+		SkillName:        call.Skill,
+		SkillArgs:        formatSkillArgsPreview(call.SkillArgs),
+	}
+}
+
 // classifyHarnessUserMessage detects harness-injected user messages that are
 // not direct user input: skill injections, system reminders, teammate messages,
 // context usage blocks, and command injection XML. Returns nil for plain
@@ -109,12 +158,10 @@ func classifyHarnessUserMessage(text string) *session.UserMessage {
 		}
 	}
 
-	// Teammate message with harness warning.
-	if strings.Contains(trimmed, teammateOpen) && strings.Contains(trimmed, teammateWarning) {
-		return &session.UserMessage{Text: text, IsTeammateMessage: true}
-	}
-	// Teammate message without the full warning (edge case: only the XML).
-	if strings.HasPrefix(trimmed, "Another Claude session sent a message:") && strings.Contains(trimmed, teammateOpen) {
+	// Teammate message: the XML block plus either the opening line or one of
+	// the harness disclaimers. Two independent markers because the disclaimer
+	// wording has already changed once (see teammateWarnings).
+	if strings.Contains(trimmed, teammateOpen) && hasTeammateMarker(trimmed) {
 		return &session.UserMessage{Text: text, IsTeammateMessage: true}
 	}
 
@@ -132,7 +179,98 @@ func classifyHarnessUserMessage(text string) *session.UserMessage {
 		return &session.UserMessage{Text: text, IsCommandInjection: true}
 	}
 
+	// Background-task report. Recognized here rather than only at render time
+	// so stats sees a domain field like every other subtype (ADR-008).
+	if strings.HasPrefix(trimmed, taskNotificationOpen) {
+		return &session.UserMessage{Text: text, IsTaskNotification: true}
+	}
+
+	// Conversation summary injected when a session continues past a
+	// compaction. The body is the previous conversation, so it is kept.
+	if strings.HasPrefix(trimmed, compactionSummary) {
+		return &session.UserMessage{Text: text, IsCompactionSummary: true}
+	}
+
+	if strings.HasPrefix(trimmed, interruptedPrefix) {
+		return &session.UserMessage{Text: text, IsInterrupted: true}
+	}
+
+	if match := agentsStoppedCount.FindStringSubmatch(trimmed); match != nil {
+		count, err := strconv.Atoi(match[1])
+		if err != nil {
+			return nil
+		}
+		return &session.UserMessage{Text: text, IsAgentsStopped: true, StoppedAgentCount: count}
+	}
+
+	if strings.HasPrefix(trimmed, stopHookPrefix) {
+		return &session.UserMessage{
+			Text:           text,
+			IsStopHookGoal: true,
+			GoalCondition:  extractGoalCondition(trimmed),
+		}
+	}
+
+	// Re-invocation notice for a skill whose body was injected earlier. It
+	// carries no instructions of its own beyond naming the skill, so it is
+	// classified as a skill injection and picks up the existing "(repeat)"
+	// rendering.
+	if name, ok := reloadedSkillName(trimmed); ok {
+		return &session.UserMessage{Text: text, IsSkillInjection: true, SkillName: name}
+	}
+
 	return nil
+}
+
+// hasTeammateMarker reports whether text carries any of the harness markers
+// that identify a teammate message.
+func hasTeammateMarker(text string) bool {
+	if strings.HasPrefix(text, teammatePrefix) {
+		return true
+	}
+	for _, warning := range teammateWarnings {
+		if strings.Contains(text, warning) {
+			return true
+		}
+	}
+	return false
+}
+
+// extractGoalCondition pulls the goal out of a Stop hook notice. The rest of
+// the notice describes how the hook behaves and is identical every time, so
+// the condition is the only part worth keeping. Returns "" when the quoted
+// condition is absent, which leaves the compact form to fall back to the
+// whole notice rather than claim a goal that isn't there.
+func extractGoalCondition(text string) string {
+	rest := strings.TrimSpace(strings.TrimPrefix(text, stopHookPrefix))
+	if !strings.HasPrefix(rest, `"`) {
+		return ""
+	}
+	rest = rest[1:]
+	end := strings.LastIndex(rest, `"`)
+	if end <= 0 {
+		return ""
+	}
+	return rest[:end]
+}
+
+// reloadedSkillName extracts the skill from a "Skill /foo was loaded earlier"
+// notice, or reports false when text is not one.
+func reloadedSkillName(text string) (string, bool) {
+	const prefix = "Skill /"
+	if !strings.HasPrefix(text, prefix) {
+		return "", false
+	}
+	rest := text[len(prefix):]
+	end := strings.IndexAny(rest, " \n")
+	if end <= 0 {
+		return "", false
+	}
+	name := rest[:end]
+	if !strings.Contains(rest[end:], skillReloadedMarker) {
+		return "", false
+	}
+	return name, true
 }
 
 func extractSkillName(text string) string {
@@ -161,16 +299,27 @@ func extractSkillArgs(text string) string {
 	if idx < 0 {
 		return ""
 	}
-	rest := strings.TrimSpace(text[idx+len(skillArgsPrefix):])
-	// Take only the first line of args for the compact form.
-	if nl := strings.Index(rest, "\n"); nl >= 0 {
-		firstLine := rest[:nl]
-		if len(rest) > nl+1 {
-			return session.Truncate(firstLine, 120) + "..."
+	return formatSkillArgsPreview(strings.TrimSpace(text[idx+len(skillArgsPrefix):]))
+}
+
+// skillArgsPreviewMaxRunes caps a skill's args at one line for the compact
+// "[skill: name] args" rendering.
+const skillArgsPreviewMaxRunes = 120
+
+// formatSkillArgsPreview truncates raw skill args to a single line, shared by
+// the text-prefix path's "ARGUMENTS: ..." line and the Skill tool_use's
+// "args" input — both carry the same value observed in real transcripts, so
+// one truncation rule keeps their rendering identical regardless of which
+// path classified the injection.
+func formatSkillArgsPreview(raw string) string {
+	if nl := strings.Index(raw, "\n"); nl >= 0 {
+		firstLine := raw[:nl]
+		if len(raw) > nl+1 {
+			return session.Truncate(firstLine, skillArgsPreviewMaxRunes) + "..."
 		}
-		return session.Truncate(firstLine, 120)
+		return session.Truncate(firstLine, skillArgsPreviewMaxRunes)
 	}
-	return session.Truncate(rest, 120)
+	return session.Truncate(raw, skillArgsPreviewMaxRunes)
 }
 
 // extractBetween returns the substring between the first openTag and the next
