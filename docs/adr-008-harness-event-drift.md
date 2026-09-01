@@ -10,7 +10,7 @@ Reader 靠比對字面字串認出 Claude Code 寫進 transcript 的事件。那
 | 1 | `noiseTypes` 補上 8 個 entry type | 597 KB 從「沒被解析」變成 `system_noise` |
 | 2 | 6 種 harness 注入的 user 訊息改在 parser 層分類 | 不再冒充使用者訊息 |
 | 3 | 新增 `harness:` 角色標籤 | 讀的人分得出哪幾行是人打的 |
-| 4 | teammate 偵測改成多重標記 | 主判斷已死，修好並讓下次改字只失效一個標記 |
+| 4 | teammate 偵測改成只認 XML 標籤，兩種變體都收 | 主判斷已死，改認標籤後散文重寫不再影響偵測 |
 | 5 | 拆出 `UserMessage.CountsAsTurn()`，內容依實測校準 | 八個 session 的 turn 計數誤差 70 → 29 |
 | 6 | skill 注入改走 `sourceToolUseID` 結構連結認定 | 沒有 base-directory 行的 bundled skill 不再全文渲染 |
 
@@ -113,11 +113,20 @@ harness 改寫成「This came from another Claude session — not typed by your 
 teammate message 就會整個變成一般 user 訊息：全文渲染、樣板不砍。
 turn 數會剛好還是對的（一般訊息本來就算一個 turn），所以這個故障不會反映在 K 上。
 
-決定：改成一組標記，開場白或任一版免責聲明命中即可，新舊聲明都留著。
-下次改字只會讓其中一個標記失效，不會讓偵測整個垮掉。
+第一版決定（改成一組標記，開場白或任一版免責聲明命中即可）已經不夠：
+60 天內 1,112 則 teammate message 有 80 則用 `<agent-message>` 標籤而非
+`<teammate-message>`，開場白和免責聲明都沒有附上，兩個標記都落空。
+80 則裡有 3 則（35 個樣本中）連屬性都沒有。
+
+改成只認 XML 標籤本身，不再看散文。開場白、免責聲明都是 harness 生成給人看的
+說明文字，harness 會重寫；標籤是 harness 自己要解析的結構，重寫成本高得多。
+兩種標籤都收：`<teammate-message>`（發送端 id 放在 `teammate_id`）與
+`<agent-message>`（放在 `from`，可能整個不帶屬性）。標籤清單收在
+`session.TeammateTagVariants`，`classify.go` 和 `CompactTeammateMessage`
+共用同一份，避免兩處各自列一次而漂移。下次改字只有改到標籤名稱才會讓偵測失效。
 
 `CompactTeammateMessage` 裡剝除警告的那段同理也是死碼，但無害：
-抽取迴圈只取 `<teammate-message>` 標籤之間的內容，尾巴的警告本來就進不來。這次沒動它。
+抽取迴圈只取標籤之間的內容，尾巴的警告本來就進不來。這次沒動它。
 
 ## 5. 一個 flag 同時回答了兩個不相干的問題
 
@@ -220,11 +229,6 @@ user 訊息先查這條連結，命中就是 skill 注入；文字前綴降為�
 teammate message 沒有這種欄位（頂層欄位與一般 user 訊息完全相同），所以第 4 項只能留在字串比對。
 
 ## 沒有解決的
-
-**teammate 的 `<agent-message>` 變體沒認**。60 天內 1,112 則 teammate message 有 80 則
-用 `<agent-message>` 而不是 `<teammate-message>` 包，目前全文渲染、算成一般 user turn。
-修法很小（兩個標籤都收），但 teammate 偵測整體要不要改成只認標籤、不看散文，
-一起留到下次決定。
 
 **slash / bang command 不算 turn**，維持改動前的行為。
 `/goal` 這類 invocation 會觸發一整輪工作，照第 5 項的定義應該算；

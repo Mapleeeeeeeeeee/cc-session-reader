@@ -649,6 +649,44 @@ func TestCompactTeammateMessage_GivenNonTeammate_ThenReturnsFalse(t *testing.T) 
 	}
 }
 
+// Regression: <agent-message> is a second tag shape the harness uses for the
+// same kind of message, carrying the sender in `from` instead of
+// `teammate_id`. Before this fix only <teammate-message> was recognized, so
+// 80 of 1,112 teammate messages in a 60-day sample rendered as raw XML and
+// counted as ordinary user turns (ADR-008 "沒有解決的").
+func TestCompactTeammateMessage_GivenAgentMessageVariant_ThenCompactsToTheSameShape(t *testing.T) {
+	input := `<agent-message from="cdcv13-finish">
+Rebase 完成。
+</agent-message>`
+
+	got, ok := CompactTeammateMessage(input)
+	if !ok {
+		t.Fatal("CompactTeammateMessage returned false")
+	}
+	want := "[teammate: cdcv13-finish]\nRebase 完成。"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// A sampled <agent-message> carried no attributes at all, so `from` is empty.
+// The label must degrade to "[teammate]" rather than the malformed
+// "[teammate: ]".
+func TestCompactTeammateMessage_GivenAgentMessageWithNoAttributes_ThenOmitsTheIDFromTheLabel(t *testing.T) {
+	input := `<agent-message>
+狀態更新。
+</agent-message>`
+
+	got, ok := CompactTeammateMessage(input)
+	if !ok {
+		t.Fatal("CompactTeammateMessage returned false")
+	}
+	want := "[teammate]\n狀態更新。"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
 // --- CompactCommandInjection tests ---
 
 func TestCompactCommandInjection_GivenCommandXML_ThenReturnsOneLine(t *testing.T) {

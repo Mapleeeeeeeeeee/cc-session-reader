@@ -74,10 +74,62 @@ func CompactSkillInjection(user *UserMessage, seenSkills map[string]bool) string
 	return fmt.Sprintf("[skill: %s]", user.SkillName)
 }
 
+// teammateTagVariant describes one XML shape the harness has used to wrap a
+// message from another Claude session. Open is left unterminated (no closing
+// ">") so it matches regardless of which attributes the harness adds to the
+// tag.
+type teammateTagVariant struct {
+	Open   string
+	Close  string
+	IDAttr string
+}
+
+// TeammateTagVariants enumerates every tag shape observed in transcripts.
+// `<teammate-message>` is the original form; `<agent-message>` appeared later
+// carrying the sender in `from` instead of `teammate_id`, without the
+// detection prose ever changing. classify.go and CompactTeammateMessage both
+// read this list so a third variant only needs to be added here once.
+var TeammateTagVariants = []teammateTagVariant{
+	{Open: "<teammate-message", Close: "</teammate-message>", IDAttr: "teammate_id"},
+	{Open: "<agent-message", Close: "</agent-message>", IDAttr: "from"},
+}
+
+// HasTeammateMessageTag reports whether text contains an opening tag of any
+// known teammate-message variant.
+func HasTeammateMessageTag(text string) bool {
+	for _, variant := range TeammateTagVariants {
+		if strings.Contains(text, variant.Open) {
+			return true
+		}
+	}
+	return false
+}
+
+// nextTeammateTagMatch finds the earliest occurrence of any teammate tag
+// variant's opening tag in text, returning the variant and its index, or
+// (nil, -1) if none is present. Earliest-first ordering keeps blocks in
+// document order when a message mixes tag variants.
+func nextTeammateTagMatch(text string) (*teammateTagVariant, int) {
+	var match *teammateTagVariant
+	matchIdx := -1
+	for i := range TeammateTagVariants {
+		variant := &TeammateTagVariants[i]
+		idx := strings.Index(text, variant.Open)
+		if idx < 0 {
+			continue
+		}
+		if matchIdx < 0 || idx < matchIdx {
+			matchIdx = idx
+			match = variant
+		}
+	}
+	return match, matchIdx
+}
+
 // CompactTeammateMessage strips the harness warning boilerplate from a
-// teammate message, keeping only the teammate ID, summary, and body content.
+// teammate message, keeping only the sender ID, summary, and body content.
 func CompactTeammateMessage(text string) (string, bool) {
-	if !strings.Contains(text, "<teammate-message") {
+	if !HasTeammateMessageTag(text) {
 		return "", false
 	}
 
@@ -87,12 +139,12 @@ func CompactTeammateMessage(text string) (string, bool) {
 		text = text[:idx]
 	}
 
-	// May contain multiple <teammate-message> blocks.
+	// May contain multiple teammate-message blocks, possibly mixing variants.
 	var parts []string
 	remaining := text
 	for {
-		openIdx := strings.Index(remaining, "<teammate-message")
-		if openIdx < 0 {
+		variant, openIdx := nextTeammateTagMatch(remaining)
+		if variant == nil {
 			break
 		}
 		// Extract attributes from the opening tag.
@@ -101,30 +153,35 @@ func CompactTeammateMessage(text string) (string, bool) {
 			break
 		}
 		openingTag := remaining[openIdx : openIdx+tagEnd+1]
-		tmID := extractXMLAttr(openingTag, "teammate_id")
+		id := extractXMLAttr(openingTag, variant.IDAttr)
 		summary := extractXMLAttr(openingTag, "summary")
 
-		// Extract body between > and </teammate-message>.
+		// Extract body between the opening tag and its matching close tag.
 		bodyStart := openIdx + tagEnd + 1
-		closeTag := "</teammate-message>"
-		closeIdx := strings.Index(remaining[bodyStart:], closeTag)
+		closeIdx := strings.Index(remaining[bodyStart:], variant.Close)
 		if closeIdx < 0 {
 			break
 		}
 		body := strings.TrimSpace(remaining[bodyStart : bodyStart+closeIdx])
 
-		// Format the compact line.
+		// "[teammate]" with no ID covers the attribute-less <agent-message>
+		// the harness has been observed to emit, rather than a stray colon.
+		label := "teammate"
+		if id != "" {
+			label = "teammate: " + id
+		}
+
 		var line string
 		if isIdleNotification(body) {
-			line = fmt.Sprintf("[teammate: %s] idle", tmID)
+			line = fmt.Sprintf("[%s] idle", label)
 		} else if summary != "" {
-			line = fmt.Sprintf("[teammate: %s %q]\n%s", tmID, summary, body)
+			line = fmt.Sprintf("[%s %q]\n%s", label, summary, body)
 		} else {
-			line = fmt.Sprintf("[teammate: %s]\n%s", tmID, body)
+			line = fmt.Sprintf("[%s]\n%s", label, body)
 		}
 		parts = append(parts, line)
 
-		remaining = remaining[bodyStart+closeIdx+len(closeTag):]
+		remaining = remaining[bodyStart+closeIdx+len(variant.Close):]
 	}
 	if len(parts) == 0 {
 		return "", false
