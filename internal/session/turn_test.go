@@ -64,6 +64,26 @@ func TestCountsAsTurn_GivenMessageKind_WhenCounted_ThenFollowsWorkUnitPolicy(t *
 			message: UserMessage{CommandMarker: "[/goal]"},
 			want:    false,
 		},
+		"a coordinator message is a turn: it starts a round of work like a teammate message": {
+			message: UserMessage{Text: "…", IsCoordinatorMessage: true},
+			want:    true,
+		},
+		"a continuation prompt is not: it is the tail of an invocation already started elsewhere": {
+			message: UserMessage{Text: "Continue from where you left off.", IsContinuePrompt: true},
+			want:    false,
+		},
+		"a worker-fork preamble is a turn: it starts the fork's work": {
+			message: UserMessage{Text: "…", IsForkBoilerplate: true},
+			want:    true,
+		},
+		"a no-visible-output nudge is a turn: it asks for a new response, not a report of one": {
+			message: UserMessage{Text: "…", IsNoVisibleOutputNudge: true},
+			want:    true,
+		},
+		"a mid-turn user message is not: the harness says it arrives within the running turn": {
+			message: UserMessage{Text: "…", IsMidTurnUserMessage: true, MidTurnUserText: "改一下這裡"},
+			want:    false,
+		},
 	}
 
 	for name, tc := range tests {
@@ -94,6 +114,39 @@ func TestCompactStopHookGoal_GivenNoCondition_WhenCompacted_ThenKeepsTheNotice(t
 
 	if got := CompactStopHookGoal(user); got != user.Text {
 		t.Errorf("CompactStopHookGoal() = %q, want the original notice", got)
+	}
+}
+
+func TestCompactCoordinatorMessage_GivenNotice_WhenCompacted_ThenStripsTheOpeningLine(t *testing.T) {
+	text := "The coordinator sent a message while you were working:\nplease also update the README"
+
+	got := CompactCoordinatorMessage(text)
+
+	if want := "[coordinator]\nplease also update the README"; got != want {
+		t.Errorf("CompactCoordinatorMessage() = %q, want %q", got, want)
+	}
+}
+
+func TestCompactForkBoilerplate_GivenPreambleWithDirective_WhenCompacted_ThenKeepsOnlyTheDirective(t *testing.T) {
+	text := "<fork-boilerplate>\nYou are a worker fork. Execute ONE directive, then stop.\n" +
+		"</fork-boilerplate>\nFix the failing test."
+
+	got := CompactForkBoilerplate(text)
+
+	if want := "[fork]\nFix the failing test."; got != want {
+		t.Errorf("CompactForkBoilerplate() = %q, want %q", got, want)
+	}
+}
+
+// A fork preamble with no directive after the closing tag still leaves
+// something to read: the marker on its own.
+func TestCompactForkBoilerplate_GivenPreambleWithNoDirective_WhenCompacted_ThenKeepsOnlyTheMarker(t *testing.T) {
+	text := "<fork-boilerplate>\nYou are a worker fork.\n</fork-boilerplate>"
+
+	got := CompactForkBoilerplate(text)
+
+	if want := "[fork]"; got != want {
+		t.Errorf("CompactForkBoilerplate() = %q, want %q", got, want)
 	}
 }
 

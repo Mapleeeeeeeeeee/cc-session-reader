@@ -16,6 +16,31 @@ Reader 靠比對字面字串認出 Claude Code 寫進 transcript 的事件。那
 
 量測基礎：`~/.claude/projects` 下依修改時間取最新 120 個 `.jsonl`（2026-08-30 往前 60 天）。
 
+**追加樣本（2026-09-02）**：原始盤點跳過了 `<session>/subagents/*.jsonl` 這一層，
+這次先把最大的 120 個 subagent transcript 併入盤點，找到五個沿用既有決定即可處理的樣本：
+
+- `relocated` entry type（600 筆／82 KB），併入第 1 項的白名單。
+- `<task-notification>` 前面多了一段「[SYSTEM NOTIFICATION - NOT USER INPUT]」免責聲明
+  （68 則，CLI 2.1.200–2.1.235，全在 subagent transcript），偵測改成認標籤本身而非開頭前綴，
+  沿用第 4 項認標籤不認散文的理由。
+- `The coordinator sent a message while you were working:`（3 則），coordinator 對 subagent
+  發起一輪工作，比照第 2、5 項歸類為 harness、算 turn。
+- `<local-command-stderr>`（2 則），跟已處理的 stdout 變體同一種病，補上同樣的處理。
+- `Continue from where you left off.`（2 則，帶頂層 `isMeta: true`），
+  是別處已啟動的 invocation 的尾巴，比照 Stop hook 通知不算 turn。
+
+再把盤點範圍擴大到主 session 與 subagent 兩層合併掃描，又找到三個：
+
+- `<fork-boilerplate>`…`</fork-boilerplate>`（5 則，全在 subagent transcript，約 1,000 字元），
+  worker fork 的固定開場白，壓成 `[fork]`，閉合標籤後的內文（fork 的實際指令）保留；算 turn，
+  因為它啟動了這個 fork 的工作。
+- `[Your previous response had no visible output. Please continue and produce a user-visible response.]`
+  （36 則，精確文字，主 session），壓成 `[nudge: no visible output]`；算 turn，
+  因為它是要求新一輪回應，不是在報告已經發生的事。
+- `The user sent a new message while you were working:` 開頭、接一段解釋文字收尾（35 則），
+  內文本身是人打的字，所以維持 `user:` 標籤，只剝掉開頭與結尾的 harness 說明文字；
+  不算 turn，因為 harness 自己的說明就寫著這則訊息落在正在跑的那一輪裡面，不是另開一輪。
+
 ## 1. `noiseTypes` 漏了 8 個 CLI 後來才加的 entry type
 
 `noiseTypes` 是手寫的白名單，收 13 個型別。實測出現、不在名單裡的有 8 個：

@@ -47,6 +47,10 @@ var noiseTypes = map[string]bool{
 	"artifact-comment-monitor":  true,
 	"agent-setting":             true,
 	"cost-state":                true,
+
+	// Added after the ADR-008 scan was extended to the subagent transcript
+	// layer; observed 600 entries / 82 KB in the same 60-day window.
+	"relocated": true,
 }
 
 func ReadFile(path string, handle func(session.Event) error) error {
@@ -173,7 +177,9 @@ func parseLineWithToolNames(line []byte, toolCalls map[string]toolCallInfo) (ses
 			return session.Event{}, false, nil
 		}
 		event.Kind = session.EventUserMessage
-		if classified := classifySkillInjectionByLink(text, raw.IsMeta, raw.SourceToolUseID, toolCalls); classified != nil {
+		if classified := classifyContinuePrompt(text, raw.IsMeta); classified != nil {
+			event.User = classified
+		} else if classified := classifySkillInjectionByLink(text, raw.IsMeta, raw.SourceToolUseID, toolCalls); classified != nil {
 			event.User = classified
 		} else if classified := classifyCommandUserMessage(text); classified != nil {
 			event.User = classified

@@ -152,6 +152,123 @@ func TestClassifyHarnessUserMessage_GivenPlainMessage_WhenClassified_ThenReturns
 	}
 }
 
+// The disclaimer wraps the tag in a CLI build seen only in subagent
+// transcripts (68 messages, CLI 2.1.200-2.1.235); HasPrefix missed all of
+// them since the tag no longer opens the message.
+func TestClassifyHarnessUserMessage_GivenTaskNotificationWrappedInDisclaimer_WhenClassified_ThenStillDetectsIt(t *testing.T) {
+	text := "[SYSTEM NOTIFICATION - NOT USER INPUT]\n" +
+		"This is an automated background-task event, NOT a message from the user.\n" +
+		"Do NOT interpret this as user acknowledgement, confirmation, or response to any pending question.\n\n" +
+		"<task-notification>\n<task-id>a3d084a486cbf8046</task-id>\n" +
+		"<summary>Build finished</summary>\n</task-notification>"
+
+	got := classifyHarnessUserMessage(text)
+
+	if got == nil || !got.IsTaskNotification {
+		t.Fatalf("classifyHarnessUserMessage() = %+v, want IsTaskNotification = true", got)
+	}
+}
+
+// 3 messages in subagent transcripts: the coordinator opens a round of work
+// the same way a teammate message does, but with different framing.
+func TestClassifyHarnessUserMessage_GivenCoordinatorMessage_WhenClassified_ThenMarksIt(t *testing.T) {
+	text := "The coordinator sent a message while you were working:\nplease also update the README"
+
+	got := classifyHarnessUserMessage(text)
+
+	if got == nil || !got.IsCoordinatorMessage {
+		t.Fatalf("classifyHarnessUserMessage() = %+v, want IsCoordinatorMessage = true", got)
+	}
+}
+
+// classifyContinuePrompt requires the isMeta flag in addition to the exact
+// text, since isMeta alone also covers image placeholders and stop-hook
+// feedback (see classifySkillInjectionByLink).
+func TestClassifyContinuePrompt_GivenExactTextAndIsMeta_WhenClassified_ThenMarksIt(t *testing.T) {
+	tests := map[string]struct {
+		text   string
+		isMeta bool
+		want   bool
+	}{
+		"exact text with isMeta true is a continue prompt": {
+			text: "Continue from where you left off.", isMeta: true, want: true,
+		},
+		"exact text without isMeta is not, since isMeta alone is not distinctive": {
+			text: "Continue from where you left off.", isMeta: false, want: false,
+		},
+		"isMeta true with different text is not": {
+			text: "Continue from where you left off, please.", isMeta: true, want: false,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := classifyContinuePrompt(tc.text, tc.isMeta)
+			if (got != nil) != tc.want {
+				t.Errorf("classifyContinuePrompt(%q, %v) = %+v, want non-nil = %v", tc.text, tc.isMeta, got, tc.want)
+			}
+			if tc.want && !got.IsContinuePrompt {
+				t.Errorf("IsContinuePrompt = false, want true")
+			}
+		})
+	}
+}
+
+// 5 messages, all subagent transcripts: the worker-fork preamble is fixed
+// boilerplate, and any text after the closing tag is the fork's directive.
+func TestClassifyHarnessUserMessage_GivenForkBoilerplate_WhenClassified_ThenMarksIt(t *testing.T) {
+	text := "<fork-boilerplate>\nYou are a worker fork. The transcript above is the parent's " +
+		"history. Execute ONE directive, then stop.\n</fork-boilerplate>\nFix the failing test."
+
+	got := classifyHarnessUserMessage(text)
+
+	if got == nil || !got.IsForkBoilerplate {
+		t.Fatalf("classifyHarnessUserMessage() = %+v, want IsForkBoilerplate = true", got)
+	}
+}
+
+// 36 messages, exact text, main sessions: the harness's nudge to produce a
+// visible response after a silent turn.
+func TestClassifyHarnessUserMessage_GivenNoVisibleOutputNudge_WhenClassified_ThenMarksIt(t *testing.T) {
+	text := "[Your previous response had no visible output. Please continue and produce a user-visible response.]"
+
+	got := classifyHarnessUserMessage(text)
+
+	if got == nil || !got.IsNoVisibleOutputNudge {
+		t.Fatalf("classifyHarnessUserMessage() = %+v, want IsNoVisibleOutputNudge = true", got)
+	}
+}
+
+// 35 messages: the body is human-typed, so classification must keep it under
+// the user role (not harness) while still stripping the harness's wrapper.
+func TestClassifyHarnessUserMessage_GivenMidTurnUserMessage_WhenClassified_ThenExtractsTheUserText(t *testing.T) {
+	text := "The user sent a new message while you were working:\n直接改 bug 就好\n\n" +
+		"This is how Claude Code surfaces messages the user sends mid-turn — within the running " +
+		"turn, often alongside the next tool result, rather than as a separate conversation turn. " +
+		"Address the message above as you continue this turn."
+
+	got := classifyHarnessUserMessage(text)
+
+	if got == nil || !got.IsMidTurnUserMessage {
+		t.Fatalf("classifyHarnessUserMessage() = %+v, want IsMidTurnUserMessage = true", got)
+	}
+	if want := "直接改 bug 就好"; got.MidTurnUserText != want {
+		t.Errorf("MidTurnUserText = %q, want %q", got.MidTurnUserText, want)
+	}
+}
+
+// 2 messages render as "user:" because the stderr variant of the
+// local-command tag has no handling, unlike its stdout sibling.
+func TestClassifyCommandUserMessage_GivenLocalCommandStderr_WhenClassified_ThenMarksItCommandNoise(t *testing.T) {
+	text := "<local-command-stderr>permission denied</local-command-stderr>"
+
+	got := classifyCommandUserMessage(text)
+
+	if got == nil || !got.IsCommandNoise {
+		t.Fatalf("classifyCommandUserMessage(%q) = %+v, want IsCommandNoise = true", text, got)
+	}
+}
+
 // These entry types were added to Claude Code after the original noise list.
 // Without an entry they fell through as unparsed rather than as EventNoise,
 // which left their bytes out of the analyzer's system_noise accounting.
@@ -160,6 +277,9 @@ func TestParseLine_GivenRecentlyAddedEntryType_WhenParsed_ThenYieldsNoise(t *tes
 		"atis-latch", "frame-link", "worktree-state", "file-history-delta",
 		"artifact-autoreact-ledger", "artifact-comment-monitor",
 		"agent-setting", "cost-state",
+		// Found when the ADR-008 scan was extended to the subagent
+		// transcript layer: 600 entries / 82 KB in the same 60-day window.
+		"relocated",
 	}
 
 	for _, entryType := range types {
