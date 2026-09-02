@@ -30,6 +30,12 @@ type rawEntry struct {
 	// preceding tool_use's name, not treated as a marker on its own.
 	IsMeta          bool   `json:"isMeta"`
 	SourceToolUseID string `json:"sourceToolUseID"`
+
+	// PromptSource is written by Claude Code (CLI >= 2.1.165) on some user
+	// entries: "typed", "sdk", "system", "queued", "suggestion_accepted".
+	// Absent on older transcripts and on harness injections/mid-turn relays
+	// even under current CLI (ADR-009).
+	PromptSource string `json:"promptSource"`
 }
 
 type rawMessage struct {

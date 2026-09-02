@@ -50,8 +50,9 @@ inherit 記住讀取進度，重複呼叫同一個命令即自動翻頁：
 ## 輸出行為
 
 - 每則訊息的 header 只帶時鐘 `[HH:MM:SS]`，日期在換日時以獨立一行 `--- YYYY-MM-DD ---` 標示
-- 角色標籤三種：`user:` 是人打的、`assistant:` 是 Claude 的回應、`harness:` 是 Claude Code 自己塞進對話的訊息
-  （stop hook 目標、背景任務完成通知、壓縮續接摘要、中斷標記等），不是使用者說的話
+- 角色標籤四種：`user:` 是人打的、`assistant:` 是 Claude 的回應、`harness:` 是 Claude Code 自己塞進對話的訊息
+  （stop hook 目標、背景任務完成通知、壓縮續接摘要、中斷標記等），不是使用者說的話；
+  `user (sdk):` 是透過 SDK 或 `claude -p` 程式化送入的訊息，不是人手打的，但在對話裡仍站在使用者的位置
 - tool 摘要行只在失敗時標 `FAILED`，成功不另標記；Bash 行帶 `| <程式名 子命令>` 讓讀者知道實際跑了什麼
 - 當 session 內有 `cc-session inherit/read/context` 呼叫時，連續的同 session 呼叫會被壓成一行：
   `(cc-session#Y1dg: inherited session 16d06326 here, 1320 lines omitted)`

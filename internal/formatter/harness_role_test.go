@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/claudecodec"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
 )
 
@@ -128,6 +129,103 @@ func TestFormatReadEvents_GivenMidTurnUserMessage_WhenRendered_ThenLabelsItUserW
 	}
 	if strings.Contains(got, "sent a new message while you were working") || strings.Contains(got, "surfaces messages") {
 		t.Errorf("output still contains the harness wrapper text\ngot:\n%s", got)
+	}
+}
+
+// ADR-009: promptSource="sdk" means the message is still the user's
+// position in the transcript, but wasn't typed by a person, so it gets its
+// own label rather than folding into either "user:" or "harness:".
+func TestFormatReadEvents_GivenSDKPromptSource_WhenRendered_ThenLabelsItUserSDK(t *testing.T) {
+	events := []session.Event{{
+		Kind:      session.EventUserMessage,
+		Timestamp: "2026-09-02T00:00:00Z",
+		User:      &session.UserMessage{Text: "run the full test suite", PromptSource: session.PromptSourceSDK},
+	}}
+
+	var out bytes.Buffer
+	if err := FormatReadEvents(events, nil, 0, 0, FormatOptions{}, &out); err != nil {
+		t.Fatalf("FormatReadEvents returned error: %v", err)
+	}
+
+	want := "[00:00:00] user (sdk):\nrun the full test suite"
+	if got := out.String(); !strings.Contains(got, want) {
+		t.Errorf("output missing %q\ngot:\n%s", want, got)
+	}
+}
+
+// ADR-009 decision 3: the 15 observed promptSource="system" messages whose
+// body no text classifier recognizes still render in full (not compacted or
+// dropped), but under the harness role rather than plain "user:".
+func TestFormatReadEvents_GivenSystemPromptSourceOnUnrecognizedBody_WhenRendered_ThenLabelsItHarnessInFull(t *testing.T) {
+	events := []session.Event{{
+		Kind:      session.EventUserMessage,
+		Timestamp: "2026-09-02T00:00:00Z",
+		User: &session.UserMessage{
+			Text:         "Check if background task abc123 finished.",
+			PromptSource: session.PromptSourceSystem,
+		},
+	}}
+
+	var out bytes.Buffer
+	if err := FormatReadEvents(events, nil, 0, 0, FormatOptions{}, &out); err != nil {
+		t.Fatalf("FormatReadEvents returned error: %v", err)
+	}
+
+	want := "[00:00:00] harness:\nCheck if background task abc123 finished."
+	if got := out.String(); !strings.Contains(got, want) {
+		t.Errorf("output missing %q\ngot:\n%s", want, got)
+	}
+}
+
+// ADR-009 decision 4: 0 observed conflicts, but pinned so a future harness
+// rewording can't silently mislabel a message a human actually sent — a
+// human promptSource overrules a harness-shaped body and renders under the
+// user role with the body kept verbatim (no compact form applied). The
+// override happens in the parser (claudecodec.ParseLine), so this exercises
+// the full pipeline rather than hand-assembling a UserMessage state the
+// parser would never actually produce.
+func TestFormatReadEvents_GivenHumanPromptSourceOnHarnessShapedBody_WhenRendered_ThenLabelsItUser(t *testing.T) {
+	line := `{"type":"user","timestamp":"2026-09-02T00:00:00Z",` +
+		`"message":{"role":"user","content":"[Request interrupted by user]"},` +
+		`"promptSource":"typed"}`
+	event, ok, err := claudecodec.ParseLine([]byte(line))
+	if err != nil || !ok {
+		t.Fatalf("ParseLine(%q) = %v, %v, %v", line, event, ok, err)
+	}
+
+	var out bytes.Buffer
+	if err := FormatReadEvents([]session.Event{event}, nil, 0, 0, FormatOptions{}, &out); err != nil {
+		t.Fatalf("FormatReadEvents returned error: %v", err)
+	}
+
+	got := out.String()
+	if want := "[00:00:00] user:\n[Request interrupted by user]"; !strings.Contains(got, want) {
+		t.Errorf("output missing %q\ngot:\n%s", want, got)
+	}
+	if strings.Contains(got, "[interrupted]") {
+		t.Errorf("output still shows the compact harness marker\ngot:\n%s", got)
+	}
+}
+
+// ADR-009 decision 5: a message with no promptSource field (older CLI, or a
+// harness injection/mid-turn relay under current CLI) keeps today's
+// behavior exactly — this pins that the new field is additive, not a
+// default that changes existing output.
+func TestFormatReadEvents_GivenNoPromptSource_WhenRendered_ThenBehavesAsBeforeADR009(t *testing.T) {
+	events := []session.Event{{
+		Kind:      session.EventUserMessage,
+		Timestamp: "2026-09-02T00:00:00Z",
+		User:      &session.UserMessage{Text: "為什麼 K 會被高估？"},
+	}}
+
+	var out bytes.Buffer
+	if err := FormatReadEvents(events, nil, 0, 0, FormatOptions{}, &out); err != nil {
+		t.Fatalf("FormatReadEvents returned error: %v", err)
+	}
+
+	want := "[00:00:00] user:\n為什麼 K 會被高估？"
+	if got := out.String(); !strings.Contains(got, want) {
+		t.Errorf("output missing %q\ngot:\n%s", want, got)
 	}
 }
 

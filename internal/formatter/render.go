@@ -52,10 +52,13 @@ const (
 // Role labels written in the per-message header. RoleHarness separates
 // messages the harness injected from messages the user typed: before ADR-008
 // both were labelled "user", so a reader inheriting the transcript could not
-// tell which lines a person actually wrote.
+// tell which lines a person actually wrote. RoleUserSDK further separates a
+// promptSource="sdk" message (ADR-009): it is still the user's position in
+// the transcript, but not something a person typed.
 const (
 	RoleUser    = "user"
 	RoleHarness = "harness"
+	RoleUserSDK = "user (sdk)"
 )
 
 // userRender is the rendered form of a user-message event: the body to print,
@@ -150,11 +153,28 @@ func renderUserMessage(user *session.UserMessage, opts FormatOptions, seenSkills
 	if strings.TrimSpace(user.Text) == "" {
 		return userRender{}
 	}
-	return userRender{body: user.Text, role: RoleUser, show: true}
+	return userRender{body: user.Text, role: plainTextRole(user.PromptSource), show: true}
 }
 
 func harnessRender(body string) userRender {
 	return userRender{body: body, role: RoleHarness, show: true}
+}
+
+// plainTextRole resolves the role label for a message none of the text
+// classifiers recognized. ADR-009 decision 1/3: promptSource="system" means
+// harness injected it even though no known shape matched (renders in full,
+// unlike a recognized shape's compact form); "sdk" gets its own label so a
+// reader can tell it wasn't typed by a person. Every other value, including
+// absent, keeps the plain user role.
+func plainTextRole(promptSource string) string {
+	switch promptSource {
+	case session.PromptSourceSystem:
+		return RoleHarness
+	case session.PromptSourceSDK:
+		return RoleUserSDK
+	default:
+		return RoleUser
+	}
 }
 
 type pendingTool struct {
