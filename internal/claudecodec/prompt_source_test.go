@@ -95,12 +95,11 @@ func TestParseLine_GivenSystemPromptSourceOnUnrecognizedShape_WhenParsed_ThenLea
 
 // ADR-009 decision 4: 0 observed conflicts, but the rule is pinned so a
 // future rewording of a harness message can't silently mislabel a message a
-// human actually sent (e.g. a person pasting harness-looking text while
-// programmatically driving the CLI via the SDK).
+// human actually sent.
 func TestParseLine_GivenHumanPromptSourceOnHarnessShapedBody_WhenParsed_ThenPromptSourceWins(t *testing.T) {
 	line := `{"type":"user","timestamp":"2026-09-02T00:00:00Z",` +
 		`"message":{"role":"user","content":"[Request interrupted by user]"},` +
-		`"promptSource":"sdk"}`
+		`"promptSource":"typed"}`
 
 	got := userMessageEventFor(t, line)
 
@@ -109,6 +108,29 @@ func TestParseLine_GivenHumanPromptSourceOnHarnessShapedBody_WhenParsed_ThenProm
 	}
 	if got.Text != "[Request interrupted by user]" {
 		t.Errorf("Text = %q, want the original body kept verbatim", got.Text)
+	}
+	if got.PromptSource != session.PromptSourceTyped {
+		t.Errorf("PromptSource = %q, want %q", got.PromptSource, session.PromptSourceTyped)
+	}
+}
+
+// Regression: v0.1.76 (ADR-009, PR #13) treated "sdk" as a human source, so
+// this task-notification's harness shape got overridden and it rendered as
+// raw XML under "user (sdk):" instead of the compact form under "harness:".
+// Measured on session 5646d1ce: output grew from 217,272 to 234,940 bytes and
+// every harness injection in an sdk-driven session lost its compact form.
+// "sdk" marks the session's driver, not who authored a given entry — a
+// harness injection inherits it from the surrounding session the same way a
+// human-typed prompt does, so a recognized harness shape must win over it.
+func TestParseLine_GivenSDKPromptSourceOnRecognizedHarnessShape_WhenParsed_ThenKeepsTheClassifiedForm(t *testing.T) {
+	line := `{"type":"user","timestamp":"2026-09-02T00:00:00Z",` +
+		`"message":{"role":"user","content":"<task-notification>\n<summary>benchmark done</summary>\n</task-notification>"},` +
+		`"promptSource":"sdk"}`
+
+	got := userMessageEventFor(t, line)
+
+	if !got.IsTaskNotification {
+		t.Fatalf("IsTaskNotification = false, want true: an sdk promptSource must not override a recognized harness shape")
 	}
 	if got.PromptSource != session.PromptSourceSDK {
 		t.Errorf("PromptSource = %q, want %q", got.PromptSource, session.PromptSourceSDK)

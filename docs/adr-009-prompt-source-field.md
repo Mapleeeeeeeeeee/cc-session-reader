@@ -1,10 +1,12 @@
 # ADR-009：訊息來源先看 `promptSource` 欄位，字串比對降為備援
 
-**狀態**：已實作（2026-09-02）。`sdk` 來源標 `user (sdk):`；context 格式的短前綴是 `S:`（`U:`/`H:` 之外新增一個）。
+**狀態**：已實作（2026-09-02），決定 4 於同日修正排除 `sdk`（見該節）。
+字串分類認不出形狀的 `sdk` 來源標 `user (sdk):`；context 格式的短前綴是 `S:`（`U:`/`H:` 之外新增一個）。
 
 判斷 promptSource 是否與字串分類衝突（決定 4）、以及決定 3 的「system 但形狀認不出來」，
 兩者的解析都收在 parser 層（`claudecodec.parseLineWithToolCalls`）：字串分類先跑一次，
-結果不論如何都先掛上 `PromptSource`；只有人的來源對上 harness 形狀時才整則重置成純文字。
+結果不論如何都先掛上 `PromptSource`；只有 `typed`、`queued`、`suggestion_accepted` 這三個人的來源
+對上 harness 形狀時才整則重置成純文字，`sdk` 不在此列。
 render 層因此不需要重新判斷字串分類，只在「字串分類完全沒認出形狀」的兜底分支上，
 依 `PromptSource` 決定 `harness:`／`user (sdk):`／`user:`（`session.UserMessage.IsClassifiedAsHarness`
 與 `formatter.plainTextRole`）。實測 `b11858cf` 的 8 則 `system` 訊息全是 `<task-notification>`
@@ -65,12 +67,23 @@ CLI 從 2.1.165 起在 user entry 上寫 `promptSource` 欄位，這份 ADR 記�
 
 1. **有 `promptSource` 時以它為準。** `system` 歸 harness 角色；`typed`、`queued`、`suggestion_accepted` 歸 user；
    `sdk` 歸 user（它是呼叫方下的指令，在那份 transcript 裡就是使用者的位置），但在 header 標 `user (sdk):`，
-   讓讀者知道不是人手打的。
+   讓讀者知道不是人手打的。**`sdk` 標的是這份 session 由誰驅動，不是這一則訊息由誰寫的**：
+   harness 注入（`<task-notification>`、stop hook 等）在 SDK 或 `claude -p` 驅動的 session 裡
+   一樣會帶 `sdk`，跟人手打的訊息沒有欄位上的差異，所以決定 4 的字串分類覆蓋規則排除 `sdk`。
 2. **`CountsAsTurn()` 對帶 `promptSource` 的訊息一律回 true**，不分值。五種值實測都啟動一輪。
    ADR-008 第 5 項那張逐種類的表只剩「沒帶」的訊息需要。
 3. **字串比對留著，只處理沒帶的訊息。** 沒帶的訊息才需要知道是哪一種注入（決定 compact 形式）。
    帶 `promptSource=system` 但字串比對判不出形狀的（上面那 15 則），渲染全文、標 `harness:`。
-4. **`promptSource` 與字串比對結論相反時以 `promptSource` 為準。** 實測 0 例，這條是預先定好，避免以後各寫各的。
+4. **`promptSource` 與字串比對結論相反時以 `promptSource` 為準，但 `sdk` 除外。** `typed`、`queued`、
+   `suggestion_accepted` 這三個值只在人打字或按下建議時才會出現，跟字串分類衝突就代表分類錯了；
+   `sdk` 不是，它在整份 session 裡固定不變，harness 注入繼承的是驅動方式而不是訊息作者。
+   字串分類認出 harness 形狀時，`sdk` 保留那個分類，渲染成 compact 形式、標 `harness:`；
+   分類認不出的 `sdk` 訊息才標 `user (sdk):`。`CountsAsTurn()` 比照同一條界線：
+   `sdk` 上帶 ADR-008 判定不算一輪的形狀（`interrupted`、`agents-stopped`、stop hook、skill 注入等）時，
+   跟著形狀的判定走，不再套用「帶 `promptSource` 就一定算一輪」的通則。
+
+   這條規則原本寫的是 `sdk` 也適用覆蓋（實測 0 衝突），v0.1.76（PR #13）依此實作後，
+   sdk 來源中有 harness 形狀的訊息以 v0.1.76 實測會被展開成全文，標成 `user (sdk):`。
 5. **2.1.165 以前的 transcript 走現行路徑**，不變。
 
 ## 不做的

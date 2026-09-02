@@ -207,6 +207,35 @@ func TestFormatReadEvents_GivenHumanPromptSourceOnHarnessShapedBody_WhenRendered
 	}
 }
 
+// Regression: v0.1.76 (ADR-009, PR #13) treated "sdk" as a human source, so
+// a task-notification carrying it lost its compact form and rendered as raw
+// XML under "user (sdk):" instead of "harness:". "sdk" marks the session's
+// driver, not who authored a given entry — a harness injection inherits it
+// from the surrounding sdk-driven session, so a recognized harness shape
+// must still win and render compact under the harness role.
+func TestFormatReadEvents_GivenSDKPromptSourceOnRecognizedHarnessShape_WhenRendered_ThenLabelsItHarnessCompact(t *testing.T) {
+	line := `{"type":"user","timestamp":"2026-09-02T00:00:00Z",` +
+		`"message":{"role":"user","content":"<task-notification>\n<summary>benchmark done</summary>\n</task-notification>"},` +
+		`"promptSource":"sdk"}`
+	event, ok, err := claudecodec.ParseLine([]byte(line))
+	if err != nil || !ok {
+		t.Fatalf("ParseLine(%q) = %v, %v, %v", line, event, ok, err)
+	}
+
+	var out bytes.Buffer
+	if err := FormatReadEvents([]session.Event{event}, nil, 0, 0, FormatOptions{}, &out); err != nil {
+		t.Fatalf("FormatReadEvents returned error: %v", err)
+	}
+
+	got := out.String()
+	if want := "[00:00:00] harness:\n[benchmark done]"; !strings.Contains(got, want) {
+		t.Errorf("output missing %q\ngot:\n%s", want, got)
+	}
+	if strings.Contains(got, "user (sdk)") || strings.Contains(got, "<task-notification>") {
+		t.Errorf("output still shows the raw sdk-labeled form\ngot:\n%s", got)
+	}
+}
+
 // ADR-009 decision 5: a message with no promptSource field (older CLI, or a
 // harness injection/mid-turn relay under current CLI) keeps today's
 // behavior exactly — this pins that the new field is additive, not a
