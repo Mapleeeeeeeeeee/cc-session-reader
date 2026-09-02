@@ -108,6 +108,37 @@ func TestCountsAsTurn_GivenMessageKind_WhenCounted_ThenFollowsWorkUnitPolicy(t *
 			message: UserMessage{Text: "…", IsInterrupted: true, PromptSource: PromptSourceSystem},
 			want:    true,
 		},
+
+		// Regression: v0.1.76 (ADR-009, PR #13) let PromptSource=sdk override
+		// CountsAsTurn unconditionally, same as every other value. "sdk" marks
+		// the session's driver, not who authored a given entry -- a harness
+		// injection inherits it from the surrounding sdk-driven session, so it
+		// must defer to its own shape's verdict (ADR-008) instead of always
+		// counting.
+		"a promptSource of sdk with no recognized shape still counts (it is a genuine sdk-driven prompt)": {
+			message: UserMessage{Text: "…", PromptSource: PromptSourceSDK},
+			want:    true,
+		},
+		"a promptSource of sdk on a task notification counts, per the shape's own verdict": {
+			message: UserMessage{Text: "…", IsTaskNotification: true, PromptSource: PromptSourceSDK},
+			want:    true,
+		},
+		"a promptSource of sdk on an interruption sentinel does not count, per the shape's own verdict": {
+			message: UserMessage{Text: "…", IsInterrupted: true, PromptSource: PromptSourceSDK},
+			want:    false,
+		},
+		"a promptSource of sdk on an agents-stopped notice does not count, per the shape's own verdict": {
+			message: UserMessage{Text: "…", IsAgentsStopped: true, PromptSource: PromptSourceSDK},
+			want:    false,
+		},
+		"a promptSource of sdk on a stop hook notice does not count, per the shape's own verdict": {
+			message: UserMessage{Text: "…", IsStopHookGoal: true, PromptSource: PromptSourceSDK},
+			want:    false,
+		},
+		"a promptSource of sdk on a skill injection does not count, per the shape's own verdict": {
+			message: UserMessage{Text: "…", IsSkillInjection: true, PromptSource: PromptSourceSDK},
+			want:    false,
+		},
 	}
 
 	for name, tc := range tests {

@@ -163,12 +163,18 @@ const (
 )
 
 // IsHumanPromptSource reports whether source names a promptSource value that
-// a person, not the harness, is the origin of: everything except "system"
-// and "" (absent). ADR-009 decision 4 uses this to resolve a promptSource
-// that disagrees with classifyHarnessUserMessage's text-based verdict.
+// always marks a human-authored entry, so it overrules a harness verdict
+// from classifyHarnessUserMessage's text-based classifiers (ADR-009 decision
+// 4): "typed", "queued", "suggestion_accepted". It excludes "system" (the
+// harness) and "sdk": "sdk" marks which driver ran the session, not who
+// authored a given entry, and harness injections (task-notifications, stop
+// hooks, ...) inherit it from the surrounding sdk-driven session just like a
+// human-typed prompt does. A recognized harness shape therefore wins over an
+// "sdk" promptSource instead of being overridden by it (ADR-009 amendment,
+// regression on session 5646d1ce).
 func IsHumanPromptSource(source string) bool {
 	switch source {
-	case PromptSourceTyped, PromptSourceSDK, PromptSourceQueued, PromptSourceSuggestionAccepted:
+	case PromptSourceTyped, PromptSourceQueued, PromptSourceSuggestionAccepted:
 		return true
 	default:
 		return false
@@ -239,8 +245,12 @@ func (u UserMessage) CountsAsTurn() bool {
 	// ADR-009: a message that carries promptSource always started a turn —
 	// measured 89-98% across all five values, including "system" (the
 	// task-notification/stop-hook/etc. table above only still matters for
-	// the 44% of messages with no promptSource at all).
-	if u.PromptSource != "" {
+	// the 44% of messages with no promptSource at all). Exception: "sdk" on
+	// a body a text classifier recognized as a harness shape is inherited
+	// from the sdk-driven session, not evidence this particular entry
+	// started a turn (same reasoning as IsHumanPromptSource), so those defer
+	// to the per-shape verdict below instead of the blanket true.
+	if u.PromptSource != "" && !(u.PromptSource == PromptSourceSDK && u.IsClassifiedAsHarness()) {
 		return true
 	}
 	if u.CommandMarker != "" {
