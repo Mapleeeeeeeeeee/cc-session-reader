@@ -86,6 +86,12 @@ type UserMessage struct {
 	// IsTeammateMessage marks a teammate-message with harness warning boilerplate.
 	IsTeammateMessage bool
 
+	// IsCoordinatorMessage marks a "The coordinator sent a message while you
+	// were working:" notice in a subagent transcript. Like a teammate
+	// message, it starts a round of work rather than describing one already
+	// underway.
+	IsCoordinatorMessage bool
+
 	// IsCommandInjection marks a <command-message>/<command-name> XML block
 	// that precedes a skill injection (distinct from the existing CommandMarker
 	// which covers slash-commands detected via <command-name> at line start).
@@ -116,6 +122,28 @@ type UserMessage struct {
 	// notice that is not fixed boilerplate.
 	IsStopHookGoal bool
 	GoalCondition  string
+
+	// IsContinuePrompt marks the exact-text "Continue from where you left
+	// off." isMeta message. It is the tail of an invocation already started
+	// elsewhere, the same reasoning as the Stop hook notice.
+	IsContinuePrompt bool
+
+	// IsForkBoilerplate marks the harness preamble sent to a worker fork
+	// ("<fork-boilerplate>...</fork-boilerplate>"), possibly followed by the
+	// fork's actual directive after the closing tag.
+	IsForkBoilerplate bool
+
+	// IsNoVisibleOutputNudge marks the fixed harness nudge sent when the
+	// previous assistant turn produced no visible output.
+	IsNoVisibleOutputNudge bool
+
+	// IsMidTurnUserMessage marks a message the user typed while the agent
+	// was still working on the previous turn. Unlike the other harness
+	// subtypes above, the body is genuinely human-typed — the harness only
+	// wraps it in an explanation of when it arrives — so it renders under
+	// the user role. MidTurnUserText is that body with the wrapper stripped.
+	IsMidTurnUserMessage bool
+	MidTurnUserText      string
 }
 
 // CountsAsTurn reports whether this message starts a unit of agent work: an
@@ -133,14 +161,29 @@ type UserMessage struct {
 // The kinds that return false despite preceding an API call are the ones
 // that arrive as the tail of an invocation something else already started:
 // skill and command injections, the Stop hook notice that follows a /goal,
-// and the notice that a skill was re-invoked. Counting those would count one
-// turn twice. CommandMarker is false for the same reason; ADR-008's open
+// the notice that a skill was re-invoked, and the exact-text continuation
+// prompt that resumes a background invocation. Counting those would count
+// one turn twice. CommandMarker is false for the same reason; ADR-008's open
 // questions cover attributing a slash command's turn to one of its entries.
+//
+// IsCoordinatorMessage and IsForkBoilerplate count by the same reasoning as a
+// teammate message — each is another Claude session (a coordinator, or the
+// parent that forked a worker) starting a round of work — rather than by the
+// same by-observation test: both are too rare in the sample (3 and 5
+// messages) to measure what follows them reliably. IsNoVisibleOutputNudge
+// counts because it is a nudge to keep working, not a report of it: it does
+// not describe a round already underway.
+//
+// IsMidTurnUserMessage is false: the harness's own wording says the message
+// "arrives ... within the running turn," so it does not start a new one —
+// same reasoning as the injections that arrive alongside the turn that
+// triggered them.
 func (u UserMessage) CountsAsTurn() bool {
 	if u.CommandMarker != "" {
 		return false
 	}
-	if u.IsTeammateMessage || u.IsTaskNotification || u.IsCompactionSummary {
+	if u.IsTeammateMessage || u.IsTaskNotification || u.IsCompactionSummary ||
+		u.IsCoordinatorMessage || u.IsForkBoilerplate || u.IsNoVisibleOutputNudge {
 		return true
 	}
 	return !u.IsCommandNoise &&
@@ -151,7 +194,9 @@ func (u UserMessage) CountsAsTurn() bool {
 		!u.IsSystemReminder &&
 		!u.IsInterrupted &&
 		!u.IsAgentsStopped &&
-		!u.IsStopHookGoal
+		!u.IsStopHookGoal &&
+		!u.IsContinuePrompt &&
+		!u.IsMidTurnUserMessage
 }
 
 type Usage struct {

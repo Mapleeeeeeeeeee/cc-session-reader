@@ -91,6 +91,12 @@ func renderUserMessage(user *session.UserMessage, opts FormatOptions, seenSkills
 		return userRender{body: body, role: RoleHarness, show: true}
 	}
 
+	// Mid-turn user message: the body is human-typed, so it keeps the user
+	// role — only the harness's timing explanation is stripped.
+	if user.IsMidTurnUserMessage {
+		return userRender{body: user.MidTurnUserText, role: RoleUser, show: true}
+	}
+
 	// Harness-injected subtypes: strip or compact.
 	if user.IsSystemReminder || user.IsContextUsage {
 		return userRender{}
@@ -103,6 +109,15 @@ func renderUserMessage(user *session.UserMessage, opts FormatOptions, seenSkills
 			return harnessRender(body)
 		}
 		return harnessRender(user.Text)
+	}
+	if user.IsCoordinatorMessage {
+		return harnessRender(session.CompactCoordinatorMessage(user.Text))
+	}
+	if user.IsForkBoilerplate {
+		return harnessRender(session.CompactForkBoilerplate(user.Text))
+	}
+	if user.IsNoVisibleOutputNudge {
+		return harnessRender("[nudge: no visible output]")
 	}
 	if user.IsCommandInjection {
 		if body, ok := session.CompactCommandInjection(user.Text); ok {
@@ -127,6 +142,9 @@ func renderUserMessage(user *session.UserMessage, opts FormatOptions, seenSkills
 	}
 	if user.IsInterrupted {
 		return harnessRender("[interrupted]")
+	}
+	if user.IsContinuePrompt {
+		return harnessRender("[continue]")
 	}
 
 	if strings.TrimSpace(user.Text) == "" {

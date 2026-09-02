@@ -208,6 +208,33 @@ func extractXMLAttr(tag, attr string) string {
 	return tag[start : start+end]
 }
 
+// CompactForkBoilerplate renders a worker-fork preamble as "[fork]", keeping
+// whatever directive text follows the closing tag (if any) — the boilerplate
+// itself is fixed and carries no information beyond "this is a fork".
+func CompactForkBoilerplate(text string) string {
+	const marker = "[fork]"
+	const closeTag = "</fork-boilerplate>"
+	idx := strings.Index(text, closeTag)
+	if idx < 0 {
+		return marker
+	}
+	directive := strings.TrimSpace(text[idx+len(closeTag):])
+	if directive == "" {
+		return marker
+	}
+	return marker + "\n" + directive
+}
+
+// CompactCoordinatorMessage renders a coordinator-to-subagent message as
+// "[coordinator]\n<body>", stripping the fixed opening line the same way
+// CompactTeammateMessage strips the teammate warning boilerplate.
+func CompactCoordinatorMessage(text string) string {
+	const marker = "[coordinator]"
+	const openingLine = "The coordinator sent a message while you were working:"
+	body := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(text), openingLine))
+	return marker + "\n" + body
+}
+
 // CompactCommandInjection extracts the command name and args from a
 // <command-message>/<command-name>/<command-args> XML block into a single line.
 func CompactCommandInjection(text string) (string, bool) {

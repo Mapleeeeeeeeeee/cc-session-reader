@@ -18,6 +18,7 @@ const (
 	tagBashInputOpen    = "<bash-input>"
 	tagBashInputClose   = "</bash-input>"
 	tagLocalStdout      = "<local-command-stdout>"
+	tagLocalStderr      = "<local-command-stderr>"
 	tagBashStdout       = "<bash-stdout>"
 	tagBashStderr       = "<bash-stderr>"
 	tagLocalCaveat      = "<local-command-caveat>"
@@ -37,11 +38,33 @@ const (
 	commandMessageOpen   = "<command-message>"
 	skillArgsPrefix      = "ARGUMENTS:"
 
-	taskNotificationOpen = "<task-notification>"
-	compactionSummary    = "This session is being continued from a previous conversation"
-	interruptedPrefix    = "[Request interrupted by user"
-	stopHookPrefix       = "A session-scoped Stop hook is now active with condition:"
-	skillReloadedMarker  = "was loaded earlier"
+	taskNotificationOpen   = "<task-notification>"
+	compactionSummary      = "This session is being continued from a previous conversation"
+	interruptedPrefix      = "[Request interrupted by user"
+	stopHookPrefix         = "A session-scoped Stop hook is now active with condition:"
+	skillReloadedMarker    = "was loaded earlier"
+	coordinatorMessageOpen = "The coordinator sent a message while you were working:"
+
+	// continuePromptText is the exact harness-injected body that resumes an
+	// invocation already started elsewhere. It carries no sourceToolUseID
+	// link the way a skill injection does — only isMeta at the top level —
+	// so it is matched on exact text rather than a prefix, the same way the
+	// stop-hook goal is matched by its fixed wording.
+	continuePromptText = "Continue from where you left off."
+
+	forkBoilerplateOpen  = "<fork-boilerplate>"
+	forkBoilerplateClose = "</fork-boilerplate>"
+
+	// noVisibleOutputNudge is the exact harness nudge sent when an assistant
+	// turn produced no visible output.
+	noVisibleOutputNudge = "[Your previous response had no visible output. Please continue and produce a user-visible response.]"
+
+	// midTurnOpeningLine and midTurnExplanationMarker bracket the human text
+	// in a mid-turn message notice: the harness wraps a message the user sent
+	// while the agent was still working in an explanation of when it arrives,
+	// but the body between them is exactly what the user typed.
+	midTurnOpeningLine       = "The user sent a new message while you were working:"
+	midTurnExplanationMarker = "This is how Claude Code surfaces messages the user sends mid-turn"
 )
 
 var agentsStoppedCount = regexp.MustCompile(`^(\d+) background agents? (?:was|were) stopped`)
@@ -82,9 +105,11 @@ func classifyCommandUserMessage(text string) *session.UserMessage {
 		}
 	}
 
-	// Command output (slash stdout, bash stdout/stderr): droppable body,
-	// surfaced only under -verbose-commands with ANSI stripped at render time.
+	// Command output (slash stdout/stderr, bash stdout/stderr): droppable
+	// body, surfaced only under -verbose-commands with ANSI stripped at
+	// render time.
 	if strings.HasPrefix(trimmed, tagLocalStdout) ||
+		strings.HasPrefix(trimmed, tagLocalStderr) ||
 		strings.HasPrefix(trimmed, tagBashStdout) ||
 		strings.HasPrefix(trimmed, tagBashStderr) {
 		return &session.UserMessage{IsCommandNoise: true, Text: trimmed}
@@ -121,6 +146,17 @@ func classifySkillInjectionByLink(text string, isMeta bool, sourceToolUseID stri
 	}
 }
 
+// classifyContinuePrompt detects the exact-text isMeta continuation prompt
+// that resumes an invocation already started elsewhere. isMeta alone is not
+// a marker (image placeholders and stop-hook feedback also carry it, see
+// classifySkillInjectionByLink), so this also requires the exact text.
+func classifyContinuePrompt(text string, isMeta bool) *session.UserMessage {
+	if !isMeta || strings.TrimSpace(text) != continuePromptText {
+		return nil
+	}
+	return &session.UserMessage{Text: text, IsContinuePrompt: true}
+}
+
 // classifyHarnessUserMessage detects harness-injected user messages that are
 // not direct user input: skill injections, system reminders, teammate messages,
 // context usage blocks, and command injection XML. Returns nil for plain
@@ -142,6 +178,16 @@ func classifyHarnessUserMessage(text string) *session.UserMessage {
 			IsSkillInjection: true,
 			SkillName:        name,
 			SkillArgs:        args,
+		}
+	}
+
+	// Mid-turn user message: the body is genuinely what the user typed, sent
+	// while the agent was still working on the previous turn, so it falls
+	// back to plain user-message handling for everything except the
+	// wrapper text stripped here.
+	if strings.HasPrefix(trimmed, midTurnOpeningLine) {
+		if body, ok := extractMidTurnUserText(trimmed); ok {
+			return &session.UserMessage{Text: text, IsMidTurnUserMessage: true, MidTurnUserText: body}
 		}
 	}
 
@@ -171,8 +217,30 @@ func classifyHarnessUserMessage(text string) *session.UserMessage {
 
 	// Background-task report. Recognized here rather than only at render time
 	// so stats sees a domain field like every other subtype (ADR-008).
-	if strings.HasPrefix(trimmed, taskNotificationOpen) {
+	// Matched by Contains, not HasPrefix: a CLI build wraps the tag in a
+	// "[SYSTEM NOTIFICATION - NOT USER INPUT]" disclaimer that precedes it,
+	// the same drift the teammate tag detection already accounts for.
+	if strings.Contains(trimmed, taskNotificationOpen) {
 		return &session.UserMessage{Text: text, IsTaskNotification: true}
+	}
+
+	// Coordinator-initiated round of work in a subagent transcript: the
+	// coordinator's own message starts a turn the same way a teammate
+	// message does, so it gets the same treatment.
+	if strings.HasPrefix(trimmed, coordinatorMessageOpen) {
+		return &session.UserMessage{Text: text, IsCoordinatorMessage: true}
+	}
+
+	// Worker-fork preamble: the harness's instructions for a forked worker,
+	// followed by the actual directive text (if any) after the closing tag.
+	if strings.HasPrefix(trimmed, forkBoilerplateOpen) {
+		return &session.UserMessage{Text: text, IsForkBoilerplate: true}
+	}
+
+	// Fixed nudge sent when the previous assistant turn had no visible
+	// output. Exact text, so no extraction needed.
+	if trimmed == noVisibleOutputNudge {
+		return &session.UserMessage{Text: text, IsNoVisibleOutputNudge: true}
 	}
 
 	// Conversation summary injected when a session continues past a
@@ -228,6 +296,19 @@ func extractGoalCondition(text string) string {
 		return ""
 	}
 	return rest[:end]
+}
+
+// extractMidTurnUserText pulls the human-typed body out of a mid-turn user
+// message notice, stripping the opening line and the trailing explanation
+// paragraph. Returns ("", false) if the explanation marker is absent, so the
+// caller does not classify a message whose shape it can't fully account for.
+func extractMidTurnUserText(text string) (string, bool) {
+	rest := strings.TrimPrefix(text, midTurnOpeningLine)
+	explIdx := strings.Index(rest, midTurnExplanationMarker)
+	if explIdx < 0 {
+		return "", false
+	}
+	return strings.TrimSpace(rest[:explIdx]), true
 }
 
 // reloadedSkillName extracts the skill from a "Skill /foo was loaded earlier"

@@ -40,6 +40,43 @@ func TestFormatReadEvents_GivenHarnessInjection_WhenRendered_ThenLabelsItHarness
 			},
 			wantBody: "[benchmark done]",
 		},
+		// Regression: the disclaimer that wraps the tag in subagent
+		// transcripts made classification miss it, so it rendered as a plain
+		// "user:" turn with the disclaimer left in the body.
+		"a disclaimer-wrapped task notification still keeps its summary": {
+			user: session.UserMessage{
+				IsTaskNotification: true,
+				Text: "[SYSTEM NOTIFICATION - NOT USER INPUT]\nThis is an automated background-task event.\n\n" +
+					"<task-notification>\n<summary>benchmark done</summary>\n</task-notification>",
+			},
+			wantBody: "[benchmark done]",
+		},
+		"a coordinator message keeps its body under the coordinator marker": {
+			user: session.UserMessage{
+				IsCoordinatorMessage: true,
+				Text:                 "The coordinator sent a message while you were working:\nplease also update the README",
+			},
+			wantBody: "[coordinator]\nplease also update the README",
+		},
+		"a continuation prompt collapses to a marker": {
+			user:     session.UserMessage{IsContinuePrompt: true, Text: "Continue from where you left off."},
+			wantBody: "[continue]",
+		},
+		"a worker-fork preamble keeps only its directive": {
+			user: session.UserMessage{
+				IsForkBoilerplate: true,
+				Text: "<fork-boilerplate>\nYou are a worker fork. Execute ONE directive, then stop.\n" +
+					"</fork-boilerplate>\nFix the failing test.",
+			},
+			wantBody: "[fork]\nFix the failing test.",
+		},
+		"a no-visible-output nudge collapses to a marker": {
+			user: session.UserMessage{
+				IsNoVisibleOutputNudge: true,
+				Text:                   "[Your previous response had no visible output. Please continue and produce a user-visible response.]",
+			},
+			wantBody: "[nudge: no visible output]",
+		},
 	}
 
 	for name, tc := range tests {
@@ -60,6 +97,37 @@ func TestFormatReadEvents_GivenHarnessInjection_WhenRendered_ThenLabelsItHarness
 				t.Errorf("output missing %q\ngot:\n%s", want, out.String())
 			}
 		})
+	}
+}
+
+// Unlike the other harness subtypes, a mid-turn message's body is genuinely
+// human-typed, so it must keep the "user:" label with the harness wrapper
+// (opening line and timing explanation) gone from the output.
+func TestFormatReadEvents_GivenMidTurnUserMessage_WhenRendered_ThenLabelsItUserWithoutTheWrapper(t *testing.T) {
+	events := []session.Event{{
+		Kind:      session.EventUserMessage,
+		Timestamp: "2026-08-30T13:00:00Z",
+		User: &session.UserMessage{
+			IsMidTurnUserMessage: true,
+			MidTurnUserText:      "直接改 bug 就好",
+			Text: "The user sent a new message while you were working:\n直接改 bug 就好\n\n" +
+				"This is how Claude Code surfaces messages the user sends mid-turn — within the running " +
+				"turn, often alongside the next tool result, rather than as a separate conversation turn. " +
+				"Address the message above as you continue this turn.",
+		},
+	}}
+
+	var out bytes.Buffer
+	if err := FormatReadEvents(events, nil, 0, 0, FormatOptions{}, &out); err != nil {
+		t.Fatalf("FormatReadEvents returned error: %v", err)
+	}
+
+	got := out.String()
+	if want := "[13:00:00] user:\n直接改 bug 就好"; !strings.Contains(got, want) {
+		t.Errorf("output missing %q\ngot:\n%s", want, got)
+	}
+	if strings.Contains(got, "sent a new message while you were working") || strings.Contains(got, "surfaces messages") {
+		t.Errorf("output still contains the harness wrapper text\ngot:\n%s", got)
 	}
 }
 

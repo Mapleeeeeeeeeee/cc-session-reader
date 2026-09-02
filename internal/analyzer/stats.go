@@ -117,7 +117,9 @@ func ComputeStats(events []session.Event) StatsResult {
 			if event.User.IsSkillInjection || event.User.IsTeammateMessage ||
 				event.User.IsCommandInjection || event.User.IsTaskNotification ||
 				event.User.IsCompactionSummary || event.User.IsStopHookGoal ||
-				event.User.IsAgentsStopped || event.User.IsInterrupted {
+				event.User.IsAgentsStopped || event.User.IsInterrupted ||
+				event.User.IsCoordinatorMessage || event.User.IsContinuePrompt ||
+				event.User.IsForkBoilerplate || event.User.IsNoVisibleOutputNudge {
 				rawParts = append(rawParts, event.User.Text)
 				continue
 			}
