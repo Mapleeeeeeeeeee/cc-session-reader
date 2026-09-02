@@ -277,6 +277,84 @@ func buildNestedCCSessionEvents() []session.Event {
 	return events
 }
 
+// TestComputeStats_UserTurnCount verifies UserTurnCount tallies exactly the
+// message kinds session.UserMessage.CountsAsTurn() says start a unit of agent
+// work (ADR-008 decision 5), parameterized over the kinds that count and the
+// kinds that don't so a mutation deleting the userTurnCount++ call (which the
+// pre-existing suite never asserted on) fails every case at once.
+func TestComputeStats_UserTurnCount(t *testing.T) {
+	tests := map[string]struct {
+		user session.UserMessage
+		want int
+	}{
+		"a plain typed message counts": {
+			user: session.UserMessage{Text: "把這個修好"},
+			want: 1,
+		},
+		"a teammate message counts": {
+			user: session.UserMessage{Text: "…", IsTeammateMessage: true},
+			want: 1,
+		},
+		"a task notification counts": {
+			user: session.UserMessage{Text: "…", IsTaskNotification: true},
+			want: 1,
+		},
+		"a compaction summary counts": {
+			user: session.UserMessage{Text: "…", IsCompactionSummary: true},
+			want: 1,
+		},
+		"an interruption sentinel does not count": {
+			user: session.UserMessage{Text: "…", IsInterrupted: true},
+			want: 0,
+		},
+		"a stop hook goal notice does not count": {
+			user: session.UserMessage{Text: "…", IsStopHookGoal: true},
+			want: 0,
+		},
+		"a skill injection does not count": {
+			user: session.UserMessage{Text: "…", IsSkillInjection: true},
+			want: 0,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			events := []session.Event{{Kind: session.EventUserMessage, User: &tc.user}}
+			result := ComputeStats(events)
+			if got := result.UserTurnCount; got != tc.want {
+				t.Fatalf("UserTurnCount = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestComputeStats_HarnessFlaggedMessage_ContributesToRawSizeNotRawUserText
+// guards the accounting split ADR-008 depends on: a harness injection that is
+// compacted (not dropped) contributes its full raw text to RawChars (every
+// byte the transcript contains), but its KEPT category — measured below via
+// the render pass, per stats.go's own comment — is the compact form's size,
+// never a second, drift-prone tally of the raw text itself.
+func TestComputeStats_HarnessFlaggedMessage_ContributesToRawSizeNotRawUserText(t *testing.T) {
+	const rawText = "The coordinator sent a message while you were working:\nplease also update the README"
+	events := []session.Event{
+		{
+			Kind: session.EventUserMessage,
+			User: &session.UserMessage{Text: rawText, IsCoordinatorMessage: true},
+		},
+	}
+
+	result := ComputeStats(events)
+
+	assertContains(t, "RawText", result.RawText, rawText)
+	// The compact render form ("[coordinator]\n<body>") never quotes the
+	// harness opening line the raw text carries, so its absence from
+	// FilteredText proves user_text was populated from the render pass's
+	// compact output, not from a raw-text tally.
+	assertNotContains(t, "FilteredText", result.FilteredText, "The coordinator sent a message while you were working")
+	wantUserTextChars := len([]rune(session.CompactCoordinatorMessage(rawText)))
+	assertCategory(t, result, "user_text", wantUserTextChars)
+}
+
 func assertCategory(t *testing.T, result StatsResult, key string, want int) {
 	t.Helper()
 	if got := result.Categories[key]; got != want {

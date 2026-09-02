@@ -84,6 +84,10 @@ func TestCountsAsTurn_GivenMessageKind_WhenCounted_ThenFollowsWorkUnitPolicy(t *
 			message: UserMessage{Text: "…", IsMidTurnUserMessage: true, MidTurnUserText: "改一下這裡"},
 			want:    false,
 		},
+		"a command marker wins over a teammate flag set on the same message": {
+			message: UserMessage{Text: "…", CommandMarker: "[/goal]", IsTeammateMessage: true},
+			want:    false,
+		},
 	}
 
 	for name, tc := range tests {

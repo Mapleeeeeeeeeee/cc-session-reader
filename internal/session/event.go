@@ -178,6 +178,26 @@ type UserMessage struct {
 // "arrives ... within the running turn," so it does not start a new one —
 // same reasoning as the injections that arrive alongside the turn that
 // triggered them.
+// IsCompactedHarnessInjection reports whether this message is a harness
+// injection that is rendered in compact form rather than dropped or shown
+// under the user role. This is the single enumeration of that set: stats.go
+// (raw-side accounting) and render.go's per-flag dispatch (each flag needs
+// its own compact form, so the dispatch itself is not collapsed into this
+// method) both derive from it, keeping the set from drifting between the two
+// call sites the way it did before ADR-008.
+//
+// IsSystemReminder/IsContextUsage are dropped outright, not compacted, and
+// IsMidTurnUserMessage is human-typed and rendered under the user role, so
+// none of the three belongs in this set.
+func (u UserMessage) IsCompactedHarnessInjection() bool {
+	return u.IsSkillInjection || u.IsTeammateMessage ||
+		u.IsCommandInjection || u.IsTaskNotification ||
+		u.IsCompactionSummary || u.IsStopHookGoal ||
+		u.IsAgentsStopped || u.IsInterrupted ||
+		u.IsCoordinatorMessage || u.IsContinuePrompt ||
+		u.IsForkBoilerplate || u.IsNoVisibleOutputNudge
+}
+
 func (u UserMessage) CountsAsTurn() bool {
 	if u.CommandMarker != "" {
 		return false
@@ -394,17 +414,15 @@ var catLineNumberPrefix = regexp.MustCompile(`^\s*\d+\t`)
 // when picking an excerpt in favor of the actual error line beneath it.
 var bareExitCodeLine = regexp.MustCompile(`^Exit code \d+\s*$`)
 
-// hookErrorBoilerplate matches PreToolUse/PostToolUse hook rejection preamble
-// lines ("... hook error"), which name the hook stage rather than the actual
-// failure — the reader wants what's beneath it, not the wrapper.
-var hookErrorBoilerplate = regexp.MustCompile(`hook error`)
-
 // isNoiseExcerptLine reports whether line is one of the known-noise shapes
 // that should be skipped when picking a failure excerpt (ADR-003 decision 2).
+// "hook error" matches PreToolUse/PostToolUse hook rejection preamble lines,
+// which name the hook stage rather than the actual failure — the reader wants
+// what's beneath it, not the wrapper.
 func isNoiseExcerptLine(line string) bool {
 	return catLineNumberPrefix.MatchString(line) ||
 		bareExitCodeLine.MatchString(line) ||
-		hookErrorBoilerplate.MatchString(line)
+		strings.Contains(line, "hook error")
 }
 
 // progressLine matches a line where a tool announces what it is about to do
@@ -466,30 +484,36 @@ func firstMeaningfulSuccessLine(text string, maxRunes int) string {
 // nothing about, with terminal escape sequences removed. Falling back to the
 // first non-empty line keeps an excerpt when every line looks like noise,
 // rather than reporting a bare status for a call that did produce output.
+// Lines are visited without materializing the full strings.Split slice, and
+// StripANSI only runs on a line that actually contains an escape byte —
+// tool output is rarely ANSI-colored, so most lines skip the regexp entirely.
 func firstMeaningfulLine(text string, maxRunes int, isNoise func(string) bool) string {
 	var firstNonEmpty string
-	for _, raw := range strings.Split(text, "\n") {
-		line := strings.TrimSpace(StripANSI(raw))
-		if line == "" {
-			continue
+	remaining := text
+	for {
+		raw, rest, hasMore := strings.Cut(remaining, "\n")
+		if strings.IndexByte(raw, '\x1b') >= 0 {
+			raw = StripANSI(raw)
 		}
-		if firstNonEmpty == "" {
-			firstNonEmpty = line
+		line := strings.TrimSpace(raw)
+		if line != "" {
+			if firstNonEmpty == "" {
+				firstNonEmpty = line
+			}
+			if !isNoise(line) {
+				return Truncate(line, maxRunes)
+			}
 		}
-		if !isNoise(line) {
-			return Truncate(line, maxRunes)
+		if !hasMore {
+			break
 		}
+		remaining = rest
 	}
 	return Truncate(firstNonEmpty, maxRunes)
 }
 
 type NoiseEvent struct {
 	Text string
-}
-
-func FirstLine(s string, maxRunes int) string {
-	line := strings.SplitN(strings.TrimSpace(s), "\n", 2)[0]
-	return Truncate(line, maxRunes)
 }
 
 func Truncate(s string, maxRunes int) string {

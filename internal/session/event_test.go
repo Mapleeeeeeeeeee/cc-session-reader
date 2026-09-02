@@ -180,73 +180,6 @@ func TestTruncate_GivenZeroRuneLimit_ThenReturnsEmptyString(t *testing.T) {
 	}
 }
 
-func TestFirstLine(t *testing.T) {
-	tests := []struct {
-		name     string
-		s        string
-		maxRunes int
-		want     string
-	}{
-		{
-			// Multi-line input: only the first line survives, the rest is dropped.
-			name:     "given multiline then keeps only first line",
-			s:        "first line\nsecond line\nthird",
-			maxRunes: 80,
-			want:     "first line",
-		},
-		{
-			// First line itself exceeds the budget: it is truncated to maxRunes.
-			name:     "given long first line then truncates first line to budget",
-			s:        "abcdefghij\nsecond",
-			maxRunes: 4,
-			want:     "abcd",
-		},
-		{
-			// Leading/trailing whitespace is trimmed before the first line is taken.
-			name:     "given surrounding whitespace then trims before splitting",
-			s:        "  \n  hello\nworld  ",
-			maxRunes: 80,
-			want:     "hello",
-		},
-		{
-			name:     "given empty string then returns empty",
-			s:        "",
-			maxRunes: 80,
-			want:     "",
-		},
-		{
-			name:     "given all whitespace then returns empty",
-			s:        "   \n\t  \n  ",
-			maxRunes: 80,
-			want:     "",
-		},
-		{
-			// CJK first line cut mid-string: must land on a rune boundary via
-			// the shared Truncate helper, never a half-character.
-			name:     "given CJK first line over budget then cuts on rune boundary",
-			s:        "甲乙丙丁\nsecond",
-			maxRunes: 2,
-			want:     "甲乙",
-		},
-		{
-			// Zero rune limit: the first line exists but the budget allows no
-			// runes at all, so the result must be "" rather than panicking.
-			name:     "given zero rune limit then returns empty",
-			s:        "hello\nworld",
-			maxRunes: 0,
-			want:     "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := FirstLine(tt.s, tt.maxRunes); got != tt.want {
-				t.Fatalf("FirstLine(%q, %d) = %q, want %q", tt.s, tt.maxRunes, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestShortID(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -682,6 +615,29 @@ func TestCompactTeammateMessage_GivenAgentMessageWithNoAttributes_ThenOmitsTheID
 		t.Fatal("CompactTeammateMessage returned false")
 	}
 	want := "[teammate]\n狀態更新。"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// A single message can carry both tag variants when a teammate reply is
+// relayed alongside a coordinator note, since nextTeammateTagMatch picks
+// whichever variant occurs earliest rather than assuming one variant per
+// message. Both blocks must compact and preserve document order.
+func TestCompactTeammateMessage_GivenBothTagVariantsInOneBody_ThenCompactsBothInOrder(t *testing.T) {
+	input := `<teammate-message teammate_id="reviewer-1">
+First block.
+</teammate-message>
+
+<agent-message from="worker-2">
+Second block.
+</agent-message>`
+
+	got, ok := CompactTeammateMessage(input)
+	if !ok {
+		t.Fatal("CompactTeammateMessage returned false")
+	}
+	want := "[teammate: reviewer-1]\nFirst block.\n\n[teammate: worker-2]\nSecond block."
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}

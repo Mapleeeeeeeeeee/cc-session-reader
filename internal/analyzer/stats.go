@@ -114,12 +114,7 @@ func ComputeStats(events []session.Event) StatsResult {
 			// Harness injections that are compacted rather than dropped;
 			// their KEPT (compacted) size is measured below via the render
 			// pass. Only the raw side is recorded here.
-			if event.User.IsSkillInjection || event.User.IsTeammateMessage ||
-				event.User.IsCommandInjection || event.User.IsTaskNotification ||
-				event.User.IsCompactionSummary || event.User.IsStopHookGoal ||
-				event.User.IsAgentsStopped || event.User.IsInterrupted ||
-				event.User.IsCoordinatorMessage || event.User.IsContinuePrompt ||
-				event.User.IsForkBoilerplate || event.User.IsNoVisibleOutputNudge {
+			if event.User.IsCompactedHarnessInjection() {
 				rawParts = append(rawParts, event.User.Text)
 				continue
 			}
