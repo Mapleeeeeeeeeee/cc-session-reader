@@ -61,7 +61,7 @@ func ReadFile(path string, handle func(session.Event) error) error {
 	defer f.Close()
 
 	// toolCalls accumulates tool_use_id -> tool call info across the
-	// sequential read, scoped to this file. See parseLineWithToolNames for why
+	// sequential read, scoped to this file. See parseLineWithToolCalls for why
 	// this state can't live inside the stateless public ParseLine.
 	toolCalls := map[string]toolCallInfo{}
 	reader := bufio.NewReader(f)
@@ -79,7 +79,7 @@ func ReadFile(path string, handle func(session.Event) error) error {
 			}
 			continue
 		}
-		event, ok, parseErr := parseLineWithToolNames(line, toolCalls)
+		event, ok, parseErr := parseLineWithToolCalls(line, toolCalls)
 		if parseErr != nil {
 			return parseErr
 		}
@@ -105,7 +105,7 @@ func ReadAll(path string) ([]session.Event, error) {
 }
 
 func ParseLine(line []byte) (session.Event, bool, error) {
-	return parseLineWithToolNames(line, nil)
+	return parseLineWithToolCalls(line, nil)
 }
 
 // toolCallInfo is the per-tool_use state ReadFile threads across the
@@ -119,7 +119,7 @@ type toolCallInfo struct {
 	SkillArgs string
 }
 
-// parseLineWithToolNames is ParseLine's implementation, extended with the
+// parseLineWithToolCalls is ParseLine's implementation, extended with the
 // tool_use_id -> tool call info state ReadFile accumulates across a
 // sequential read. Real transcripts carry no commandName/agentType field on
 // Bash/Edit/Write/Read toolUseResults — the tool name only exists on the
@@ -130,7 +130,7 @@ type toolCallInfo struct {
 // ParseLine keeps its public, stateless single-line contract by passing
 // toolCalls=nil, under which both fall back to their text-based paths only,
 // same as before this fix.
-func parseLineWithToolNames(line []byte, toolCalls map[string]toolCallInfo) (session.Event, bool, error) {
+func parseLineWithToolCalls(line []byte, toolCalls map[string]toolCallInfo) (session.Event, bool, error) {
 	var raw rawEntry
 	if err := json.Unmarshal(line, &raw); err != nil {
 		return session.Event{}, false, fmt.Errorf("parse transcript line: %w", err)

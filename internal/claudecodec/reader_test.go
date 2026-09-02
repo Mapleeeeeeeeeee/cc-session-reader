@@ -405,7 +405,7 @@ func TestParseLine_UnknownEntryWithoutMessageIsSkipped(t *testing.T) {
 // --- Malformed JSONL robustness ---
 //
 // These tests pin the reader's actual contract for malformed input, per the
-// project's own decision (see reader.go's parseLineWithToolNames): a line
+// project's own decision (see reader.go's parseLineWithToolCalls): a line
 // that fails json.Unmarshal returns an explicit "parse transcript line"
 // error and aborts the read, rather than panicking or silently dropping the
 // line to produce a truncated-but-successful result. Read/ReadAll callers
