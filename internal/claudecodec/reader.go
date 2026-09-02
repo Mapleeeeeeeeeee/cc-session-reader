@@ -188,6 +188,14 @@ func parseLineWithToolCalls(line []byte, toolCalls map[string]toolCallInfo) (ses
 		} else {
 			event.User = &session.UserMessage{Text: text}
 		}
+		event.User.PromptSource = raw.PromptSource
+		// ADR-009 decision 4: a human promptSource overrules a harness verdict
+		// from the text classifiers above (0 observed conflicts, but the rule
+		// is pinned so a future rewording can't quietly flip the label). The
+		// message reverts to a plain user message under its original text.
+		if session.IsHumanPromptSource(raw.PromptSource) && event.User.IsClassifiedAsHarness() {
+			event.User = &session.UserMessage{Text: text, PromptSource: raw.PromptSource}
+		}
 		return event, true, nil
 	case "assistant":
 		assistant := raw.Message.Assistant()

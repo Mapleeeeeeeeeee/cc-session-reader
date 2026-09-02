@@ -144,6 +144,43 @@ type UserMessage struct {
 	// the user role. MidTurnUserText is that body with the wrapper stripped.
 	IsMidTurnUserMessage bool
 	MidTurnUserText      string
+
+	// PromptSource carries the top-level "promptSource" field Claude Code
+	// (CLI >= 2.1.165) writes on some user entries (see the PromptSource*
+	// constants). Empty when the field is absent: older CLI versions never
+	// wrote it, and even on current CLI it marks only entries that start a
+	// turn — injections and mid-turn relays never carry it (ADR-009).
+	PromptSource string
+}
+
+// Values of UserMessage.PromptSource, per ADR-009.
+const (
+	PromptSourceTyped              = "typed"
+	PromptSourceSDK                = "sdk"
+	PromptSourceSystem             = "system"
+	PromptSourceQueued             = "queued"
+	PromptSourceSuggestionAccepted = "suggestion_accepted"
+)
+
+// IsHumanPromptSource reports whether source names a promptSource value that
+// a person, not the harness, is the origin of: everything except "system"
+// and "" (absent). ADR-009 decision 4 uses this to resolve a promptSource
+// that disagrees with classifyHarnessUserMessage's text-based verdict.
+func IsHumanPromptSource(source string) bool {
+	switch source {
+	case PromptSourceTyped, PromptSourceSDK, PromptSourceQueued, PromptSourceSuggestionAccepted:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsClassifiedAsHarness reports whether classifyHarnessUserMessage (or its
+// isMeta-linked siblings) recognized this message as harness-injected,
+// independent of PromptSource. ADR-009 decision 4: when a human
+// PromptSource disagrees with this verdict, PromptSource wins.
+func (u UserMessage) IsClassifiedAsHarness() bool {
+	return u.IsCompactedHarnessInjection() || u.IsSystemReminder || u.IsContextUsage
 }
 
 // CountsAsTurn reports whether this message starts a unit of agent work: an
@@ -199,6 +236,13 @@ func (u UserMessage) IsCompactedHarnessInjection() bool {
 }
 
 func (u UserMessage) CountsAsTurn() bool {
+	// ADR-009: a message that carries promptSource always started a turn —
+	// measured 89-98% across all five values, including "system" (the
+	// task-notification/stop-hook/etc. table above only still matters for
+	// the 44% of messages with no promptSource at all).
+	if u.PromptSource != "" {
+		return true
+	}
 	if u.CommandMarker != "" {
 		return false
 	}

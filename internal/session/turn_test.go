@@ -88,6 +88,26 @@ func TestCountsAsTurn_GivenMessageKind_WhenCounted_ThenFollowsWorkUnitPolicy(t *
 			message: UserMessage{Text: "…", CommandMarker: "[/goal]", IsTeammateMessage: true},
 			want:    false,
 		},
+
+		// ADR-009: promptSource always wins, regardless of value — measured
+		// 89-98% across all five values, including on a command marker, which
+		// the pre-ADR-009 policy above says is not a turn.
+		"a promptSource is a turn regardless of value: typed": {
+			message: UserMessage{Text: "…", PromptSource: PromptSourceTyped},
+			want:    true,
+		},
+		"a promptSource is a turn regardless of value: system": {
+			message: UserMessage{Text: "…", PromptSource: PromptSourceSystem},
+			want:    true,
+		},
+		"a promptSource overrides even a command marker, which alone would not count": {
+			message: UserMessage{CommandMarker: "[/goal]", PromptSource: PromptSourceTyped},
+			want:    true,
+		},
+		"a promptSource overrides even a kind the policy above says never starts a turn": {
+			message: UserMessage{Text: "…", IsInterrupted: true, PromptSource: PromptSourceSystem},
+			want:    true,
+		},
 	}
 
 	for name, tc := range tests {

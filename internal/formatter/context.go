@@ -54,8 +54,14 @@ func renderContextEvents(events []session.Event, agentIDs map[string]bool, opts 
 			}
 			flush()
 			prefix := "U"
-			if rendered.role == RoleHarness {
+			switch rendered.role {
+			case RoleHarness:
 				prefix = "H"
+			case RoleUserSDK:
+				// ADR-009: "S" sits next to "U"/"H" for a promptSource="sdk"
+				// message, which is still the user's position but not typed
+				// by a person.
+				prefix = "S"
 			}
 			fmt.Fprintf(out, "%s: %s\n\n", prefix, rendered.body)
 
