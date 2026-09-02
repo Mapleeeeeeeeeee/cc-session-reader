@@ -30,7 +30,7 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 	days := fs.Int("days", 30, "how far back to scan")
 	minKB := fs.Int("min-kb", 100, "minimum JSONL file size in KB")
 	maxN := fs.Int("n", 10, "max sessions to include")
-	model := fs.String("model", "opus", "model: opus, opus-4-6, opus-4-7, opus-4-8, or sonnet")
+	model := fs.String("model", "opus", "model: opus, opus-4-6, opus-4-7, opus-4-8, sonnet, or fable (fable-5-1)")
 	overhead := fs.Int("overhead", 0, "session overhead tokens (system+tools+CLAUDE.md); measure with a 1-turn session")
 	isNoAPI := fs.Bool("no-api", false, "skip API calls; estimate filtered-text tokens with chars/2 (offline fallback)")
 	if err := fs.Parse(reorderArgs(args)); err != nil {

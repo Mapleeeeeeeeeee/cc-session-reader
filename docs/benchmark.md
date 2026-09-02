@@ -36,7 +36,7 @@ All other parameters are derived automatically from your real session data.
 | `--days` | 30 | How far back to scan for sessions |
 | `--min-kb` | 100 | Minimum JSONL file size in KB |
 | `--n` | 10 | Max successful session results to report |
-| `--model` | opus | Pricing and token-counting model: `opus`, `opus-4-6`, `opus-4-7`, `opus-4-8`, or `sonnet` |
+| `--model` | opus | Pricing and token-counting model: `opus`, `opus-4-6`, `opus-4-7`, `opus-4-8`, `sonnet`, or `fable` (`fable-5-1`) |
 
 ### Example output
 
@@ -164,9 +164,14 @@ the historical one-shot `NewCtx × CacheWrite` behavior.
 counting API. The `--model` flag controls both pricing and the tokenizer used by
 the token counting API. `opus` is an alias for `opus-4-8`; explicit Opus versions
 map to `claude-opus-4-6`, `claude-opus-4-7`, or `claude-opus-4-8`; `sonnet` maps
-to `claude-sonnet-4-6`. Opus 4.6, 4.7, and 4.8 use the same Opus pricing rates.
+to `claude-sonnet-4-6`; `fable` and `fable-5-1` both map to `claude-fable-5-1`.
+Opus 4.6, 4.7, and 4.8 use the same Opus pricing rates.
 Fallback constants are used only for behavior that cannot be read directly from
 transcript usage, such as sparse tool I/O data.
+
+Claude Fable 5.1's cache read is 2.5% of base input, not the 10% every other
+model here uses, so its cost-savings numbers are not directly comparable to the
+Opus/Sonnet rows.
 
 ### Simplifications
 
