@@ -173,6 +173,7 @@ func CompactTeammateMessage(text string) (string, bool) {
 			break
 		}
 		body := strings.TrimSpace(remaining[bodyStart : bodyStart+closeIdx])
+		body = stripSubagentHandbackPreamble(body)
 
 		// "[teammate]" with no ID covers the attribute-less <agent-message>
 		// the harness has been observed to emit, rather than a stray colon.
