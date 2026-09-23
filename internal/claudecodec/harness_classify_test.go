@@ -423,6 +423,10 @@ func TestParseLine_GivenRecentlyAddedEntryType_WhenParsed_ThenYieldsNoise(t *tes
 		// Found when the ADR-008 scan was extended to the subagent
 		// transcript layer: 600 entries / 82 KB in the same 60-day window.
 		"relocated",
+		// Found by the harness drift 2026-09 scan: a fork's parent-context
+		// marker in a subagent transcript, the same ADR-008 §1 gap (no
+		// "message" field, so it fell through unparsed instead of noise).
+		"fork-context-ref",
 	}
 
 	for _, entryType := range types {

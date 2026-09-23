@@ -51,6 +51,12 @@ var noiseTypes = map[string]bool{
 	// Added after the ADR-008 scan was extended to the subagent transcript
 	// layer; observed 600 entries / 82 KB in the same 60-day window.
 	"relocated": true,
+
+	// Added by the harness drift 2026-09 scan, the same gap as the ADR-008
+	// §1 list above: a fork's parent-context marker in a subagent
+	// transcript, no "message" field, so it fell through unparsed instead
+	// of becoming EventNoise.
+	"fork-context-ref": true,
 }
 
 func ReadFile(path string, handle func(session.Event) error) error {
