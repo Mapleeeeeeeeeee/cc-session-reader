@@ -13,6 +13,7 @@ Reader 靠比對字面字串認出 Claude Code 寫進 transcript 的事件。那
 | 4 | teammate 偵測改成只認 XML 標籤，兩種變體都收 | 主判斷已死，改認標籤後散文重寫不再影響偵測 |
 | 5 | 拆出 `UserMessage.CountsAsTurn()`，內容依實測校準 | 八個 session 的 turn 計數誤差 70 → 29 |
 | 6 | skill 注入改走 `sourceToolUseID` 結構連結認定 | 沒有 base-directory 行的 bundled skill 不再全文渲染 |
+| 7 | 壓縮續接改認頂層 `isCompactSummary` 欄位，排在所有標籤比對之前 | 內文引用了其他 harness 標籤的摘要不再被分錯類 |
 
 量測基礎：`~/.claude/projects` 下依修改時間取最新 120 個 `.jsonl`（2026-08-30 往前 60 天）。
 
@@ -40,6 +41,38 @@ Reader 靠比對字面字串認出 Claude Code 寫進 transcript 的事件。那
 - `The user sent a new message while you were working:` 開頭、接一段解釋文字收尾（35 則），
   內文本身是人打的字，所以維持 `user:` 標籤，只剝掉開頭與結尾的 harness 說明文字；
   不算 turn，因為 harness 自己的說明就寫著這則訊息落在正在跑的那一輪裡面，不是另開一輪。
+
+**追加樣本（2026-09-23）**：掃 2026-09-02 之後修改過的 1,286 個 transcript
+（其中 791 個是 subagent，含新的 `subagents/workflows/wf_*/` 層），CLI 2.1.238–2.1.280。
+「啟動一輪」照第 5 項的量法。找到的新形狀：
+
+| 訊息開頭 | 則數 | 啟動一輪 | 呈現 | 算 turn |
+|---|---:|---:|---|---|
+| `[Workflow harness — user request]` + 縮排的原始請求 | 108 | 0% | `[workflow: user request]` + 去縮排內文 | 否 |
+| `[Workflow harness — computed task]` + 縮排的 script 指令 | 108 | 88% | `[workflow: computed task]` + 去縮排內文 | 是 |
+| `[handback-send-enforce]` | 20 | 100% | `[nudge: handback]` | 是 |
+| `Your response above was cut off mid-stream`（兩種措辭） | 6 | 83% | `[nudge: cut off]` | 是 |
+
+- 兩段 workflow 框架是每個 workflow agent transcript 的第 1、2 筆，中間沒有 assistant。
+  改之前兩筆都算 turn，每個 workflow agent 的第一輪被數兩次。兩筆都沒有 `promptSource`、
+  `origin`、`isMeta`，只能比對框架前綴；框架本身寫明縮排規則，harness 也靠這個前綴辨識框架。
+- `[structured-output-enforce]`（09-02 前就有，8 則）跟 `[handback-send-enforce]` 同一族，
+  一起處理成 `[nudge: structured output]`。兩者都比對方括號標籤，不比對後面的散文，
+  沿用第 4 項的理由。
+- `Stop hook feedback:\n[<條件>]: <評估>`（09-02 前後共 74 則，啟動一輪 15/16），
+  壓成 `[goal feedback]` + 內文，算 turn。這跟第 5 項的 stop hook 通知不同：
+  那則是 hook 啟用的通知，這則是 hook 擋下停止、要求 agent 繼續做。
+- 單數的 `Background agent "<描述>" was stopped by the user.` 沒被
+  `^(\d+) background agents?` 抓到。補上之後發現單複數都帶 `promptSource=system`，
+  ADR-009「帶 `promptSource` 就算 turn」的規則讓它們一律算 turn，實測卻是 0/7，
+  跟第 5 項量到的 0% 一致。`CountsAsTurn()` 對 agents-stopped 提早回 false，
+  是 ADR-009 規則的例外，同 7a53260 對 sdk 的處理。turn 少算了，含這類通知的 session 的 K 會變大。
+- teammate 訊息裡新增 `[Subagent hand-back] … The report follows:` 前言
+  （69 則，2.1.271 起，約 400 字元），分類本來就對，`CompactTeammateMessage` 改成剝掉前言、
+  報告去縮排。
+- `fork-context-ref` entry type（09-02 後 8 筆），併入第 1 項的白名單。
+- 壓縮續接前面多了 `<artifact-content-authored-by-others/>` 標籤（2.1.274），
+  連同另外兩個分錯的樣本，見第 7 項。
 
 ## 1. `noiseTypes` 漏了 8 個 CLI 後來才加的 entry type
 
@@ -253,7 +286,36 @@ user 訊息先查這條連結，命中就是 skill 注入；文字前綴降為�
 這是第 2 項同一種病的另一個實例：harness 早就給了結構欄位，reader 還在比對字串。
 teammate message 沒有這種欄位（頂層欄位與一般 user 訊息完全相同），所以第 4 項只能留在字串比對。
 
+2026-09 之後部分 teammate message 帶了 `origin.kind=peer`，但覆蓋率低：
+09-02 之後 1,370 則 teammate 標籤訊息只有 83 則帶，subagent 層大多沒有，還不能取代標籤比對。
+
+## 7. 壓縮續接的偵測被比對順序打敗
+
+`classifyHarnessUserMessage` 先用 `Contains` 找 teammate 標籤和 `<task-notification>`，
+最後才用 `HasPrefix` 認壓縮續接。摘要內文會重述前一段對話，前一段對話裡有這些標籤，
+摘要就先被別的分支接走。09-02 之後 37 則壓縮續接裡分錯 3 則：
+
+| session | CLI | 原因 | 結果 |
+|---|---|---|---|
+| `9fb49e85` | 2.1.274 | 開頭多了 `<artifact-content-authored-by-others/>` | 前綴落空，以 `user:` 全文渲染 |
+| `b566530e` | 2.1.257 | 內文引用 teammate 標籤 | 判成 teammate，沒有 `[compaction summary]` 標頭 |
+| `e04de0c1` | 2.1.265 | 內文引用 `<task-notification>` | 判成 task-notification，同上 |
+
+三者 turn 計數都對，K 不受影響，錯在渲染。
+
+37 則全部帶頂層 `isCompactSummary: true`。決定：reader 先看這個欄位，命中就是壓縮續接，
+排在所有標籤比對之前；文字前綴留作沒有這個欄位的舊 transcript 的備援，
+並把備援也移到標籤比對之前。跟第 6 項同一種病：harness 早就給了結構欄位。
+
 ## 沒有解決的
+
+**`turnCompanion` 還沒拿來判斷 turn**。09-02 之後 381 則帶 `turnCompanion: true`，
+全部是 `isMeta` 且沒有 `promptSource`（skill body、圖片佔位符、no-visible-output nudge、
+cut-off 提醒等），語意是「這筆不是發起這一輪的」，比 `isMeta` 貼近 `CountsAsTurn()` 要的東西。
+但 ADR-009 否決過 `isMeta` 當第二來源，要採用這個欄位得另寫一份 ADR 處理兩者的關係。
+
+**`turnOrigin` 還沒用**。2.1.278 起出現，值有 `human`、`sdk`、`task_notification`、`peer`，
+標的是「這一輪由誰發起」而不是「這則由誰寫」（`<bash-stdout>` 和壓縮續接也標 `human`）。
 
 **slash / bang command 不算 turn**，維持改動前的行為。
 `/goal` 這類 invocation 會觸發一整輪工作，照第 5 項的定義應該算；

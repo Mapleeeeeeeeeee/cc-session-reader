@@ -145,6 +145,35 @@ type UserMessage struct {
 	IsMidTurnUserMessage bool
 	MidTurnUserText      string
 
+	// IsWorkflowUserRequest marks the workflow harness's frame relaying the
+	// user request that triggered a workflow run: the first entry of every
+	// subagent workflow transcript, and per the frame's own wording "the
+	// only user voice in this task."
+	IsWorkflowUserRequest bool
+
+	// IsWorkflowComputedTask marks the workflow harness's frame that follows
+	// IsWorkflowUserRequest: the task text a workflow script computed at
+	// runtime, which actually starts the subagent's work.
+	IsWorkflowComputedTask bool
+
+	// IsHandbackNudge marks the harness's reminder that a subagent's report
+	// was never delivered via SubagentHandback.
+	IsHandbackNudge bool
+
+	// IsStructuredOutputNudge marks the harness's reminder that the
+	// StructuredOutput tool must be called before stopping.
+	IsStructuredOutputNudge bool
+
+	// IsCutOffResumeNudge marks the harness's instruction to resume a
+	// response that was cut off mid-stream.
+	IsCutOffResumeNudge bool
+
+	// IsStopHookFeedback marks a Stop hook's condition-evaluation report,
+	// sent after a turn to say whether the hook's goal was met. Distinct
+	// from IsStopHookGoal, which marks the hook's one-time activation
+	// notice.
+	IsStopHookFeedback bool
+
 	// PromptSource carries the top-level "promptSource" field Claude Code
 	// (CLI >= 2.1.165) writes on some user entries (see the PromptSource*
 	// constants). Empty when the field is absent: older CLI versions never
@@ -189,6 +218,33 @@ func (u UserMessage) IsClassifiedAsHarness() bool {
 	return u.IsCompactedHarnessInjection() || u.IsSystemReminder || u.IsContextUsage
 }
 
+// IsCompactedHarnessInjection reports whether this message is a harness
+// injection that is rendered in compact form rather than dropped or shown
+// under the user role. This is the single enumeration of that set: stats.go
+// (raw-side accounting) and render.go's per-flag dispatch (each flag needs
+// its own compact form, so the dispatch itself is not collapsed into this
+// method) both derive from it, keeping the set from drifting between the two
+// call sites the way it did before ADR-008.
+//
+// IsSystemReminder/IsContextUsage are dropped outright, not compacted, so
+// they stay out of this set. IsMidTurnUserMessage is the only excluded flag
+// rendered under the user role: it relays the user's own message verbatim
+// (render.go). IsWorkflowUserRequest also relays the user's own request
+// verbatim, but despite that it is rendered compacted under the harness role
+// (render.go), because the frame it arrives in is itself a harness
+// injection — so it belongs in this set, not alongside IsMidTurnUserMessage.
+func (u UserMessage) IsCompactedHarnessInjection() bool {
+	return u.IsSkillInjection || u.IsTeammateMessage ||
+		u.IsCommandInjection || u.IsTaskNotification ||
+		u.IsCompactionSummary || u.IsStopHookGoal ||
+		u.IsAgentsStopped || u.IsInterrupted ||
+		u.IsCoordinatorMessage || u.IsContinuePrompt ||
+		u.IsForkBoilerplate || u.IsNoVisibleOutputNudge ||
+		u.IsWorkflowUserRequest || u.IsWorkflowComputedTask ||
+		u.IsHandbackNudge || u.IsStructuredOutputNudge ||
+		u.IsCutOffResumeNudge || u.IsStopHookFeedback
+}
+
 // CountsAsTurn reports whether this message starts a unit of agent work: an
 // incoming prompt that runs until the agent stops. It is the denominator of
 // the cost model's K.
@@ -215,33 +271,30 @@ func (u UserMessage) IsClassifiedAsHarness() bool {
 // same by-observation test: both are too rare in the sample (3 and 5
 // messages) to measure what follows them reliably. IsNoVisibleOutputNudge
 // counts because it is a nudge to keep working, not a report of it: it does
-// not describe a round already underway.
+// not describe a round already underway. IsHandbackNudge,
+// IsStructuredOutputNudge, and IsCutOffResumeNudge count for the same
+// reason — each demands a new response, not a report of one already given.
 //
 // IsMidTurnUserMessage is false: the harness's own wording says the message
 // "arrives ... within the running turn," so it does not start a new one —
 // same reasoning as the injections that arrive alongside the turn that
-// triggered them.
-// IsCompactedHarnessInjection reports whether this message is a harness
-// injection that is rendered in compact form rather than dropped or shown
-// under the user role. This is the single enumeration of that set: stats.go
-// (raw-side accounting) and render.go's per-flag dispatch (each flag needs
-// its own compact form, so the dispatch itself is not collapsed into this
-// method) both derive from it, keeping the set from drifting between the two
-// call sites the way it did before ADR-008.
-//
-// IsSystemReminder/IsContextUsage are dropped outright, not compacted, and
-// IsMidTurnUserMessage is human-typed and rendered under the user role, so
-// none of the three belongs in this set.
-func (u UserMessage) IsCompactedHarnessInjection() bool {
-	return u.IsSkillInjection || u.IsTeammateMessage ||
-		u.IsCommandInjection || u.IsTaskNotification ||
-		u.IsCompactionSummary || u.IsStopHookGoal ||
-		u.IsAgentsStopped || u.IsInterrupted ||
-		u.IsCoordinatorMessage || u.IsContinuePrompt ||
-		u.IsForkBoilerplate || u.IsNoVisibleOutputNudge
-}
-
+// triggered them. IsWorkflowUserRequest is false for the same reason: it
+// arrives immediately before IsWorkflowComputedTask, the frame that actually
+// starts the subagent's work (measured 0/108 vs. 95/108, harness drift
+// 2026-09).
 func (u UserMessage) CountsAsTurn() bool {
+	// An agents-stopped notice is the tail of an already-running background
+	// agent's cancellation, not a new prompt — measured 0/7 for the
+	// singular wording (harness drift 2026-09), matching the plural
+	// wording's original 0/4 (ADR-008). Checked ahead of the promptSource
+	// rule below because every sampled notice, singular and plural, carries
+	// promptSource="system", which that rule would otherwise count as a
+	// turn. Reader.go's human-source reset (ADR-009 decision 4) means
+	// IsAgentsStopped never co-occurs with a human promptSource, so this
+	// can't shadow a real typed message.
+	if u.IsAgentsStopped {
+		return false
+	}
 	// ADR-009: a message that carries promptSource always started a turn —
 	// measured 89-98% across all five values, including "system" (the
 	// task-notification/stop-hook/etc. table above only still matters for
@@ -257,7 +310,9 @@ func (u UserMessage) CountsAsTurn() bool {
 		return false
 	}
 	if u.IsTeammateMessage || u.IsTaskNotification || u.IsCompactionSummary ||
-		u.IsCoordinatorMessage || u.IsForkBoilerplate || u.IsNoVisibleOutputNudge {
+		u.IsCoordinatorMessage || u.IsForkBoilerplate || u.IsNoVisibleOutputNudge ||
+		u.IsWorkflowComputedTask || u.IsHandbackNudge || u.IsStructuredOutputNudge ||
+		u.IsCutOffResumeNudge || u.IsStopHookFeedback {
 		return true
 	}
 	return !u.IsCommandNoise &&
@@ -267,10 +322,10 @@ func (u UserMessage) CountsAsTurn() bool {
 		!u.IsContextUsage &&
 		!u.IsSystemReminder &&
 		!u.IsInterrupted &&
-		!u.IsAgentsStopped &&
 		!u.IsStopHookGoal &&
 		!u.IsContinuePrompt &&
-		!u.IsMidTurnUserMessage
+		!u.IsMidTurnUserMessage &&
+		!u.IsWorkflowUserRequest
 }
 
 type Usage struct {

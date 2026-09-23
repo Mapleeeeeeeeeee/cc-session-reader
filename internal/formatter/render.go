@@ -122,6 +122,24 @@ func renderUserMessage(user *session.UserMessage, opts FormatOptions, seenSkills
 	if user.IsNoVisibleOutputNudge {
 		return harnessRender("[nudge: no visible output]")
 	}
+	if user.IsWorkflowUserRequest {
+		return harnessRender(session.CompactWorkflowUserRequest(user.Text))
+	}
+	if user.IsWorkflowComputedTask {
+		return harnessRender(session.CompactWorkflowComputedTask(user.Text))
+	}
+	if user.IsHandbackNudge {
+		return harnessRender("[nudge: handback]")
+	}
+	if user.IsStructuredOutputNudge {
+		return harnessRender("[nudge: structured output]")
+	}
+	if user.IsCutOffResumeNudge {
+		return harnessRender("[nudge: cut off]")
+	}
+	if user.IsStopHookFeedback {
+		return harnessRender(session.CompactStopHookFeedback(user.Text))
+	}
 	if user.IsCommandInjection {
 		if body, ok := session.CompactCommandInjection(user.Text); ok {
 			return harnessRender(body)

@@ -36,6 +36,16 @@ type rawEntry struct {
 	// Absent on older transcripts and on harness injections/mid-turn relays
 	// even under current CLI (ADR-009).
 	PromptSource string `json:"promptSource"`
+
+	// IsCompactSummary is the top-level field Claude Code writes on a
+	// harness-injected conversation summary after a compaction. Preferred
+	// over classify.go's text-based prefix match because a summary can quote
+	// a harness tag (a teammate tag, <task-notification>) inside its own
+	// restated content, and CLI 2.1.274 started prefixing some summaries
+	// with <artifact-content-authored-by-others/>, which defeats the prefix
+	// match entirely (harness drift 2026-09). Absent on transcripts that
+	// never wrote the field, which leaves them to the prefix fallback.
+	IsCompactSummary bool `json:"isCompactSummary"`
 }
 
 type rawMessage struct {
