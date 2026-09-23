@@ -332,6 +332,20 @@ func TestCompactStopHookFeedback_GivenReport_WhenCompacted_ThenStripsThePrefix(t
 	}
 }
 
+// A leading newline ahead of the fixed prefix (harness whitespace variance,
+// the same kind CompactCoordinatorMessage already guards against) must not
+// leave the "Stop hook feedback:" line sitting in the compact output.
+func TestCompactStopHookFeedback_GivenLeadingWhitespace_WhenCompacted_ThenStripsThePrefix(t *testing.T) {
+	text := "\nStop hook feedback:\n[測試一件事]: The condition was not met."
+
+	got := CompactStopHookFeedback(text)
+
+	want := "[goal feedback]\n[測試一件事]: The condition was not met."
+	if got != want {
+		t.Errorf("CompactStopHookFeedback() = %q, want %q", got, want)
+	}
+}
+
 // A summary whose body never reaches the "Summary:" heading must not be
 // silently emptied — the body is the previous conversation.
 func TestCompactCompactionSummary_GivenNoSummaryHeading_WhenCompacted_ThenKeepsWholeBody(t *testing.T) {

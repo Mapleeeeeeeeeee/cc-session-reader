@@ -38,14 +38,21 @@ func CompactStopHookGoal(user *UserMessage) string {
 	return "[goal] " + user.GoalCondition
 }
 
+// StopHookFeedbackPrefix opens a Stop hook's condition-evaluation report: the
+// header line that precedes the quoted condition. The single authoritative
+// definition, shared by claudecodec's classifier (which anchors matching
+// further, into the opening bracket of the quoted condition — see
+// classify.go's stopHookFeedbackPrefix) and CompactStopHookFeedback below,
+// which strips exactly this prefix.
+const StopHookFeedbackPrefix = "Stop hook feedback:\n"
+
 // CompactStopHookFeedback renders a Stop hook condition-evaluation report as
 // "[goal feedback]" plus the body. Distinct from CompactStopHookGoal (the
 // hook's one-time activation notice): this fires after a turn to say whether
 // the hook's condition was met, and that verdict is the useful part.
 func CompactStopHookFeedback(text string) string {
 	const marker = "[goal feedback]"
-	const prefix = "Stop hook feedback:\n"
-	return marker + "\n" + strings.TrimSpace(strings.TrimPrefix(text, prefix))
+	return marker + "\n" + strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(text), StopHookFeedbackPrefix))
 }
 
 // CompactAgentsStopped renders the notice as "[agents stopped: N]". The
@@ -244,8 +251,9 @@ func CompactForkBoilerplate(text string) string {
 const harnessFrameIndent = "  "
 
 // dedentHarnessFrame strips harnessFrameIndent from every line of a framed
-// body. Lines that don't carry the prefix (the harness ever emits a shorter
-// one) are left as-is rather than dropping characters that aren't there.
+// body. Lines that don't carry the prefix (if the harness ever emits a
+// shorter one) are left as-is rather than dropping characters that aren't
+// there.
 func dedentHarnessFrame(text string) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {

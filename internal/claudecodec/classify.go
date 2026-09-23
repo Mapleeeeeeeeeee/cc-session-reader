@@ -75,22 +75,22 @@ const (
 	workflowUserRequestPrefix  = "[Workflow harness — user request]"
 	workflowComputedTaskPrefix = "[Workflow harness — computed task]"
 
-	// handbackSendEnforceTag and structuredOutputEnforceTag are the fixed
-	// bracket tags on two harness reminders that a required tool call is
-	// still outstanding, anchored on the tag rather than the full sentence
+	// handbackSendEnforcePrefix and structuredOutputEnforcePrefix are the
+	// fixed bracket tags on two harness reminders that a required tool call
+	// is still outstanding, anchored on the tag rather than the full sentence
 	// for the same reason as the workflow frames above.
-	handbackSendEnforceTag     = "[handback-send-enforce]"
-	structuredOutputEnforceTag = "[structured-output-enforce]"
+	handbackSendEnforcePrefix     = "[handback-send-enforce]"
+	structuredOutputEnforcePrefix = "[structured-output-enforce]"
 
 	// cutOffResumeNudgePrefix opens both observed wordings of the harness's
 	// instruction to resume a response that was cut off mid-stream.
 	cutOffResumeNudgePrefix = "Your response above was cut off mid-stream"
 
-	// stopHookFeedbackPrefix opens a Stop hook's condition-evaluation report,
-	// anchored past the newline and into the opening bracket of the quoted
-	// condition: the bare phrase "Stop hook feedback:" alone is short enough
-	// that a real user message could plausibly open with it.
-	stopHookFeedbackPrefix = "Stop hook feedback:\n["
+	// stopHookFeedbackPrefix anchors past session.StopHookFeedbackPrefix's
+	// header line and into the opening bracket of the quoted condition: the
+	// bare phrase "Stop hook feedback:" alone is short enough that a real
+	// user message could plausibly open with it.
+	stopHookFeedbackPrefix = session.StopHookFeedbackPrefix + "["
 
 	// backgroundAgentStoppedPrefix/Suffix bracket the singular wording of the
 	// agents-stopped notice, which agentsStoppedCount's leading-count regex
@@ -252,10 +252,10 @@ func classifyHarnessUserMessage(text string) *session.UserMessage {
 
 	// Enforcement nudges: fixed harness reminders that a required tool call
 	// is still outstanding.
-	if strings.HasPrefix(trimmed, handbackSendEnforceTag) {
+	if strings.HasPrefix(trimmed, handbackSendEnforcePrefix) {
 		return &session.UserMessage{Text: text, IsHandbackNudge: true}
 	}
-	if strings.HasPrefix(trimmed, structuredOutputEnforceTag) {
+	if strings.HasPrefix(trimmed, structuredOutputEnforcePrefix) {
 		return &session.UserMessage{Text: text, IsStructuredOutputNudge: true}
 	}
 
