@@ -43,6 +43,12 @@ func Test_ResolveModel_GivenKnownAlias_ThenReturnsExpectedConfig(t *testing.T) {
 			wantTokenCount: TokenCountModelOpus46,
 		},
 		{
+			name:           "opus-5-5",
+			alias:          "opus-5-5",
+			wantPricing:    PricingOpus55,
+			wantTokenCount: TokenCountModelOpus55,
+		},
+		{
 			name:           "fable",
 			alias:          "fable",
 			wantPricing:    PricingFable,
@@ -73,12 +79,22 @@ func Test_ResolveModel_GivenKnownAlias_ThenReturnsExpectedConfig(t *testing.T) {
 }
 
 // Regression guard: PricingFable's cache read must stay at 2.5% of base input
-// ($0.25/MTok), not the 10% ratio every other tier in this file uses.
+// ($0.25/MTok), not the 10% ratio Opus 4.x/Sonnet use.
 func Test_PricingFable_ThenCacheReadIsTwoPointFivePercentOfBaseInput(t *testing.T) {
 	want := PricingFable.BaseInput * 0.025
 	if PricingFable.CachedRead != want {
 		t.Errorf("PricingFable.CachedRead = %v, want %v (2.5%% of BaseInput %v)",
 			PricingFable.CachedRead, want, PricingFable.BaseInput)
+	}
+}
+
+// Regression guard: PricingOpus55's cache read must stay at 5% of base input
+// ($0.20/MTok), not the 10% ratio Opus 4.x/Sonnet use.
+func Test_PricingOpus55_ThenCacheReadIsFivePercentOfBaseInput(t *testing.T) {
+	want := PricingOpus55.BaseInput * 0.05
+	if PricingOpus55.CachedRead != want {
+		t.Errorf("PricingOpus55.CachedRead = %v, want %v (5%% of BaseInput %v)",
+			PricingOpus55.CachedRead, want, PricingOpus55.BaseInput)
 	}
 }
 
@@ -89,5 +105,15 @@ func Test_ResolveModel_GivenUnknownAlias_ThenErrorListsFableAliases(t *testing.T
 	}
 	if !strings.Contains(err.Error(), "fable") {
 		t.Errorf("error = %v, want it to list the fable aliases", err)
+	}
+}
+
+func Test_ResolveModel_GivenUnknownAlias_ThenErrorListsOpus55Alias(t *testing.T) {
+	_, err := ResolveModel("nonsense")
+	if err == nil {
+		t.Fatal("ResolveModel(\"nonsense\") returned nil error, want unknown model error")
+	}
+	if !strings.Contains(err.Error(), "opus-5-5") {
+		t.Errorf("error = %v, want it to list the opus-5-5 alias", err)
 	}
 }
