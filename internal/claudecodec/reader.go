@@ -177,7 +177,9 @@ func parseLineWithToolCalls(line []byte, toolCalls map[string]toolCallInfo) (ses
 			return session.Event{}, false, nil
 		}
 		event.Kind = session.EventUserMessage
-		if classified := classifyContinuePrompt(text, raw.IsMeta); classified != nil {
+		if classified := classifyCompactionSummaryByField(text, raw.IsCompactSummary); classified != nil {
+			event.User = classified
+		} else if classified := classifyContinuePrompt(text, raw.IsMeta); classified != nil {
 			event.User = classified
 		} else if classified := classifySkillInjectionByLink(text, raw.IsMeta, raw.SourceToolUseID, toolCalls); classified != nil {
 			event.User = classified

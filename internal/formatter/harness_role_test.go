@@ -78,6 +78,49 @@ func TestFormatReadEvents_GivenHarnessInjection_WhenRendered_ThenLabelsItHarness
 			},
 			wantBody: "[nudge: no visible output]",
 		},
+		// Harness drift 2026-09.
+		"a workflow user-request frame keeps its de-indented body under a marker": {
+			user: session.UserMessage{
+				IsWorkflowUserRequest: true,
+				Text:                  "[Workflow harness \u2014 user request] ... this request wins:\n  先跑一下 /review",
+			},
+			wantBody: "[workflow: user request]\n先跑一下 /review",
+		},
+		"a workflow computed-task frame keeps its de-indented body under a marker": {
+			user: session.UserMessage{
+				IsWorkflowComputedTask: true,
+				Text:                   "[Workflow harness \u2014 computed task] ... The computed task text follows:\n  對抗式驗證",
+			},
+			wantBody: "[workflow: computed task]\n對抗式驗證",
+		},
+		"a handback-send-enforce nudge collapses to a marker": {
+			user: session.UserMessage{
+				IsHandbackNudge: true,
+				Text:            "[handback-send-enforce] Your report has not been delivered. Call SubagentHandback(...) now, then stop.",
+			},
+			wantBody: "[nudge: handback]",
+		},
+		"a structured-output-enforce nudge collapses to a marker": {
+			user: session.UserMessage{
+				IsStructuredOutputNudge: true,
+				Text:                    "[structured-output-enforce] You MUST call the StructuredOutput tool to complete this request.",
+			},
+			wantBody: "[nudge: structured output]",
+		},
+		"a cut-off resume nudge collapses to a marker": {
+			user: session.UserMessage{
+				IsCutOffResumeNudge: true,
+				Text:                "Your response above was cut off mid-stream. Resume directly from where it stops.",
+			},
+			wantBody: "[nudge: cut off]",
+		},
+		"a Stop hook feedback report keeps its body under a marker": {
+			user: session.UserMessage{
+				IsStopHookFeedback: true,
+				Text:               "Stop hook feedback:\n[測試一件事]: The condition was not met.",
+			},
+			wantBody: "[goal feedback]\n[測試一件事]: The condition was not met.",
+		},
 	}
 
 	for name, tc := range tests {

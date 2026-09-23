@@ -38,6 +38,16 @@ func CompactStopHookGoal(user *UserMessage) string {
 	return "[goal] " + user.GoalCondition
 }
 
+// CompactStopHookFeedback renders a Stop hook condition-evaluation report as
+// "[goal feedback]" plus the body. Distinct from CompactStopHookGoal (the
+// hook's one-time activation notice): this fires after a turn to say whether
+// the hook's condition was met, and that verdict is the useful part.
+func CompactStopHookFeedback(text string) string {
+	const marker = "[goal feedback]"
+	const prefix = "Stop hook feedback:\n"
+	return marker + "\n" + strings.TrimSpace(strings.TrimPrefix(text, prefix))
+}
+
 // CompactAgentsStopped renders the notice as "[agents stopped: N]". The
 // notice also lists the stopped agents' prompts, but the harness has already
 // truncated each to an unusable fragment.
@@ -223,6 +233,84 @@ func CompactForkBoilerplate(text string) string {
 		return marker
 	}
 	return marker + "\n" + directive
+}
+
+// harnessFrameIndent is the fixed two-space prefix the harness applies to
+// every line of a framed body — including blank lines — so a line at column
+// zero inside untrusted content (a workflow's computed task, a subagent's
+// report) can't forge a frame boundary. Shared by the workflow frames and the
+// subagent hand-back preamble, which both use this device.
+const harnessFrameIndent = "  "
+
+// dedentHarnessFrame strips harnessFrameIndent from every line of a framed
+// body. Lines that don't carry the prefix (the harness ever emits a shorter
+// one) are left as-is rather than dropping characters that aren't there.
+func dedentHarnessFrame(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimPrefix(line, harnessFrameIndent)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// CompactWorkflowUserRequest renders the workflow harness's relayed-request
+// frame as "[workflow: user request]" plus the de-indented body — the user's
+// own request, verbatim per the frame's own wording. Returns the marker
+// alone if the frame's anchor phrase or a body after it is absent.
+func CompactWorkflowUserRequest(text string) string {
+	const marker = "[workflow: user request]"
+	const anchor = "this request wins:"
+	body := dedentedFrameBody(text, anchor)
+	if body == "" {
+		return marker
+	}
+	return marker + "\n" + body
+}
+
+// CompactWorkflowComputedTask renders the workflow harness's computed-task
+// frame as "[workflow: computed task]" plus the de-indented body, the same
+// way CompactForkBoilerplate keeps a fork's directive after its preamble.
+func CompactWorkflowComputedTask(text string) string {
+	const marker = "[workflow: computed task]"
+	const anchor = "The computed task text follows:"
+	body := dedentedFrameBody(text, anchor)
+	if body == "" {
+		return marker
+	}
+	return marker + "\n" + body
+}
+
+// dedentedFrameBody returns the de-indented text following anchor in text,
+// or "" if anchor is absent or nothing meaningful follows it.
+func dedentedFrameBody(text, anchor string) string {
+	idx := strings.Index(text, anchor)
+	if idx < 0 {
+		return ""
+	}
+	body := strings.TrimPrefix(text[idx+len(anchor):], "\n")
+	body = strings.TrimSpace(dedentHarnessFrame(body))
+	return body
+}
+
+// subagentHandbackPrefix and subagentHandbackAnchor bracket the harness's
+// hand-back preamble the same way the workflow frames bracket theirs: the
+// preamble explains that the report is model output, not the user, and the
+// body after the anchor is that report, indented per harnessFrameIndent.
+const subagentHandbackPrefix = "[Subagent hand-back]"
+const subagentHandbackAnchor = "The report follows:"
+
+// stripSubagentHandbackPreamble removes the hand-back preamble from a
+// teammate-message body that relays a subagent's final report, keeping only
+// the de-indented report. Bodies that don't start with the preamble (an
+// ordinary teammate message) are returned unchanged.
+func stripSubagentHandbackPreamble(body string) string {
+	if !strings.HasPrefix(body, subagentHandbackPrefix) {
+		return body
+	}
+	if report := dedentedFrameBody(body, subagentHandbackAnchor); report != "" {
+		return report
+	}
+	return body
 }
 
 // CompactCoordinatorMessage renders a coordinator-to-subagent message as

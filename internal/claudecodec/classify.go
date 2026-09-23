@@ -65,6 +65,38 @@ const (
 	// but the body between them is exactly what the user typed.
 	midTurnOpeningLine       = "The user sent a new message while you were working:"
 	midTurnExplanationMarker = "This is how Claude Code surfaces messages the user sends mid-turn"
+
+	// workflowUserRequestPrefix and workflowComputedTaskPrefix open the two
+	// frames a workflow harness writes as the first entries of a subagent
+	// workflow transcript. Neither carries promptSource/isMeta/origin, so
+	// the bracket tag is the only signal — same reasoning as the teammate
+	// tag (ADR-008 §4): the tag is what the harness itself keys on, the
+	// prose around it is free to reword.
+	workflowUserRequestPrefix  = "[Workflow harness — user request]"
+	workflowComputedTaskPrefix = "[Workflow harness — computed task]"
+
+	// handbackSendEnforceTag and structuredOutputEnforceTag are the fixed
+	// bracket tags on two harness reminders that a required tool call is
+	// still outstanding, anchored on the tag rather than the full sentence
+	// for the same reason as the workflow frames above.
+	handbackSendEnforceTag     = "[handback-send-enforce]"
+	structuredOutputEnforceTag = "[structured-output-enforce]"
+
+	// cutOffResumeNudgePrefix opens both observed wordings of the harness's
+	// instruction to resume a response that was cut off mid-stream.
+	cutOffResumeNudgePrefix = "Your response above was cut off mid-stream"
+
+	// stopHookFeedbackPrefix opens a Stop hook's condition-evaluation report,
+	// anchored past the newline and into the opening bracket of the quoted
+	// condition: the bare phrase "Stop hook feedback:" alone is short enough
+	// that a real user message could plausibly open with it.
+	stopHookFeedbackPrefix = "Stop hook feedback:\n["
+
+	// backgroundAgentStoppedPrefix/Suffix bracket the singular wording of the
+	// agents-stopped notice, which agentsStoppedCount's leading-count regex
+	// below does not match.
+	backgroundAgentStoppedPrefix = `Background agent "`
+	backgroundAgentStoppedSuffix = `" was stopped by the user.`
 )
 
 var agentsStoppedCount = regexp.MustCompile(`^(\d+) background agents? (?:was|were) stopped`)
@@ -157,6 +189,24 @@ func classifyContinuePrompt(text string, isMeta bool) *session.UserMessage {
 	return &session.UserMessage{Text: text, IsContinuePrompt: true}
 }
 
+// classifyCompactionSummaryByField detects a harness-injected conversation
+// summary via the top-level isCompactSummary field Claude Code writes on the
+// entry, taking priority over classifyHarnessUserMessage's text-based prefix
+// match: 3 of 37 sampled summaries quoted a teammate tag or
+// <task-notification> inside their own restated content, which the
+// Contains-based checks in classifyHarnessUserMessage matched first, and CLI
+// 2.1.274 started prefixing some summaries with
+// <artifact-content-authored-by-others/>, which defeats the prefix match
+// outright (harness drift 2026-09). Returns nil when isCompactSummary is
+// false, leaving transcripts that never wrote the field (older CLI) to the
+// prefix fallback in classifyHarnessUserMessage.
+func classifyCompactionSummaryByField(text string, isCompactSummary bool) *session.UserMessage {
+	if !isCompactSummary {
+		return nil
+	}
+	return &session.UserMessage{Text: text, IsCompactionSummary: true}
+}
+
 // classifyHarnessUserMessage detects harness-injected user messages that are
 // not direct user input: skill injections, system reminders, teammate messages,
 // context usage blocks, and command injection XML. Returns nil for plain
@@ -189,6 +239,49 @@ func classifyHarnessUserMessage(text string) *session.UserMessage {
 		if body, ok := extractMidTurnUserText(trimmed); ok {
 			return &session.UserMessage{Text: text, IsMidTurnUserMessage: true, MidTurnUserText: body}
 		}
+	}
+
+	// Workflow harness frames: the first two entries of every subagent
+	// workflow transcript (see workflowUserRequestPrefix).
+	if strings.HasPrefix(trimmed, workflowUserRequestPrefix) {
+		return &session.UserMessage{Text: text, IsWorkflowUserRequest: true}
+	}
+	if strings.HasPrefix(trimmed, workflowComputedTaskPrefix) {
+		return &session.UserMessage{Text: text, IsWorkflowComputedTask: true}
+	}
+
+	// Enforcement nudges: fixed harness reminders that a required tool call
+	// is still outstanding.
+	if strings.HasPrefix(trimmed, handbackSendEnforceTag) {
+		return &session.UserMessage{Text: text, IsHandbackNudge: true}
+	}
+	if strings.HasPrefix(trimmed, structuredOutputEnforceTag) {
+		return &session.UserMessage{Text: text, IsStructuredOutputNudge: true}
+	}
+
+	// Cut-off resume nudge: two observed wordings, both opening with this
+	// sentence.
+	if strings.HasPrefix(trimmed, cutOffResumeNudgePrefix) {
+		return &session.UserMessage{Text: text, IsCutOffResumeNudge: true}
+	}
+
+	// Stop hook condition-evaluation report. Distinct from stopHookPrefix's
+	// goal-activation notice below.
+	if strings.HasPrefix(trimmed, stopHookFeedbackPrefix) {
+		return &session.UserMessage{Text: text, IsStopHookFeedback: true}
+	}
+
+	// Conversation summary injected when a session continues past a
+	// compaction. Checked here, before the teammate-tag and
+	// task-notification Contains checks below, because a summary restating
+	// earlier conversation can quote either tag inside its own body: 3 of 37
+	// sampled summaries were misclassified as a teammate message or a task
+	// notification by whichever Contains check ran first (harness drift
+	// 2026-09). Transcripts that carry the isCompactSummary field never
+	// reach this fallback at all — classifyCompactionSummaryByField in
+	// reader.go classifies them first, unconditional on this prefix.
+	if strings.HasPrefix(trimmed, compactionSummary) {
+		return &session.UserMessage{Text: text, IsCompactionSummary: true}
 	}
 
 	// Teammate message: detected by the XML tag alone, not by the surrounding
@@ -243,12 +336,6 @@ func classifyHarnessUserMessage(text string) *session.UserMessage {
 		return &session.UserMessage{Text: text, IsNoVisibleOutputNudge: true}
 	}
 
-	// Conversation summary injected when a session continues past a
-	// compaction. The body is the previous conversation, so it is kept.
-	if strings.HasPrefix(trimmed, compactionSummary) {
-		return &session.UserMessage{Text: text, IsCompactionSummary: true}
-	}
-
 	if strings.HasPrefix(trimmed, interruptedPrefix) {
 		return &session.UserMessage{Text: text, IsInterrupted: true}
 	}
@@ -259,6 +346,13 @@ func classifyHarnessUserMessage(text string) *session.UserMessage {
 			return nil
 		}
 		return &session.UserMessage{Text: text, IsAgentsStopped: true, StoppedAgentCount: count}
+	}
+
+	// Singular wording of the same notice: "Background agent "<desc>" was
+	// stopped by the user." carries no leading count for the regex above to
+	// match. Same shape and turn verdict as the plural notice.
+	if strings.HasPrefix(trimmed, backgroundAgentStoppedPrefix) && strings.HasSuffix(trimmed, backgroundAgentStoppedSuffix) {
+		return &session.UserMessage{Text: text, IsAgentsStopped: true, StoppedAgentCount: 1}
 	}
 
 	if strings.HasPrefix(trimmed, stopHookPrefix) {
