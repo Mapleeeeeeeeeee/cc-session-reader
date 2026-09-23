@@ -12,16 +12,24 @@ type Pricing struct {
 var PricingOpus = Pricing{CachedRead: 0.50, CacheWrite: 6.25, BaseInput: 5.00}
 var PricingSonnet = Pricing{CachedRead: 0.30, CacheWrite: 3.75, BaseInput: 3.00}
 
-// PricingFable is Claude Fable 5.1's pricing. Unlike every other tier here, its
-// cache read is 2.5% of base input rather than the usual 10% (source: Anthropic
-// pricing docs, "a cache hit costs 2.5% of the standard input price"), so its
-// cost-savings numbers are not directly comparable to the Opus/Sonnet rows.
+// PricingOpus55 is Claude Opus 5.5's pricing. Its cache read is 5% of base
+// input rather than the 10% Opus 4.x/Sonnet use (source: Anthropic pricing
+// docs, "a cache hit costs 5% of the standard input price"), so its
+// cost-savings numbers are not directly comparable to the Opus 4.x/Sonnet rows.
+var PricingOpus55 = Pricing{CachedRead: 0.20, CacheWrite: 5.00, BaseInput: 4.00}
+
+// PricingFable is Claude Fable 5.1's pricing. Its cache read is 2.5% of base
+// input — lower than the 10% Opus 4.x/Sonnet use and the 5% Opus 5.5 uses
+// (source: Anthropic pricing docs, "a cache hit costs 2.5% of the standard
+// input price"), so its cost-savings numbers are not directly comparable to
+// the other rows.
 var PricingFable = Pricing{CachedRead: 0.25, CacheWrite: 12.50, BaseInput: 10.00}
 
 const (
 	TokenCountModelOpus46 = "claude-opus-4-6"
 	TokenCountModelOpus47 = "claude-opus-4-7"
 	TokenCountModelOpus48 = "claude-opus-4-8"
+	TokenCountModelOpus55 = "claude-opus-5-5"
 	TokenCountModelSonnet = "claude-sonnet-4-6"
 	TokenCountModelFable  = "claude-fable-5-1"
 )
@@ -43,10 +51,12 @@ func ResolveModel(model string) (ModelConfig, error) {
 		return ModelConfig{Pricing: PricingOpus, TokenCountModel: TokenCountModelOpus47}, nil
 	case "opus-4-6":
 		return ModelConfig{Pricing: PricingOpus, TokenCountModel: TokenCountModelOpus46}, nil
+	case "opus-5-5":
+		return ModelConfig{Pricing: PricingOpus55, TokenCountModel: TokenCountModelOpus55}, nil
 	case "fable", "fable-5-1":
 		return ModelConfig{Pricing: PricingFable, TokenCountModel: TokenCountModelFable}, nil
 	default:
-		return ModelConfig{}, fmt.Errorf("unknown model %q: must be opus, opus-4-6, opus-4-7, opus-4-8, sonnet, fable, or fable-5-1", model)
+		return ModelConfig{}, fmt.Errorf("unknown model %q: must be opus, opus-4-6, opus-4-7, opus-4-8, opus-5-5, sonnet, fable, or fable-5-1", model)
 	}
 }
 

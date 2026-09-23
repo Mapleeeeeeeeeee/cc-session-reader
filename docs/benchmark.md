@@ -36,7 +36,7 @@ All other parameters are derived automatically from your real session data.
 | `--days` | 30 | How far back to scan for sessions |
 | `--min-kb` | 100 | Minimum JSONL file size in KB |
 | `--n` | 10 | Max successful session results to report |
-| `--model` | opus | Pricing and token-counting model: `opus`, `opus-4-6`, `opus-4-7`, `opus-4-8`, `sonnet`, or `fable` (`fable-5-1`) |
+| `--model` | opus | Pricing and token-counting model: `opus`, `opus-4-6`, `opus-4-7`, `opus-4-8`, `opus-5-5`, `sonnet`, or `fable` (`fable-5-1`) |
 
 ### Example output
 
@@ -62,12 +62,12 @@ Median break-even: turn 1 | 10-turn saving: 69% | 100-turn saving: 48%
 
 From [Anthropic prompt caching docs](https://platform.claude.com/docs/en/build-with-claude/prompt-caching):
 
-| Bucket | API field | Rate (Opus) |
-|--------|-----------|:-----------:|
-| Cache read | `cache_read_input_tokens` | $0.50/M (0.1× base) |
-| Cache write | `cache_creation_input_tokens` | $6.25/M (1.25× base) |
-| Uncached input | `input_tokens` | $5.00/M (1× base) |
-| Output | `output_tokens` | $25/M (excluded — same for both scenarios) |
+| Bucket | API field | Rate (Opus 4.x) | Rate (Opus 5.5) |
+|--------|-----------|:-----------:|:-----------:|
+| Cache read | `cache_read_input_tokens` | $0.50/M (0.1× base) | $0.20/M (0.05× base) |
+| Cache write | `cache_creation_input_tokens` | $6.25/M (1.25× base) | $5.00/M (1.25× base) |
+| Uncached input | `input_tokens` | $5.00/M (1× base) | $4.00/M (1× base) |
+| Output | `output_tokens` | $25/M (excluded — same for both scenarios) | $20/M (excluded) |
 
 ### Per-API-call billing
 
@@ -162,16 +162,18 @@ the historical one-shot `NewCtx × CacheWrite` behavior.
 
 `X` comes from transcript API usage and `C` comes from the Anthropic token
 counting API. The `--model` flag controls both pricing and the tokenizer used by
-the token counting API. `opus` is an alias for `opus-4-8`; explicit Opus versions
-map to `claude-opus-4-6`, `claude-opus-4-7`, or `claude-opus-4-8`; `sonnet` maps
-to `claude-sonnet-4-6`; `fable` and `fable-5-1` both map to `claude-fable-5-1`.
-Opus 4.6, 4.7, and 4.8 use the same Opus pricing rates.
+the token counting API. `opus` is an alias for `opus-4-8`; explicit Opus 4.x
+versions map to `claude-opus-4-6`, `claude-opus-4-7`, or `claude-opus-4-8`;
+`opus-5-5` maps to `claude-opus-5-5`; `sonnet` maps to `claude-sonnet-4-6`;
+`fable` and `fable-5-1` both map to `claude-fable-5-1`.
+Opus 4.6, 4.7, and 4.8 use the same Opus pricing rates; Opus 5.5 has its own,
+lower rates (see the pricing table above).
 Fallback constants are used only for behavior that cannot be read directly from
 transcript usage, such as sparse tool I/O data.
 
-Claude Fable 5.1's cache read is 2.5% of base input, not the 10% every other
-model here uses, so its cost-savings numbers are not directly comparable to the
-Opus/Sonnet rows.
+Cache read as a percentage of base input differs by model: Opus 4.x and Sonnet
+use 10%, Opus 5.5 uses 5%, and Claude Fable 5.1 uses 2.5%. Cost-savings numbers
+are only directly comparable across rows using the same ratio.
 
 ### Simplifications
 
