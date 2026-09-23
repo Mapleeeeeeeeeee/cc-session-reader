@@ -5,13 +5,14 @@ import (
 	"testing"
 )
 
-// Harness drift 2026-09: classifyHarnessUserMessage's compaction-summary
-// prefix match runs after the teammate-tag and <task-notification> Contains
-// checks, so a summary that restates earlier conversation containing either
-// tag was misclassified before ever reaching the prefix check. The top-level
-// isCompactSummary field (classifyCompactionSummaryByField, checked first in
-// reader.go) is unconditional on body content, so it classifies all three
-// regardless of what the restated body quotes.
+// Regression: classifyHarnessUserMessage's compaction-summary prefix match
+// ran after the teammate-tag and <task-notification> Contains checks, so a
+// summary that restates earlier conversation containing either tag was
+// misclassified before ever reaching the prefix check (harness drift
+// 2026-09). The top-level isCompactSummary field
+// (classifyCompactionSummaryByField, checked first in reader.go) is
+// unconditional on body content, so it classifies all three regardless of
+// what the restated body quotes.
 func TestParseLine_GivenCompactSummaryField_WhenBodyQuotesAnotherHarnessTag_ThenStillClassifiedAsSummary(t *testing.T) {
 	tests := map[string]string{
 		"body quotes a teammate tag": "This session is being continued from a previous conversation that ran " +

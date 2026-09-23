@@ -82,9 +82,9 @@ func TestFormatReadEvents_GivenHarnessInjection_WhenRendered_ThenLabelsItHarness
 		"a workflow user-request frame keeps its de-indented body under a marker": {
 			user: session.UserMessage{
 				IsWorkflowUserRequest: true,
-				Text:                  "[Workflow harness \u2014 user request] ... this request wins:\n  先跑一下 /review",
+				Text:                  "[Workflow harness \u2014 user request] ... this request wins:\n  先跑一下 /lint",
 			},
-			wantBody: "[workflow: user request]\n先跑一下 /review",
+			wantBody: "[workflow: user request]\n先跑一下 /lint",
 		},
 		"a workflow computed-task frame keeps its de-indented body under a marker": {
 			user: session.UserMessage{
