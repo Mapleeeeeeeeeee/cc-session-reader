@@ -226,10 +226,13 @@ func (u UserMessage) IsClassifiedAsHarness() bool {
 // method) both derive from it, keeping the set from drifting between the two
 // call sites the way it did before ADR-008.
 //
-// IsSystemReminder/IsContextUsage are dropped outright, not compacted, and
-// IsMidTurnUserMessage/IsWorkflowUserRequest are human-typed and rendered
-// under the user role (the latter relays the user's own request verbatim),
-// so none of those belongs in this set.
+// IsSystemReminder/IsContextUsage are dropped outright, not compacted, so
+// they stay out of this set. IsMidTurnUserMessage is the only excluded flag
+// rendered under the user role: it relays the user's own message verbatim
+// (render.go). IsWorkflowUserRequest also relays the user's own request
+// verbatim, but despite that it is rendered compacted under the harness role
+// (render.go), because the frame it arrives in is itself a harness
+// injection — so it belongs in this set, not alongside IsMidTurnUserMessage.
 func (u UserMessage) IsCompactedHarnessInjection() bool {
 	return u.IsSkillInjection || u.IsTeammateMessage ||
 		u.IsCommandInjection || u.IsTaskNotification ||
@@ -237,9 +240,9 @@ func (u UserMessage) IsCompactedHarnessInjection() bool {
 		u.IsAgentsStopped || u.IsInterrupted ||
 		u.IsCoordinatorMessage || u.IsContinuePrompt ||
 		u.IsForkBoilerplate || u.IsNoVisibleOutputNudge ||
-		u.IsWorkflowComputedTask || u.IsHandbackNudge ||
-		u.IsStructuredOutputNudge || u.IsCutOffResumeNudge ||
-		u.IsStopHookFeedback
+		u.IsWorkflowUserRequest || u.IsWorkflowComputedTask ||
+		u.IsHandbackNudge || u.IsStructuredOutputNudge ||
+		u.IsCutOffResumeNudge || u.IsStopHookFeedback
 }
 
 // CountsAsTurn reports whether this message starts a unit of agent work: an

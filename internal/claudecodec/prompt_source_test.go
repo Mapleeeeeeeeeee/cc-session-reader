@@ -114,6 +114,34 @@ func TestParseLine_GivenHumanPromptSourceOnHarnessShapedBody_WhenParsed_ThenProm
 	}
 }
 
+// ADR-009 decision 4, harness drift 2026-09: IsWorkflowUserRequest only
+// joined IsClassifiedAsHarness's enumeration once render.go's actual
+// dispatch was checked (it renders the frame under the harness role, not the
+// user role a stale doc comment claimed) — this pins that the human-
+// promptSource override reaches it the same way it reaches every other
+// harness-shaped body, mirroring
+// TestParseLine_GivenHumanPromptSourceOnHarnessShapedBody_WhenParsed_ThenPromptSourceWins
+// above.
+func TestParseLine_GivenHumanPromptSourceOnWorkflowUserRequestShapedBody_WhenParsed_ThenPromptSourceWins(t *testing.T) {
+	text := "[Workflow harness — user request] The harness relays the user's own request:\n" +
+		"  先跑一下 /lint and /typecheck"
+	line := `{"type":"user","timestamp":"2026-09-02T00:00:00Z",` +
+		`"message":{"role":"user","content":"[Workflow harness — user request] The harness relays the ` +
+		`user's own request:\n  先跑一下 /lint and /typecheck"},"promptSource":"typed"}`
+
+	got := userMessageEventFor(t, line)
+
+	if got.IsWorkflowUserRequest {
+		t.Errorf("IsWorkflowUserRequest = true, want false: a human promptSource overrules the harness-shaped body")
+	}
+	if got.Text != text {
+		t.Errorf("Text = %q, want the original body kept verbatim", got.Text)
+	}
+	if got.PromptSource != session.PromptSourceTyped {
+		t.Errorf("PromptSource = %q, want %q", got.PromptSource, session.PromptSourceTyped)
+	}
+}
+
 // Regression: v0.1.76 (ADR-009, PR #13) treated "sdk" as a human source, so
 // this task-notification's harness shape got overridden and it rendered as
 // raw XML under "user (sdk):" instead of the compact form under "harness:".

@@ -725,3 +725,44 @@ func TestCompactCommandInjection_GivenNonCommand_ThenReturnsFalse(t *testing.T) 
 		t.Fatal("expected false for non-command message")
 	}
 }
+
+// --- IsCompactedHarnessInjection / IsClassifiedAsHarness tests ---
+
+// Harness drift 2026-09: these six flags were added to
+// IsCompactedHarnessInjection's enumeration one at a time. A parameterized
+// case per flag pins each one in the set so dropping any single flag from
+// the || chain goes red here, rather than only showing up as a silent K/stats
+// drift later — the failure mode ADR-008 already found once.
+func TestIsCompactedHarnessInjection_GivenHarnessDrift2026Flag_WhenChecked_ThenReportsHarness(t *testing.T) {
+	tests := map[string]UserMessage{
+		"a workflow user-request frame":     {IsWorkflowUserRequest: true},
+		"a workflow computed-task frame":    {IsWorkflowComputedTask: true},
+		"a handback-send-enforce nudge":     {IsHandbackNudge: true},
+		"a structured-output-enforce nudge": {IsStructuredOutputNudge: true},
+		"a cut-off resume nudge":            {IsCutOffResumeNudge: true},
+		"a Stop hook feedback report":       {IsStopHookFeedback: true},
+	}
+
+	for name, message := range tests {
+		t.Run(name, func(t *testing.T) {
+			if !message.IsCompactedHarnessInjection() {
+				t.Error("IsCompactedHarnessInjection() = false, want true")
+			}
+			if !message.IsClassifiedAsHarness() {
+				t.Error("IsClassifiedAsHarness() = false, want true")
+			}
+		})
+	}
+}
+
+// IsMidTurnUserMessage relays the user's own message verbatim under the user
+// role (render.go), so unlike the flags above it must stay out of the set —
+// without this case the table above would pass even if the || chain
+// collapsed to an unconditional true.
+func TestIsCompactedHarnessInjection_GivenMidTurnUserMessage_WhenChecked_ThenReportsNotHarness(t *testing.T) {
+	message := UserMessage{IsMidTurnUserMessage: true}
+
+	if message.IsCompactedHarnessInjection() {
+		t.Error("IsCompactedHarnessInjection() = true, want false: relayed verbatim under the user role")
+	}
+}

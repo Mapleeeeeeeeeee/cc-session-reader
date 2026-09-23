@@ -139,12 +139,28 @@ func TestCountsAsTurn_GivenMessageKind_WhenCounted_ThenFollowsWorkUnitPolicy(t *
 			message: UserMessage{Text: "…", IsSkillInjection: true, PromptSource: PromptSourceSDK},
 			want:    false,
 		},
+		// IsWorkflowUserRequest joined IsClassifiedAsHarness's enumeration once
+		// render.go's actual dispatch was checked (it renders the frame under
+		// the harness role, not the user role its doc comment used to claim),
+		// so this shape now defers to its own verdict like every other
+		// sdk-inherited harness injection above.
+		"a promptSource of sdk on a workflow user-request frame does not count, per the shape's own verdict": {
+			message: UserMessage{Text: "…", IsWorkflowUserRequest: true, PromptSource: PromptSourceSDK},
+			want:    false,
+		},
 
-		// Harness drift 2026-09.
+		// Regression: before IsWorkflowUserRequest/IsWorkflowComputedTask
+		// existed, both workflow frames fell through unclassified and rendered
+		// as plain user turns; CountsAsTurn's default branch counts an
+		// unclassified message, so both frames of the pair counted, double-
+		// counting each workflow agent's first round (harness drift 2026-09).
 		"a workflow user-request frame is not a turn: the computed task that follows it is": {
 			message: UserMessage{Text: "…", IsWorkflowUserRequest: true},
 			want:    false,
 		},
+		// Regression: see above — both frames of the pair counted before
+		// classification existed, double-counting the first round (harness
+		// drift 2026-09).
 		"a workflow computed-task frame is a turn: it starts the subagent's work (95/108 measured)": {
 			message: UserMessage{Text: "…", IsWorkflowComputedTask: true},
 			want:    true,
