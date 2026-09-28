@@ -10,7 +10,7 @@ type Pricing struct {
 }
 
 var PricingOpus = Pricing{CachedRead: 0.50, CacheWrite: 6.25, BaseInput: 5.00}
-var PricingSonnet = Pricing{CachedRead: 0.30, CacheWrite: 3.75, BaseInput: 3.00}
+var PricingSonnet46 = Pricing{CachedRead: 0.30, CacheWrite: 3.75, BaseInput: 3.00}
 
 // PricingSonnet55 is Claude Sonnet 5.5's pricing ($2 input / $10 output per
 // MTok). Cache read stays at 10% of base input, like Sonnet 4.6.
@@ -34,7 +34,7 @@ const (
 	TokenCountModelOpus47   = "claude-opus-4-7"
 	TokenCountModelOpus48   = "claude-opus-4-8"
 	TokenCountModelOpus55   = "claude-opus-5-5"
-	TokenCountModelSonnet   = "claude-sonnet-4-6"
+	TokenCountModelSonnet46 = "claude-sonnet-4-6"
 	TokenCountModelSonnet55 = "claude-sonnet-5-5"
 	TokenCountModelFable    = "claude-fable-5-1"
 )
@@ -48,10 +48,10 @@ type ModelConfig struct {
 // ResolveModel maps a user-facing model alias to its ModelConfig.
 func ResolveModel(model string) (ModelConfig, error) {
 	switch model {
-	case "sonnet":
-		return ModelConfig{Pricing: PricingSonnet, TokenCountModel: TokenCountModelSonnet}, nil
-	case "sonnet-5-5":
+	case "sonnet", "sonnet-5-5":
 		return ModelConfig{Pricing: PricingSonnet55, TokenCountModel: TokenCountModelSonnet55}, nil
+	case "sonnet-4-6":
+		return ModelConfig{Pricing: PricingSonnet46, TokenCountModel: TokenCountModelSonnet46}, nil
 	case "opus", "opus-4-8":
 		return ModelConfig{Pricing: PricingOpus, TokenCountModel: TokenCountModelOpus48}, nil
 	case "opus-4-7":
@@ -63,7 +63,7 @@ func ResolveModel(model string) (ModelConfig, error) {
 	case "fable", "fable-5-1":
 		return ModelConfig{Pricing: PricingFable, TokenCountModel: TokenCountModelFable}, nil
 	default:
-		return ModelConfig{}, fmt.Errorf("unknown model %q: must be opus, opus-4-6, opus-4-7, opus-4-8, opus-5-5, sonnet, sonnet-5-5, fable, or fable-5-1", model)
+		return ModelConfig{}, fmt.Errorf("unknown model %q: must be opus, opus-4-6, opus-4-7, opus-4-8, opus-5-5, sonnet, sonnet-4-6, sonnet-5-5, fable, or fable-5-1", model)
 	}
 }
 

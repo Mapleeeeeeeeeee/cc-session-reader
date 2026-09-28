@@ -36,7 +36,7 @@ All other parameters are derived automatically from your real session data.
 | `--days` | 30 | How far back to scan for sessions |
 | `--min-kb` | 100 | Minimum JSONL file size in KB |
 | `--n` | 10 | Max successful session results to report |
-| `--model` | opus | Pricing and token-counting model: `opus`, `opus-4-6`, `opus-4-7`, `opus-4-8`, `opus-5-5`, `sonnet`, `sonnet-5-5`, or `fable` (`fable-5-1`) |
+| `--model` | opus | Pricing and token-counting model: `opus`, `opus-4-6`, `opus-4-7`, `opus-4-8`, `opus-5-5`, `sonnet` (`sonnet-5-5`), `sonnet-4-6`, or `fable` (`fable-5-1`) |
 
 ### Example output
 
@@ -164,9 +164,9 @@ the historical one-shot `NewCtx × CacheWrite` behavior.
 counting API. The `--model` flag controls both pricing and the tokenizer used by
 the token counting API. `opus` is an alias for `opus-4-8`; explicit Opus 4.x
 versions map to `claude-opus-4-6`, `claude-opus-4-7`, or `claude-opus-4-8`;
-`opus-5-5` maps to `claude-opus-5-5`; `sonnet` maps to `claude-sonnet-4-6`;
-`sonnet-5-5` maps to `claude-sonnet-5-5` ($2.00/M input, $0.20/M cache read,
+`opus-5-5` maps to `claude-opus-5-5`; `sonnet` and `sonnet-5-5` both map to `claude-sonnet-5-5` ($2.00/M input, $0.20/M cache read,
 $2.50/M cache write, $10/M output);
+`sonnet-4-6` maps to `claude-sonnet-4-6`;
 `fable` and `fable-5-1` both map to `claude-fable-5-1`.
 Opus 4.6, 4.7, and 4.8 use the same Opus pricing rates; Opus 5.5 has its own,
 lower rates (see the pricing table above).
