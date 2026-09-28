@@ -9,6 +9,7 @@ type Pricing struct {
 	BaseInput  float64 // $/M tokens (uncached, after last breakpoint)
 }
 
+// PricingOpus is the shared Opus 4.x pricing (4.6, 4.7, 4.8).
 var PricingOpus = Pricing{CachedRead: 0.50, CacheWrite: 6.25, BaseInput: 5.00}
 var PricingSonnet46 = Pricing{CachedRead: 0.30, CacheWrite: 3.75, BaseInput: 3.00}
 
@@ -52,14 +53,14 @@ func ResolveModel(model string) (ModelConfig, error) {
 		return ModelConfig{Pricing: PricingSonnet55, TokenCountModel: TokenCountModelSonnet55}, nil
 	case "sonnet-4-6":
 		return ModelConfig{Pricing: PricingSonnet46, TokenCountModel: TokenCountModelSonnet46}, nil
-	case "opus", "opus-4-8":
+	case "opus", "opus-5-5":
+		return ModelConfig{Pricing: PricingOpus55, TokenCountModel: TokenCountModelOpus55}, nil
+	case "opus-4-8":
 		return ModelConfig{Pricing: PricingOpus, TokenCountModel: TokenCountModelOpus48}, nil
 	case "opus-4-7":
 		return ModelConfig{Pricing: PricingOpus, TokenCountModel: TokenCountModelOpus47}, nil
 	case "opus-4-6":
 		return ModelConfig{Pricing: PricingOpus, TokenCountModel: TokenCountModelOpus46}, nil
-	case "opus-5-5":
-		return ModelConfig{Pricing: PricingOpus55, TokenCountModel: TokenCountModelOpus55}, nil
 	case "fable", "fable-5-1":
 		return ModelConfig{Pricing: PricingFable, TokenCountModel: TokenCountModelFable}, nil
 	default:

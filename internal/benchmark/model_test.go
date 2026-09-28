@@ -33,8 +33,8 @@ func Test_ResolveModel_GivenKnownAlias_ThenReturnsExpectedConfig(t *testing.T) {
 		{
 			name:           "opus",
 			alias:          "opus",
-			wantPricing:    PricingOpus,
-			wantTokenCount: TokenCountModelOpus48,
+			wantPricing:    PricingOpus55,
+			wantTokenCount: TokenCountModelOpus55,
 		},
 		{
 			name:           "opus-4-8",

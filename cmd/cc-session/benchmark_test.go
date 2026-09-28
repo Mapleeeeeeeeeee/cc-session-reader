@@ -81,7 +81,7 @@ func TestResolveBenchmarkModel_GivenAcceptedModelNames_ThenReturnsPricingAndToke
 		wantPricing         bm.Pricing
 		wantTokenCountModel string
 	}{
-		{name: "opus", wantPricing: bm.PricingOpus, wantTokenCountModel: bm.TokenCountModelOpus48},
+		{name: "opus", wantPricing: bm.PricingOpus55, wantTokenCountModel: bm.TokenCountModelOpus55},
 		{name: "opus-4-6", wantPricing: bm.PricingOpus, wantTokenCountModel: bm.TokenCountModelOpus46},
 		{name: "opus-4-7", wantPricing: bm.PricingOpus, wantTokenCountModel: bm.TokenCountModelOpus47},
 		{name: "opus-4-8", wantPricing: bm.PricingOpus, wantTokenCountModel: bm.TokenCountModelOpus48},
@@ -172,7 +172,7 @@ func TestRunBenchmark_WhenSessionHasAPIUsage_ThenUsesTokenCountingAPIForNewConte
 	if countedText == "" {
 		t.Fatal("countTokensFn was not called")
 	}
-	wantCountModel := bm.TokenCountModelOpus48
+	wantCountModel := bm.TokenCountModelOpus55
 	if countModel != wantCountModel {
 		t.Fatalf("token counter model = %q, want %q", countModel, wantCountModel)
 	}
