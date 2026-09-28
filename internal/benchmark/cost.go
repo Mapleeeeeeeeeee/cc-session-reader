@@ -1,5 +1,7 @@
 package benchmark
 
+import "github.com/Mapleeeeeeeeeee/cc-session-reader/internal/models"
+
 // Cost model.
 //
 // Pricing: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
@@ -95,7 +97,7 @@ func NewCostParams(r Result, overheadTokens int) CostParams {
 //
 // Prefix grows across turns by growth + (K-1)*toolIO per turn, because tool I/O
 // from previous turns stays in the conversation history.
-func CumulativeCostA(turns int, x int, sp CostParams, p Pricing) float64 {
+func CumulativeCostA(turns int, x int, sp CostParams, p models.Pricing) float64 {
 	total := 0.0
 	extraCalls := extraCallsPerTurn(sp.K)
 	s := sp.ToolIOPerCall
@@ -125,7 +127,7 @@ func CumulativeCostA(turns int, x int, sp CostParams, p Pricing) float64 {
 //
 //	Call 1: cache read (prefix from previous turn, or X when N=1) + cache write (R + P)
 //	Calls 2..K: cache read (growing prefix) + cache write (tool I/O)
-func CumulativeCostAWarm(turns int, x int, sp CostParams, p Pricing) float64 {
+func CumulativeCostAWarm(turns int, x int, sp CostParams, p models.Pricing) float64 {
 	total := 0.0
 	extraCalls := extraCallsPerTurn(sp.K)
 	s := sp.ToolIOPerCall
@@ -152,7 +154,7 @@ func CumulativeCostAWarm(turns int, x int, sp CostParams, p Pricing) float64 {
 //	Calls 2..K: cache read (growing) + cache write (tool I/O)
 //
 // Turn N (N>=2): same structure as A but with smaller base, cross-turn write = growth.
-func CumulativeCostB(turns int, x int, filteredTokens int, sp CostParams, p Pricing) float64 {
+func CumulativeCostB(turns int, x int, filteredTokens int, sp CostParams, p models.Pricing) float64 {
 	return CumulativeCostBWithInjectPages(turns, filteredTokens, 1, sp, p)
 }
 
@@ -166,7 +168,7 @@ func CumulativeCostB(turns int, x int, filteredTokens int, sp CostParams, p Pric
 //	each page: read(overhead + previous page tokens) + write(page tokens)
 //
 // The active conversation after setup is still overhead + filteredTokens.
-func CumulativeCostBWithInjectPages(turns int, filteredTokens int, injectPages int, sp CostParams, p Pricing) float64 {
+func CumulativeCostBWithInjectPages(turns int, filteredTokens int, injectPages int, sp CostParams, p models.Pricing) float64 {
 	base := sp.Overhead + filteredTokens
 	total := newSessionSetupCost(filteredTokens, injectPages, sp, p)
 	extraCalls := extraCallsPerTurn(sp.K)
@@ -189,7 +191,7 @@ func CumulativeCostBWithInjectPages(turns int, filteredTokens int, injectPages i
 	return total
 }
 
-func newSessionSetupCost(filteredTokens int, injectPages int, sp CostParams, p Pricing) float64 {
+func newSessionSetupCost(filteredTokens int, injectPages int, sp CostParams, p models.Pricing) float64 {
 	base := sp.Overhead + filteredTokens
 	if injectPages <= 1 {
 		return float64(base) * p.CacheWrite / 1e6
@@ -212,7 +214,7 @@ func extraCallsPerTurn(k float64) float64 {
 	return k - 1
 }
 
-func intraTurnToolCost(firstPrefix float64, extraCalls float64, toolIOPerCall int, p Pricing) float64 {
+func intraTurnToolCost(firstPrefix float64, extraCalls float64, toolIOPerCall int, p models.Pricing) float64 {
 	if extraCalls <= 0 {
 		return 0
 	}
@@ -231,7 +233,7 @@ func intraTurnToolCost(firstPrefix float64, extraCalls float64, toolIOPerCall in
 }
 
 // ComputeCostMetrics populates the cost-related fields of r.
-func ComputeCostMetrics(r *Result, overheadTokens int, p Pricing) {
+func ComputeCostMetrics(r *Result, overheadTokens int, p models.Pricing) {
 	sp := NewCostParams(*r, overheadTokens)
 	r.BreakEven = -1
 	for n := 1; n <= 200; n++ {

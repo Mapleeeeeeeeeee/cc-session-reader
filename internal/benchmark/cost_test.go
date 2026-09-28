@@ -3,9 +3,14 @@ package benchmark
 import (
 	"math"
 	"testing"
+
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/models"
 )
 
 const epsilon = 1e-9
+
+// Expected values below assume the Opus 4.x rates ($5 / $6.25 / $0.50).
+var testPricing = models.Opus48.Pricing
 
 func approxEqual(got, want float64) bool {
 	return math.Abs(got-want) < epsilon
@@ -79,17 +84,17 @@ func Test_CumulativeCosts_GivenFractionalK_ThenUseFractionalCallsPerTurn(t *test
 	}{
 		{
 			name: "ColdExistingSession",
-			got:  CumulativeCostA(1, 100000, testParamsK4478, PricingOpus),
+			got:  CumulativeCostA(1, 100000, testParamsK4478, testPricing),
 			want: 0.9506535,
 		},
 		{
 			name: "WarmExistingSession",
-			got:  CumulativeCostAWarm(1, 100000, testParamsK4478, PricingOpus),
+			got:  CumulativeCostAWarm(1, 100000, testParamsK4478, testPricing),
 			want: 0.3916315,
 		},
 		{
 			name: "NewSession",
-			got:  CumulativeCostB(1, 100000, 50000, testParamsK4478, PricingOpus),
+			got:  CumulativeCostB(1, 100000, 50000, testParamsK4478, testPricing),
 			want: 0.9157635,
 		},
 	}
@@ -164,7 +169,7 @@ var costATests = []struct {
 func Test_CumulativeCostA(t *testing.T) {
 	for _, tc := range costATests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := CumulativeCostA(tc.turns, tc.x, tc.sp, PricingOpus)
+			got := CumulativeCostA(tc.turns, tc.x, tc.sp, testPricing)
 			if !approxEqual(got, tc.want) {
 				t.Errorf("CumulativeCostA(%d, %d) = %.10f, want %.10f", tc.turns, tc.x, got, tc.want)
 			}
@@ -225,7 +230,7 @@ var costAWarmTests = []struct {
 func Test_CumulativeCostAWarm(t *testing.T) {
 	for _, tc := range costAWarmTests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := CumulativeCostAWarm(tc.turns, tc.x, tc.sp, PricingOpus)
+			got := CumulativeCostAWarm(tc.turns, tc.x, tc.sp, testPricing)
 			if !approxEqual(got, tc.want) {
 				t.Errorf("CumulativeCostAWarm(%d, %d) = %.10f, want %.10f", tc.turns, tc.x, got, tc.want)
 			}
@@ -293,7 +298,7 @@ var costBTests = []struct {
 func Test_CumulativeCostB(t *testing.T) {
 	for _, tc := range costBTests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := CumulativeCostB(tc.turns, tc.x, tc.filteredTokens, tc.sp, PricingOpus)
+			got := CumulativeCostB(tc.turns, tc.x, tc.filteredTokens, tc.sp, testPricing)
 			if !approxEqual(got, tc.want) {
 				t.Errorf("CumulativeCostB(%d, %d, %d) = %.10f, want %.10f", tc.turns, tc.x, tc.filteredTokens, got, tc.want)
 			}
@@ -302,8 +307,8 @@ func Test_CumulativeCostB(t *testing.T) {
 }
 
 func Test_CumulativeCostBWithInjectPages_GivenMultiplePages_ThenSetupCostsMoreThanOneShot(t *testing.T) {
-	oneShot := CumulativeCostBWithInjectPages(0, 50000, 1, testParams, PricingOpus)
-	multiPage := CumulativeCostBWithInjectPages(0, 50000, 5, testParams, PricingOpus)
+	oneShot := CumulativeCostBWithInjectPages(0, 50000, 1, testParams, testPricing)
+	multiPage := CumulativeCostBWithInjectPages(0, 50000, 5, testParams, testPricing)
 
 	if !approxEqual(oneShot, 0.5625) {
 		t.Fatalf("one-page setup cost = %.10f, want historical one-shot cost 0.5625", oneShot)
@@ -319,8 +324,8 @@ func Test_CumulativeCostBWithInjectPages_GivenMultiplePages_ThenSetupCostsMoreTh
 func Test_CumulativeCostAWarm_GivenAnyTurns_AlwaysCheaperThanColdCostA(t *testing.T) {
 	x := 100000
 	for turns := 1; turns <= 20; turns++ {
-		cold := CumulativeCostA(turns, x, testParams, PricingOpus)
-		warm := CumulativeCostAWarm(turns, x, testParams, PricingOpus)
+		cold := CumulativeCostA(turns, x, testParams, testPricing)
+		warm := CumulativeCostAWarm(turns, x, testParams, testPricing)
 		if warm >= cold {
 			t.Errorf("turns=%d: warm (%.10f) >= cold (%.10f); warm should always be cheaper", turns, warm, cold)
 		}
@@ -329,9 +334,9 @@ func Test_CumulativeCostAWarm_GivenAnyTurns_AlwaysCheaperThanColdCostA(t *testin
 
 func Test_CumulativeCostA_GivenIncreasingTurns_ThenCostMonotonicallyIncreases(t *testing.T) {
 	x := 100000
-	prev := CumulativeCostA(1, x, testParams, PricingOpus)
+	prev := CumulativeCostA(1, x, testParams, testPricing)
 	for turns := 2; turns <= 20; turns++ {
-		curr := CumulativeCostA(turns, x, testParams, PricingOpus)
+		curr := CumulativeCostA(turns, x, testParams, testPricing)
 		if curr <= prev {
 			t.Errorf("turns=%d: cost (%.10f) not greater than turns=%d cost (%.10f)", turns, curr, turns-1, prev)
 		}
@@ -341,9 +346,9 @@ func Test_CumulativeCostA_GivenIncreasingTurns_ThenCostMonotonicallyIncreases(t 
 
 func Test_CumulativeCostAWarm_GivenIncreasingTurns_ThenCostMonotonicallyIncreases(t *testing.T) {
 	x := 100000
-	prev := CumulativeCostAWarm(1, x, testParams, PricingOpus)
+	prev := CumulativeCostAWarm(1, x, testParams, testPricing)
 	for turns := 2; turns <= 20; turns++ {
-		curr := CumulativeCostAWarm(turns, x, testParams, PricingOpus)
+		curr := CumulativeCostAWarm(turns, x, testParams, testPricing)
 		if curr <= prev {
 			t.Errorf("turns=%d: cost (%.10f) not greater than turns=%d cost (%.10f)", turns, curr, turns-1, prev)
 		}
@@ -356,8 +361,8 @@ func Test_CumulativeCostB_GivenSufficientTurns_ThenCheaperThanCostA(t *testing.T
 	filteredTokens := 50000 // base=90000 < x=100000 means compression happened
 	found := false
 	for turns := 1; turns <= 200; turns++ {
-		costA := CumulativeCostA(turns, x, testParams, PricingOpus)
-		costB := CumulativeCostB(turns, x, filteredTokens, testParams, PricingOpus)
+		costA := CumulativeCostA(turns, x, testParams, testPricing)
+		costB := CumulativeCostB(turns, x, filteredTokens, testParams, testPricing)
 		if costB < costA {
 			found = true
 			break
@@ -372,8 +377,8 @@ func Test_CumulativeCostB_GivenNoCompression_ThenNeverCheaperThanCostA(t *testin
 	x := 100000
 	filteredTokens := x // no compression: same as context
 	for turns := 1; turns <= 200; turns++ {
-		costA := CumulativeCostA(turns, x, testParams, PricingOpus)
-		costB := CumulativeCostB(turns, x, filteredTokens, testParams, PricingOpus)
+		costA := CumulativeCostA(turns, x, testParams, testPricing)
+		costB := CumulativeCostB(turns, x, filteredTokens, testParams, testPricing)
 		if costB < costA {
 			t.Errorf("turns=%d: CostB (%.10f) < CostA (%.10f) with no compression; setup cost should never be recovered", turns, costB, costA)
 			return
@@ -426,7 +431,7 @@ func Test_ComputeCostMetrics_GivenInjectPages_ThenColdAndWarmMetricsMatchFixture
 				InjectPages:    tt.injectPages,
 			}
 
-			ComputeCostMetrics(&r, 40000, PricingOpus)
+			ComputeCostMetrics(&r, 40000, testPricing)
 
 			if r.BreakEven != tt.wantBreakEven {
 				t.Errorf("BreakEven = %d, want %d", r.BreakEven, tt.wantBreakEven)
@@ -459,7 +464,7 @@ func Test_ComputeCostMetrics_GivenCompression_ThenBreakEvenExists(t *testing.T) 
 		AvgResponse:    2000,
 		Prompt:         10000,
 	}
-	ComputeCostMetrics(&r, 40000, PricingOpus)
+	ComputeCostMetrics(&r, 40000, testPricing)
 
 	if r.BreakEven <= 0 {
 		t.Errorf("BreakEven = %d, want > 0 when filteredTokens < contextTokens", r.BreakEven)
@@ -481,7 +486,7 @@ func Test_ComputeCostMetrics_GivenCompression_ThenWarmBreakEvenAtLeastBreakEven(
 		AvgResponse:    2000,
 		Prompt:         10000,
 	}
-	ComputeCostMetrics(&r, 40000, PricingOpus)
+	ComputeCostMetrics(&r, 40000, testPricing)
 
 	if r.WarmBreakEven != -1 && r.BreakEven != -1 && r.WarmBreakEven < r.BreakEven {
 		t.Errorf("WarmBreakEven (%d) < BreakEven (%d); warm cache is harder to beat, so WarmBreakEven must be >= BreakEven", r.WarmBreakEven, r.BreakEven)
@@ -497,7 +502,7 @@ func Test_ComputeCostMetrics_GivenNoCompression_ThenBreakEvenNeverReached(t *tes
 		AvgResponse:    2000,
 		Prompt:         10000,
 	}
-	ComputeCostMetrics(&r, 40000, PricingOpus)
+	ComputeCostMetrics(&r, 40000, testPricing)
 
 	if r.BreakEven != -1 {
 		t.Errorf("BreakEven = %d, want -1 when filteredTokens == contextTokens (no compression)", r.BreakEven)

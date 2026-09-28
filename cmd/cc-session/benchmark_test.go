@@ -11,6 +11,7 @@ import (
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/analyzer"
 	bm "github.com/Mapleeeeeeeeeee/cc-session-reader/internal/benchmark"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/inject"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/models"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/parser"
 )
 
@@ -75,50 +76,6 @@ func TestPrintCompressionSection_GivenEvenCount_ThenPrintsAveragedMedian(t *test
 	}
 }
 
-func TestResolveBenchmarkModel_GivenAcceptedModelNames_ThenReturnsPricingAndTokenCountingModel(t *testing.T) {
-	tests := []struct {
-		name                string
-		wantPricing         bm.Pricing
-		wantTokenCountModel string
-	}{
-		{name: "opus", wantPricing: bm.PricingOpus55, wantTokenCountModel: bm.TokenCountModelOpus55},
-		{name: "opus-4-6", wantPricing: bm.PricingOpus, wantTokenCountModel: bm.TokenCountModelOpus46},
-		{name: "opus-4-7", wantPricing: bm.PricingOpus, wantTokenCountModel: bm.TokenCountModelOpus47},
-		{name: "opus-4-8", wantPricing: bm.PricingOpus, wantTokenCountModel: bm.TokenCountModelOpus48},
-		{name: "sonnet", wantPricing: bm.PricingSonnet55, wantTokenCountModel: bm.TokenCountModelSonnet55},
-		{name: "sonnet-4-6", wantPricing: bm.PricingSonnet46, wantTokenCountModel: bm.TokenCountModelSonnet46},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := bm.ResolveModel(tt.name)
-			if err != nil {
-				t.Fatalf("ResolveModel(%q) returned error: %v", tt.name, err)
-			}
-			if got.Pricing != tt.wantPricing {
-				t.Fatalf("pricing = %+v, want %+v", got.Pricing, tt.wantPricing)
-			}
-			if got.TokenCountModel != tt.wantTokenCountModel {
-				t.Fatalf("token count model = %q, want %q", got.TokenCountModel, tt.wantTokenCountModel)
-			}
-		})
-	}
-}
-
-func TestResolveBenchmarkModel_GivenUnknownModel_ThenReturnsAcceptedNames(t *testing.T) {
-	_, err := bm.ResolveModel("opus-4-5")
-	if err == nil {
-		t.Fatal("ResolveModel returned nil error for unknown model")
-	}
-
-	got := err.Error()
-	for _, want := range []string{"opus", "opus-4-6", "opus-4-7", "opus-4-8", "sonnet", "sonnet-4-6"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("error message missing accepted model %q: %s", want, got)
-		}
-	}
-}
-
 func TestRunBenchmark_WhenSessionHasAPIUsage_ThenUsesTokenCountingAPIForNewContext(t *testing.T) {
 	root := t.TempDir()
 	sid := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -172,7 +129,7 @@ func TestRunBenchmark_WhenSessionHasAPIUsage_ThenUsesTokenCountingAPIForNewConte
 	if countedText == "" {
 		t.Fatal("countTokensFn was not called")
 	}
-	wantCountModel := bm.TokenCountModelOpus55
+	wantCountModel := models.Opus55.ID
 	if countModel != wantCountModel {
 		t.Fatalf("token counter model = %q, want %q", countModel, wantCountModel)
 	}
@@ -329,7 +286,7 @@ func TestRunBenchmark_GivenSonnetModel_ThenUsesSonnetTokenCounterModel(t *testin
 		t.Fatalf("runBenchmark returned error: %v", err)
 	}
 
-	wantCountModel := bm.TokenCountModelSonnet55
+	wantCountModel := models.Sonnet55.ID
 	if countModel != wantCountModel {
 		t.Fatalf("token counter model = %q, want %q", countModel, wantCountModel)
 	}

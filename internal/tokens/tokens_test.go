@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/models"
 )
 
 func TestCountTokensAPI_WhenAPIKeyIsMissing_ThenReturnsError(t *testing.T) {
@@ -48,8 +50,8 @@ func TestCountTokens_SendsAnthropicRequestAndParsesResponse(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if payload.Model != DefaultCountTokensModel {
-			t.Fatalf("model = %q, want %q", payload.Model, DefaultCountTokensModel)
+		if payload.Model != models.DefaultCountTokens.ID {
+			t.Fatalf("model = %q, want %q", payload.Model, models.DefaultCountTokens.ID)
 		}
 		if len(payload.Messages) != 1 || payload.Messages[0].Role != "user" || payload.Messages[0].Content != "hello" {
 			t.Fatalf("messages = %#v, want one user hello message", payload.Messages)
@@ -60,7 +62,7 @@ func TestCountTokens_SendsAnthropicRequestAndParsesResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	got, err := countTokens("hello", "test-key", server.URL, DefaultCountTokensModel, server.Client())
+	got, err := countTokens("hello", "test-key", server.URL, models.DefaultCountTokens.ID, server.Client())
 	if err != nil {
 		t.Fatalf("countTokens returned error: %v", err)
 	}
@@ -105,7 +107,7 @@ func TestCountTokens_WhenAPIReturnsError_ThenIncludesStatus(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := countTokens("hello", "test-key", server.URL, DefaultCountTokensModel, server.Client())
+	_, err := countTokens("hello", "test-key", server.URL, models.DefaultCountTokens.ID, server.Client())
 	if err == nil {
 		t.Fatal("countTokens returned nil error, want API status error")
 	}
@@ -130,7 +132,7 @@ func TestCountTokens_WhenTransientErrorThenSuccess_ThenRetriesAndSucceeds(t *tes
 	}))
 	defer server.Close()
 
-	got, err := countTokens("hello", "test-key", server.URL, DefaultCountTokensModel, server.Client())
+	got, err := countTokens("hello", "test-key", server.URL, models.DefaultCountTokens.ID, server.Client())
 	if err != nil {
 		t.Fatalf("countTokens returned error after retry: %v", err)
 	}
@@ -153,7 +155,7 @@ func TestCountTokens_WhenNonTransientError_ThenDoesNotRetry(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := countTokens("hello", "test-key", server.URL, DefaultCountTokensModel, server.Client())
+	_, err := countTokens("hello", "test-key", server.URL, models.DefaultCountTokens.ID, server.Client())
 	if err == nil {
 		t.Fatal("countTokens returned nil error, want immediate 400 error")
 	}
@@ -186,7 +188,7 @@ func TestCountTokens_When429WithRetryAfter_ThenRespectsHintAndSucceeds(t *testin
 	}))
 	defer server.Close()
 
-	got, err := countTokens("hello", "test-key", server.URL, DefaultCountTokensModel, server.Client())
+	got, err := countTokens("hello", "test-key", server.URL, models.DefaultCountTokens.ID, server.Client())
 	if err != nil {
 		t.Fatalf("countTokens returned error after 429 retry: %v", err)
 	}
