@@ -19,6 +19,12 @@ func Test_ResolveModel_GivenKnownAlias_ThenReturnsExpectedConfig(t *testing.T) {
 			wantTokenCount: TokenCountModelSonnet,
 		},
 		{
+			name:           "sonnet-5-5",
+			alias:          "sonnet-5-5",
+			wantPricing:    PricingSonnet55,
+			wantTokenCount: TokenCountModelSonnet55,
+		},
+		{
 			name:           "opus",
 			alias:          "opus",
 			wantPricing:    PricingOpus,
