@@ -29,7 +29,7 @@ const (
 	baseRetryDelay = 500 * time.Millisecond
 )
 
-const DefaultCountTokensModel = "claude-sonnet-4-6"
+const DefaultCountTokensModel = "claude-sonnet-5-5"
 
 // CountTokensAPI calls the Anthropic count_tokens endpoint.
 // Resolves the API key from: env ANTHROPIC_API_KEY → config file path in
