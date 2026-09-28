@@ -81,11 +81,12 @@ func TestResolveBenchmarkModel_GivenAcceptedModelNames_ThenReturnsPricingAndToke
 		wantPricing         bm.Pricing
 		wantTokenCountModel string
 	}{
-		{name: "opus", wantPricing: bm.PricingOpus, wantTokenCountModel: bm.TokenCountModelOpus48},
+		{name: "opus", wantPricing: bm.PricingOpus55, wantTokenCountModel: bm.TokenCountModelOpus55},
 		{name: "opus-4-6", wantPricing: bm.PricingOpus, wantTokenCountModel: bm.TokenCountModelOpus46},
 		{name: "opus-4-7", wantPricing: bm.PricingOpus, wantTokenCountModel: bm.TokenCountModelOpus47},
 		{name: "opus-4-8", wantPricing: bm.PricingOpus, wantTokenCountModel: bm.TokenCountModelOpus48},
-		{name: "sonnet", wantPricing: bm.PricingSonnet, wantTokenCountModel: bm.TokenCountModelSonnet},
+		{name: "sonnet", wantPricing: bm.PricingSonnet55, wantTokenCountModel: bm.TokenCountModelSonnet55},
+		{name: "sonnet-4-6", wantPricing: bm.PricingSonnet46, wantTokenCountModel: bm.TokenCountModelSonnet46},
 	}
 
 	for _, tt := range tests {
@@ -111,7 +112,7 @@ func TestResolveBenchmarkModel_GivenUnknownModel_ThenReturnsAcceptedNames(t *tes
 	}
 
 	got := err.Error()
-	for _, want := range []string{"opus", "opus-4-6", "opus-4-7", "opus-4-8", "sonnet"} {
+	for _, want := range []string{"opus", "opus-4-6", "opus-4-7", "opus-4-8", "sonnet", "sonnet-4-6"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("error message missing accepted model %q: %s", want, got)
 		}
@@ -171,7 +172,7 @@ func TestRunBenchmark_WhenSessionHasAPIUsage_ThenUsesTokenCountingAPIForNewConte
 	if countedText == "" {
 		t.Fatal("countTokensFn was not called")
 	}
-	wantCountModel := bm.TokenCountModelOpus48
+	wantCountModel := bm.TokenCountModelOpus55
 	if countModel != wantCountModel {
 		t.Fatalf("token counter model = %q, want %q", countModel, wantCountModel)
 	}
@@ -328,7 +329,7 @@ func TestRunBenchmark_GivenSonnetModel_ThenUsesSonnetTokenCounterModel(t *testin
 		t.Fatalf("runBenchmark returned error: %v", err)
 	}
 
-	wantCountModel := bm.TokenCountModelSonnet
+	wantCountModel := bm.TokenCountModelSonnet55
 	if countModel != wantCountModel {
 		t.Fatalf("token counter model = %q, want %q", countModel, wantCountModel)
 	}
