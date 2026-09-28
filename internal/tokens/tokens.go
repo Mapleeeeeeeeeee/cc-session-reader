@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/config"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/models"
 )
 
 const (
@@ -29,7 +30,8 @@ const (
 	baseRetryDelay = 500 * time.Millisecond
 )
 
-const DefaultCountTokensModel = "claude-sonnet-5-5"
+// DefaultCountTokensModel is the model used when none is specified.
+var DefaultCountTokensModel = models.DefaultCountTokens.ID
 
 // CountTokensAPI calls the Anthropic count_tokens endpoint.
 // Resolves the API key from: env ANTHROPIC_API_KEY → config file path in
