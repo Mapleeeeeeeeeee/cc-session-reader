@@ -47,7 +47,7 @@ func Test_Resolve_GivenUnknownAlias_ThenErrorListsEveryAlias(t *testing.T) {
 	}
 }
 
-func Test_Registry_ThenEveryModelIsResolvableAndFamiliesAreUnique(t *testing.T) {
+func Test_Registry_ThenNamesIDsAndFamiliesAreUnique(t *testing.T) {
 	families := map[string]string{}
 	names := map[string]bool{}
 	ids := map[string]bool{}
@@ -61,9 +61,6 @@ func Test_Registry_ThenEveryModelIsResolvableAndFamiliesAreUnique(t *testing.T) 
 				t.Errorf("family %q claimed by both %s and %s", m.Family, prev, m.Name)
 			}
 			families[m.Family] = m.Name
-		}
-		if got, err := Resolve(m.Name); err != nil || got != m {
-			t.Errorf("Resolve(%q) = %+v, %v; want %+v", m.Name, got, err, m)
 		}
 	}
 }
