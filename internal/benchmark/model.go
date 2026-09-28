@@ -1,11 +1,5 @@
 package benchmark
 
-import "github.com/Mapleeeeeeeeeee/cc-session-reader/internal/models"
-
-// Pricing is the per-million-token rate set; the definitions live in
-// internal/models.
-type Pricing = models.Pricing
-
 // RatioPct returns the ratio of NewContextTokens to ContextTokens as a percentage.
 func (r Result) RatioPct() float64 {
 	if r.ContextTokens == 0 {

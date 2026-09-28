@@ -2,10 +2,8 @@
 // tool knows about: their API IDs, per-token pricing, user-facing aliases and
 // the default model used for token counting.
 //
-// To add a model: declare it below, append it to registry, and update
-// Latest/DefaultCountTokens if it becomes the newest in its family. Help text
-// and error messages derive from registry, so nothing else needs editing
-// (docs/benchmark.md is the one place that stays hand-written).
+// Help text and error messages derive from registry; docs/benchmark.md is the
+// only place that must be updated by hand.
 package models
 
 import (
@@ -28,8 +26,7 @@ type Model struct {
 	Pricing Pricing
 }
 
-// Alias returns the shortest user-facing alias: the family alias when the
-// model is the newest in its family, otherwise its canonical name.
+// Alias returns the family alias if set, otherwise the canonical name.
 func (m Model) Alias() string {
 	if m.Family != "" {
 		return m.Family
@@ -41,8 +38,6 @@ func (m Model) Alias() string {
 var pricingOpus4x = Pricing{CachedRead: 0.50, CacheWrite: 6.25, BaseInput: 5.00}
 
 var (
-	// Sonnet 5.5 is $2 input / $10 output per MTok. Cache read is 10% of base
-	// input, like Sonnet 4.6.
 	Sonnet55 = Model{Name: "sonnet-5-5", Family: "sonnet", ID: "claude-sonnet-5-5",
 		Pricing: Pricing{CachedRead: 0.20, CacheWrite: 2.50, BaseInput: 2.00}}
 	Sonnet46 = Model{Name: "sonnet-4-6", ID: "claude-sonnet-4-6",

@@ -30,14 +30,11 @@ const (
 	baseRetryDelay = 500 * time.Millisecond
 )
 
-// DefaultCountTokensModel is the model used when none is specified.
-var DefaultCountTokensModel = models.DefaultCountTokens.ID
-
 // CountTokensAPI calls the Anthropic count_tokens endpoint.
 // Resolves the API key from: env ANTHROPIC_API_KEY → config file path in
 // ~/.claude/skills/<skillDirName>/config.json → error.
 func CountTokensAPI(text string) (int, error) {
-	counter, err := NewCounter(DefaultCountTokensModel)
+	counter, err := NewCounter(models.DefaultCountTokens.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -59,7 +56,7 @@ func NewCounter(model string) (*Counter, error) {
 		return nil, fmt.Errorf("ANTHROPIC_API_KEY not set (set env var or configure anthropic_api_key_file in ~/.claude/skills/cc-session/config.json)")
 	}
 	if model == "" {
-		model = DefaultCountTokensModel
+		model = models.DefaultCountTokens.ID
 	}
 	return &Counter{
 		apiKey:   apiKey,

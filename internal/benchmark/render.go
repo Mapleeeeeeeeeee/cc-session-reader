@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/analyzer"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/models"
 )
 
 // PrintCompressionSection writes the compression comparison table to out.
@@ -44,7 +45,7 @@ func PrintCompressionSection(out io.Writer, results []Result) {
 }
 
 // PrintCostSummary writes the cold-cache cost comparison table to out.
-func PrintCostSummary(out io.Writer, results []Result, p Pricing, modelName string) {
+func PrintCostSummary(out io.Writer, results []Result, p models.Pricing, modelName string) {
 	if len(results) == 0 {
 		return
 	}
@@ -55,7 +56,7 @@ func PrintCostSummary(out io.Writer, results []Result, p Pricing, modelName stri
 }
 
 // PrintWarmCostSummary writes the warm-cache cost comparison table to out.
-func PrintWarmCostSummary(out io.Writer, results []Result, p Pricing, modelName string) {
+func PrintWarmCostSummary(out io.Writer, results []Result, p models.Pricing, modelName string) {
 	if len(results) == 0 {
 		return
 	}

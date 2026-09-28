@@ -9,8 +9,7 @@ import (
 
 const epsilon = 1e-9
 
-// testPricing is the Opus 4.x price list; expected values below assume
-// $5 base input, $6.25 cache write, $0.50 cache read.
+// Expected values below assume the Opus 4.x rates ($5 / $6.25 / $0.50).
 var testPricing = models.Opus48.Pricing
 
 func approxEqual(got, want float64) bool {
