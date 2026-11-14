@@ -6,9 +6,16 @@ import "github.com/Mapleeeeeeeeeee/cc-session-reader/internal/models"
 //
 // Pricing: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
 //
-//	cache_read  = 0.1x base  (prefix matching previous cache)
-//	cache_write = 1.25x base (new content written to cache)
-//	input       = 1.0x base  (after last cache breakpoint — near zero with auto-caching)
+//	cache_read     = 0.1x base  (prefix matching previous cache; 0.05x or 0.025x on some models)
+//	cache_write_5m = 1.25x base (new content written to the 5-minute cache)
+//	cache_write_1h = 2x base    (new content written to the 1-hour cache)
+//	input          = 1.0x base  (after last cache breakpoint — near zero with auto-caching)
+//
+// Claude Code writes the main conversation's cache with the 1-hour TTL and
+// subagent and SDK-started sessions with the 5-minute TTL, so the write rate is
+// not a constant. CostParams.OneHourWriteShare is the session's measured share
+// of 1-hour write tokens; every cache write in every scenario is billed at
+// models.Pricing.CacheWriteAt(share). Both scenarios use the same share.
 //
 // Multi-turn behavior (same source, "Automatic caching" table):
 //
@@ -25,9 +32,9 @@ import "github.com/Mapleeeeeeeeeee/cc-session-reader/internal/models"
 //	output_tokens includes thinking tokens (output_tokens_details.thinking_tokens
 //	provides a decomposition, but output_tokens is the authoritative billing total).
 //
-//	Turn N:   thinking generated         → output_tokens               @ $25/M   (Opus)
-//	Turn N+1: first time as input        → cache_creation_input_tokens @ $6.25/M (Opus)
-//	Turn N+2: subsequent turns as input  → cache_read_input_tokens     @ $0.50/M (Opus)
+//	Turn N:   thinking generated         → output_tokens               @ output rate
+//	Turn N+1: first time as input        → cache_creation_input_tokens @ cache write rate
+//	Turn N+2: subsequent turns as input  → cache_read_input_tokens     @ cache read rate
 //
 //	Empirically verified: thinking blocks from previous turns ARE counted as
 //	input_tokens in subsequent API calls (Sonnet 4.6, 2026-06-24). The token
@@ -68,6 +75,10 @@ type CostParams struct {
 	Prompt        int     // avg user prompt tokens per turn (derived from context growth)
 	Growth        int     // cross-turn cache write = avgResponse + prompt
 	Overhead      int     // session overhead: system + tools + CLAUDE.md (from --overhead flag)
+
+	// OneHourWriteShare is the share (0 to 1) of every cache write billed at the
+	// 1-hour TTL rate; the rest is billed at the 5-minute rate.
+	OneHourWriteShare float64
 }
 
 // NewCostParams builds a CostParams from a Result and overhead token count.
@@ -80,6 +91,8 @@ func NewCostParams(r Result, overheadTokens int) CostParams {
 		Prompt:        r.Prompt,
 		Growth:        g,
 		Overhead:      overheadTokens,
+
+		OneHourWriteShare: r.OneHourWriteShare,
 	}
 }
 
@@ -105,12 +118,12 @@ func CumulativeCostA(turns int, x int, sp CostParams, m models.Model) float64 {
 	toolIOPerTurn := float64(s) * extraCalls
 	for n := 1; n <= turns; n++ {
 		if n == 1 {
-			total += requestCost(0, float64(x+sp.Prompt), m)
-			total += intraTurnToolCost(float64(x+sp.Prompt), extraCalls, s, m)
+			total += requestCost(0, float64(x+sp.Prompt), sp.OneHourWriteShare, m)
+			total += intraTurnToolCost(float64(x+sp.Prompt), extraCalls, s, sp.OneHourWriteShare, m)
 		} else {
 			prefixFromPrev := float64(x+sp.Prompt) + float64(n-1)*toolIOPerTurn + float64(n-2)*float64(g)
-			total += requestCost(prefixFromPrev, float64(g), m)
-			total += intraTurnToolCost(prefixFromPrev+float64(g), extraCalls, s, m)
+			total += requestCost(prefixFromPrev, float64(g), sp.OneHourWriteShare, m)
+			total += intraTurnToolCost(prefixFromPrev+float64(g), extraCalls, s, sp.OneHourWriteShare, m)
 		}
 	}
 	return total
@@ -118,10 +131,9 @@ func CumulativeCostA(turns int, x int, sp CostParams, m models.Model) float64 {
 
 // CumulativeCostAWarm models staying in an existing session when cache is still warm.
 //
-// Cache TTL source: https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
-// Subscription users get a 1-hour cache TTL automatically. When you are continuously
-// working within that window, the entire prefix X is already cached — Turn 1 behaves
-// like Turn N≥2 in the cold model (cache read, not cache write).
+// Cache TTL source: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+// While you keep working within the cache TTL, the entire prefix X is already cached,
+// so Turn 1 behaves like Turn N≥2 in the cold model (cache read, not cache write).
 //
 // Turn N (all N, including N=1):
 //
@@ -137,8 +149,8 @@ func CumulativeCostAWarm(turns int, x int, sp CostParams, m models.Model) float6
 		// n=1: prefixFromPrev = X (fully cached); growth shifts by 1 vs cold because
 		// the previous turn's R is already in cache before our counting starts.
 		prefixFromPrev := float64(x) + float64(n-1)*toolIOPerTurn + float64(n-1)*float64(g)
-		total += requestCost(prefixFromPrev, float64(g), m)
-		total += intraTurnToolCost(prefixFromPrev+float64(g), extraCalls, s, m)
+		total += requestCost(prefixFromPrev, float64(g), sp.OneHourWriteShare, m)
+		total += intraTurnToolCost(prefixFromPrev+float64(g), extraCalls, s, sp.OneHourWriteShare, m)
 	}
 	return total
 }
@@ -185,8 +197,8 @@ func CumulativeCostBWithInjectPages(turns int, filteredTokens int, injectPages i
 			prefixFromPrev = float64(base+sp.Prompt) + float64(n-1)*toolIOPerTurn + float64(n-2)*float64(g)
 			crossTurnWrite = g // R + P, same as Scenario A
 		}
-		total += requestCost(prefixFromPrev, float64(crossTurnWrite), m)
-		total += intraTurnToolCost(prefixFromPrev+float64(crossTurnWrite), extraCalls, s, m)
+		total += requestCost(prefixFromPrev, float64(crossTurnWrite), sp.OneHourWriteShare, m)
+		total += intraTurnToolCost(prefixFromPrev+float64(crossTurnWrite), extraCalls, s, sp.OneHourWriteShare, m)
 	}
 	return total
 }
@@ -194,7 +206,7 @@ func CumulativeCostBWithInjectPages(turns int, filteredTokens int, injectPages i
 func newSessionSetupCost(filteredTokens int, injectPages int, sp CostParams, m models.Model) float64 {
 	base := sp.Overhead + filteredTokens
 	if injectPages <= 1 {
-		return requestCost(0, float64(base), m)
+		return requestCost(0, float64(base), sp.OneHourWriteShare, m)
 	}
 
 	pageTokens := float64(filteredTokens) / float64(injectPages)
@@ -205,13 +217,13 @@ func newSessionSetupCost(filteredTokens int, injectPages int, sp CostParams, m m
 		}
 		writeTokens := float64(sp.Overhead) + float64(filteredTokens)
 
-		return readTokens*p.CachedRead/1e6 + writeTokens*p.CacheWrite/1e6
+		return readTokens*p.CachedRead/1e6 + writeTokens*p.CacheWriteAt(sp.OneHourWriteShare)/1e6
 	}
 
 	// The setup prompt grows across the model's price threshold, so each request is priced on its own.
-	total := requestCost(0, float64(sp.Overhead), m)
+	total := requestCost(0, float64(sp.Overhead), sp.OneHourWriteShare, m)
 	for page := 0; page < injectPages; page++ {
-		total += requestCost(float64(sp.Overhead)+float64(page)*pageTokens, pageTokens, m)
+		total += requestCost(float64(sp.Overhead)+float64(page)*pageTokens, pageTokens, sp.OneHourWriteShare, m)
 	}
 	return total
 }
@@ -227,7 +239,7 @@ func extraCallsPerTurn(k float64) float64 {
 // (1-based) reads firstPrefix + toolIO*(j-1) from cache and writes toolIO, so
 // its prompt is firstPrefix + toolIO*j. The last call is weighted by the
 // fractional part of extraCalls.
-func intraTurnToolCost(firstPrefix float64, extraCalls float64, toolIOPerCall int, m models.Model) float64 {
+func intraTurnToolCost(firstPrefix float64, extraCalls float64, toolIOPerCall int, oneHourShare float64, m models.Model) float64 {
 	if extraCalls <= 0 {
 		return 0
 	}
@@ -247,7 +259,7 @@ func intraTurnToolCost(firstPrefix float64, extraCalls float64, toolIOPerCall in
 		}
 		writeTokens := extraCalls * toolIO
 
-		return readTokens*p.CachedRead/1e6 + writeTokens*p.CacheWrite/1e6
+		return readTokens*p.CachedRead/1e6 + writeTokens*p.CacheWriteAt(oneHourShare)/1e6
 	}
 
 	// The prompt grows across the model's price threshold during this turn, so each call is priced on its own.
@@ -257,17 +269,17 @@ func intraTurnToolCost(firstPrefix float64, extraCalls float64, toolIOPerCall in
 		if call > fullCalls {
 			weight = fractionalCall
 		}
-		total += weight * requestCost(firstPrefix+toolIO*float64(call-1), toolIO, m)
+		total += weight * requestCost(firstPrefix+toolIO*float64(call-1), toolIO, oneHourShare, m)
 	}
 	return total
 }
 
 // requestCost prices one API request that reads readTokens from cache and
 // writes writeTokens to it. The request's rates follow its prompt size, which
-// is readTokens + writeTokens.
-func requestCost(readTokens float64, writeTokens float64, m models.Model) float64 {
+// is readTokens + writeTokens; oneHourShare of the write uses the 1-hour TTL.
+func requestCost(readTokens float64, writeTokens float64, oneHourShare float64, m models.Model) float64 {
 	p := m.PricingFor(readTokens + writeTokens)
-	return readTokens*p.CachedRead/1e6 + writeTokens*p.CacheWrite/1e6
+	return readTokens*p.CachedRead/1e6 + writeTokens*p.CacheWriteAt(oneHourShare)/1e6
 }
 
 // singleTierPricing reports whether requests with prompts from smallestPrompt

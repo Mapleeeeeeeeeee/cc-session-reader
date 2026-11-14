@@ -50,6 +50,43 @@ func TestParseLine_AssistantBlocks(t *testing.T) {
 	}
 }
 
+func TestParseLine_AssistantUsage_GivenCacheCreationBreakdown_ThenSplitsCacheWriteByTTL(t *testing.T) {
+	tests := []struct {
+		name   string
+		usage  string
+		want5m int
+		want1h int
+	}{
+		{
+			name:   "GivenBothTTLs",
+			usage:  `{"input_tokens":2,"cache_creation_input_tokens":1500,"cache_read_input_tokens":9000,"output_tokens":40,"cache_creation":{"ephemeral_5m_input_tokens":500,"ephemeral_1h_input_tokens":1000}}`,
+			want5m: 500,
+			want1h: 1000,
+		},
+		{
+			name:   "GivenBreakdownFieldMissing",
+			usage:  `{"input_tokens":2,"cache_creation_input_tokens":1500,"cache_read_input_tokens":9000,"output_tokens":40}`,
+			want5m: 0,
+			want1h: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			event := parseLine(t, `{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":"hi","usage":`+tt.usage+`}}`)
+			u := event.Assistant.Usage
+			if u == nil {
+				t.Fatal("usage is nil")
+			}
+			if u.CacheCreationInputTokens != 1500 {
+				t.Errorf("CacheCreationInputTokens = %d, want 1500", u.CacheCreationInputTokens)
+			}
+			if u.CacheWrite5mTokens != tt.want5m || u.CacheWrite1hTokens != tt.want1h {
+				t.Errorf("cache write 5m/1h = %d/%d, want %d/%d", u.CacheWrite5mTokens, u.CacheWrite1hTokens, tt.want5m, tt.want1h)
+			}
+		})
+	}
+}
+
 func TestParseLine_ToolResultStringContent(t *testing.T) {
 	event := parseLine(t, `{"type":"user","timestamp":"2026-05-28T00:00:02Z","toolUseResult":{"success":true,"commandName":"Bash"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok"}]}}`)
 	if event.Kind != session.EventToolResult {

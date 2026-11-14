@@ -32,7 +32,27 @@ type StatsResult struct {
 	APICallCount      int
 	UserTurnCount     int
 
+	// Cache write tokens summed over the same de-duplicated API calls as
+	// APICallCount, split by cache TTL. Unclassified is the part of
+	// cache_creation_input_tokens that the TTL breakdown does not account for.
+	CacheWrite5mTokens           int
+	CacheWrite1hTokens           int
+	CacheWriteUnclassifiedTokens int
+
 	CompactCount int
+}
+
+// OneHourCacheWriteShare returns the share of this session's cache write
+// tokens that used the 1-hour TTL. Unclassified tokens count as 5-minute
+// writes, the way Claude Code prices them. ok is false when the transcript has
+// no TTL breakdown, because then the share is unknown rather than 0.
+func (s StatsResult) OneHourCacheWriteShare() (share float64, ok bool) {
+	classified := s.CacheWrite5mTokens + s.CacheWrite1hTokens
+	if classified == 0 {
+		return 0, false
+	}
+	total := classified + s.CacheWriteUnclassifiedTokens
+	return float64(s.CacheWrite1hTokens) / float64(total), true
 }
 
 // ComputeStats walks events once to accumulate RAW-side accounting (every
@@ -59,6 +79,7 @@ func ComputeStats(events []session.Event) StatsResult {
 	perTool := map[string]*ToolStats{}
 	toolUseNames := map[string]string{}
 	var lastContextTokens, totalOutputTokens, apiCallCount, compactCount, userTurnCount int
+	var cacheWrite5m, cacheWrite1h, cacheWriteUnclassified int
 	var prevUsage *session.Usage
 
 	for _, event := range events {
@@ -129,6 +150,9 @@ func ComputeStats(events []session.Event) StatsResult {
 				lastContextTokens = u.ContextTokens()
 				totalOutputTokens += u.OutputTokens
 				apiCallCount++
+				cacheWrite5m += u.CacheWrite5mTokens
+				cacheWrite1h += u.CacheWrite1hTokens
+				cacheWriteUnclassified += max(0, u.CacheCreationInputTokens-u.CacheWrite5mTokens-u.CacheWrite1hTokens)
 				prevUsage = u
 			}
 			if strings.TrimSpace(event.Assistant.Text) != "" {
@@ -217,6 +241,11 @@ func ComputeStats(events []session.Event) StatsResult {
 		TotalOutputTokens: totalOutputTokens,
 		APICallCount:      apiCallCount,
 		UserTurnCount:     userTurnCount,
-		CompactCount:      compactCount,
+
+		CacheWrite5mTokens:           cacheWrite5m,
+		CacheWrite1hTokens:           cacheWrite1h,
+		CacheWriteUnclassifiedTokens: cacheWriteUnclassified,
+
+		CompactCount: compactCount,
 	}
 }

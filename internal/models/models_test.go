@@ -95,16 +95,49 @@ func Test_Pricing_ThenCacheReadRatiosMatchPricingDocs(t *testing.T) {
 			t.Errorf("%s CachedRead = %v, want %v (%v of BaseInput %v)",
 				tt.m.Name, tt.m.Pricing.CachedRead, want, tt.ratio, tt.m.Pricing.BaseInput)
 		}
-		if want := tt.m.Pricing.BaseInput * 1.25; math.Abs(tt.m.Pricing.CacheWrite-want) > 1e-9 {
-			t.Errorf("%s CacheWrite = %v, want %v (1.25x BaseInput)", tt.m.Name, tt.m.Pricing.CacheWrite, want)
+		if want := tt.m.Pricing.BaseInput * 1.25; math.Abs(tt.m.Pricing.CacheWrite5m-want) > 1e-9 {
+			t.Errorf("%s CacheWrite5m = %v, want %v (1.25x BaseInput)", tt.m.Name, tt.m.Pricing.CacheWrite5m, want)
 		}
+		if want := tt.m.Pricing.BaseInput * 2; math.Abs(tt.m.Pricing.CacheWrite1h-want) > 1e-9 {
+			t.Errorf("%s CacheWrite1h = %v, want %v (2x BaseInput)", tt.m.Name, tt.m.Pricing.CacheWrite1h, want)
+		}
+	}
+}
+
+// Haiku 5.5's higher price level follows the same write multiples as its
+// standard one: 0.625 is 1.25x and 1.00 is 2x of its $0.50 base input.
+func Test_Pricing_GivenHaiku55LongPrompt_ThenCacheWritesAreSameMultiplesOfBaseInput(t *testing.T) {
+	p := Haiku55.LongPromptPricing
+	if math.Abs(p.CacheWrite5m-p.BaseInput*1.25) > 1e-9 || math.Abs(p.CacheWrite1h-p.BaseInput*2) > 1e-9 {
+		t.Errorf("Haiku55 long-prompt writes = %v / %v, want 1.25x / 2x of %v", p.CacheWrite5m, p.CacheWrite1h, p.BaseInput)
+	}
+}
+
+func Test_CacheWriteAt(t *testing.T) {
+	p := Pricing{CacheWrite5m: 6.25, CacheWrite1h: 10.00}
+	tests := []struct {
+		name         string
+		oneHourShare float64
+		want         float64
+	}{
+		{"GivenAllFiveMinute_ThenFiveMinuteRate", 0, 6.25},
+		{"GivenAllOneHour_ThenOneHourRate", 1, 10.00},
+		// 0.25*6.25 + 0.75*10.00 = 1.5625 + 7.5 = 9.0625
+		{"GivenThreeQuartersOneHour_ThenWeightedRate", 0.75, 9.0625},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := p.CacheWriteAt(tt.oneHourShare); math.Abs(got-tt.want) > 1e-9 {
+				t.Errorf("CacheWriteAt(%v) = %v, want %v", tt.oneHourShare, got, tt.want)
+			}
+		})
 	}
 }
 
 // Rates are the official Haiku 5.5 price list, $/MTok.
 func Test_PricingFor_GivenHaiku55_ThenRatesFollowPromptSize(t *testing.T) {
-	standard := Pricing{CachedRead: 0.01, CacheWrite: 0.125, BaseInput: 0.10}
-	higher := Pricing{CachedRead: 0.05, CacheWrite: 0.625, BaseInput: 0.50}
+	standard := Pricing{CachedRead: 0.01, CacheWrite5m: 0.125, CacheWrite1h: 0.20, BaseInput: 0.10}
+	higher := Pricing{CachedRead: 0.05, CacheWrite5m: 0.625, CacheWrite1h: 1.00, BaseInput: 0.50}
 	tests := []struct {
 		name         string
 		promptTokens float64
