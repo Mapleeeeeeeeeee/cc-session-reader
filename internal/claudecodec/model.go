@@ -103,7 +103,7 @@ func (m rawMessage) Text() string {
 	}
 	var parts []string
 	for _, block := range m.Blocks {
-		if block.Type == "text" && block.Text != "" {
+		if block.Type == blockTypeText && block.Text != "" {
 			parts = append(parts, block.Text)
 		}
 	}
@@ -115,11 +115,11 @@ func (m rawMessage) Assistant() session.AssistantMessage {
 	var toolUses []session.ToolUse
 	for _, block := range m.Blocks {
 		switch block.Type {
-		case "thinking":
+		case blockTypeThinking:
 			if strings.TrimSpace(block.Thinking) != "" {
 				thinking = append(thinking, block.Thinking)
 			}
-		case "tool_use":
+		case blockTypeToolUse:
 			input := map[string]any{}
 			if len(block.Input) > 0 {
 				_ = json.Unmarshal(block.Input, &input)
@@ -327,7 +327,7 @@ func hasKnownFailureSignature(text string) bool {
 
 func extractToolResultText(blocks []rawContentBlock) (string, string, bool) {
 	for _, block := range blocks {
-		if block.Type != "tool_result" {
+		if block.Type != blockTypeToolResult {
 			continue
 		}
 		if len(block.Content) == 0 {
@@ -341,7 +341,7 @@ func extractToolResultText(blocks []rawContentBlock) (string, string, bool) {
 		if err := json.Unmarshal(block.Content, &subBlocks); err == nil {
 			var parts []string
 			for _, subBlock := range subBlocks {
-				if subBlock.Type == "text" && subBlock.Text != "" {
+				if subBlock.Type == blockTypeText && subBlock.Text != "" {
 					parts = append(parts, subBlock.Text)
 				}
 			}
@@ -370,16 +370,16 @@ func (e rawEntry) extractAllText() string {
 		}
 		for _, block := range e.Message.Blocks {
 			switch block.Type {
-			case "tool_use":
+			case blockTypeToolUse:
 				if len(block.Input) > 0 {
 					parts = append(parts, marshalNoEscape(block.Input))
 				}
-			case "tool_result":
+			case blockTypeToolResult:
 				text, _, _ := extractToolResultText([]rawContentBlock{block})
 				if text != "" {
 					parts = append(parts, text)
 				}
-			case "thinking":
+			case blockTypeThinking:
 				if block.Thinking != "" {
 					parts = append(parts, block.Thinking)
 				}
