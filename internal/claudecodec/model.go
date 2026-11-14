@@ -286,15 +286,16 @@ func countContentLines(content string) int {
 	return len(lines)
 }
 
-// nonZeroExitCodeLine matches a bare Bash "Exit code N" line. Claude Code
-// appends this line to Bash results regardless of outcome, so N must be
-// checked: "Exit code 0" is a success marker, not a failure signature.
-var nonZeroExitCodeLine = regexp.MustCompile(`(?m)^Exit code (\d+)\s*$`)
+// nonZeroExitCodeLine matches the bare "Exit code N" line Claude Code puts at
+// the top of a failed Bash result. N must be checked: "Exit code 0" is a
+// success marker, not a failure signature.
+var nonZeroExitCodeLine = regexp.MustCompile(`^Exit code (\d+)\s*$`)
 
-// hookErrorSignature matches PreToolUse/PostToolUse hook rejection text,
-// which Claude Code renders as ordinary result content ending in
-// "... hook error" rather than setting is_error.
-var hookErrorSignature = regexp.MustCompile(`hook error`)
+// hookErrorSignature matches the first line of a PreToolUse/PostToolUse hook
+// rejection, which Claude Code renders as ordinary result content rather than
+// setting is_error. Two shapes are seen: "PreToolUse:Bash hook error: ..." and
+// the older "PreToolUse:Bash [<command>] hook error: ...".
+var hookErrorSignature = regexp.MustCompile(`^(?:Pre|Post)ToolUse(?::\S+)?(?: \[.*\])? hook error`)
 
 // determineSuccess applies the ADR-003 status ladder: the first applicable
 // signal wins. explicitSuccess is nil when toolUseResult.success was absent
@@ -312,17 +313,22 @@ func determineSuccess(explicitSuccess *bool, isError bool, text string) bool {
 	return true
 }
 
-// hasKnownFailureSignature sniffs result text for the small, enumerated set
-// of known-failure patterns from ADR-003. This is deliberately not a general
-// heuristic: a false FAILED misleads the reader as badly as a false ok, so
-// new signatures are added only with a real transcript sample as evidence.
+// hasKnownFailureSignature sniffs the first line of the result text for the
+// small, enumerated set of known-failure patterns from ADR-003. This is
+// deliberately not a general heuristic: a false FAILED misleads the reader as
+// badly as a false ok, so new signatures are added only with a real transcript
+// sample as evidence.
+//
+// Only the first line is read because both signatures open the result. A
+// signature further down is the body of a successful result that happens to
+// quote one, such as a paged `cc-session inherit` output of a session that
+// hit a hook error.
 func hasKnownFailureSignature(text string) bool {
-	for _, match := range nonZeroExitCodeLine.FindAllStringSubmatch(text, -1) {
-		if match[1] != "0" {
-			return true
-		}
+	firstLine, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
+	if match := nonZeroExitCodeLine.FindStringSubmatch(firstLine); match != nil && match[1] != "0" {
+		return true
 	}
-	return hookErrorSignature.MatchString(text)
+	return hookErrorSignature.MatchString(firstLine)
 }
 
 func extractToolResultText(blocks []rawContentBlock) (string, string, bool) {

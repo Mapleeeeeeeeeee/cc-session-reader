@@ -59,6 +59,25 @@ The summarizer's default branch currently renders `[ToolName]` with zero input c
 - `is_error` can be `false` on genuinely failed Bash commands. It is a failure signal when true, never a success signal when false.
 - Content sniffing therefore cannot be removed in favor of "just use the flags" — the flags do not carry the information.
 
+## Amendment (2026-11-14): content sniffing reads the first line only
+
+Rule 3 originally searched the whole result text: any line `Exit code N` (N ≠ 0), or `hook error` anywhere. A successful result whose body quotes one of those strings was marked FAILED. The case that surfaced it was a paged `cc-session inherit` output of a session that had hit a hook error: the page was marked FAILED, which cleared the cc-session collapse in `internal/formatter/render.go` (`applyInjectResult`).
+
+Measured on every transcript under `~/.claude/projects` (2026-11-14):
+
+| result has a signature | `is_error` | count |
+|---|---|---:|
+| `Exit code N` (N ≠ 0) as the first line | true | 3,995 |
+| `PreToolUse:<tool> hook error` as the first line | true | 78 |
+| `hook error` further down the text | false | 111 |
+| `Exit code N` (N ≠ 0) anywhere but the first line | any | 0 |
+
+Every genuine failure opens with its signature; every match further down was the body of a successful result. The signatures are therefore anchored to the first line, and the hook signature to the harness's own `PreToolUse`/`PostToolUse` prefix (both observed shapes: `PreToolUse:Bash hook error:` and the older `PreToolUse:Bash [<command>] hook error:`).
+
+On the last 20 days (825 results marked FAILED before, 816 now), the 15 results that stopped being FAILED are exactly the ones with `is_error: false`, and the other 810 stay FAILED unchanged. The 6 results present only in the second scan were appended to live transcripts between the two runs.
+
+The corpus holds no `is_error: false` result that is a genuine failure, so the negative knowledge above rests on older CLI output that no longer exists locally. The sniff stays for that reason; if a failure shape with the signature below the first line turns up, add it with its sample.
+
 ## Consequences
 
 - Injected context becomes trustworthy about which steps failed — the primary correctness property of this tool.
