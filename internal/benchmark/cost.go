@@ -97,7 +97,7 @@ func NewCostParams(r Result, overheadTokens int) CostParams {
 //
 // Prefix grows across turns by growth + (K-1)*toolIO per turn, because tool I/O
 // from previous turns stays in the conversation history.
-func CumulativeCostA(turns int, x int, sp CostParams, p models.Pricing) float64 {
+func CumulativeCostA(turns int, x int, sp CostParams, m models.Model) float64 {
 	total := 0.0
 	extraCalls := extraCallsPerTurn(sp.K)
 	s := sp.ToolIOPerCall
@@ -105,12 +105,12 @@ func CumulativeCostA(turns int, x int, sp CostParams, p models.Pricing) float64 
 	toolIOPerTurn := float64(s) * extraCalls
 	for n := 1; n <= turns; n++ {
 		if n == 1 {
-			total += float64(x+sp.Prompt) * p.CacheWrite / 1e6
-			total += intraTurnToolCost(float64(x+sp.Prompt), extraCalls, s, p)
+			total += requestCost(0, float64(x+sp.Prompt), m)
+			total += intraTurnToolCost(float64(x+sp.Prompt), extraCalls, s, m)
 		} else {
 			prefixFromPrev := float64(x+sp.Prompt) + float64(n-1)*toolIOPerTurn + float64(n-2)*float64(g)
-			total += prefixFromPrev*p.CachedRead/1e6 + float64(g)*p.CacheWrite/1e6
-			total += intraTurnToolCost(prefixFromPrev+float64(g), extraCalls, s, p)
+			total += requestCost(prefixFromPrev, float64(g), m)
+			total += intraTurnToolCost(prefixFromPrev+float64(g), extraCalls, s, m)
 		}
 	}
 	return total
@@ -127,7 +127,7 @@ func CumulativeCostA(turns int, x int, sp CostParams, p models.Pricing) float64 
 //
 //	Call 1: cache read (prefix from previous turn, or X when N=1) + cache write (R + P)
 //	Calls 2..K: cache read (growing prefix) + cache write (tool I/O)
-func CumulativeCostAWarm(turns int, x int, sp CostParams, p models.Pricing) float64 {
+func CumulativeCostAWarm(turns int, x int, sp CostParams, m models.Model) float64 {
 	total := 0.0
 	extraCalls := extraCallsPerTurn(sp.K)
 	s := sp.ToolIOPerCall
@@ -137,8 +137,8 @@ func CumulativeCostAWarm(turns int, x int, sp CostParams, p models.Pricing) floa
 		// n=1: prefixFromPrev = X (fully cached); growth shifts by 1 vs cold because
 		// the previous turn's R is already in cache before our counting starts.
 		prefixFromPrev := float64(x) + float64(n-1)*toolIOPerTurn + float64(n-1)*float64(g)
-		total += prefixFromPrev*p.CachedRead/1e6 + float64(g)*p.CacheWrite/1e6
-		total += intraTurnToolCost(prefixFromPrev+float64(g), extraCalls, s, p)
+		total += requestCost(prefixFromPrev, float64(g), m)
+		total += intraTurnToolCost(prefixFromPrev+float64(g), extraCalls, s, m)
 	}
 	return total
 }
@@ -154,8 +154,8 @@ func CumulativeCostAWarm(turns int, x int, sp CostParams, p models.Pricing) floa
 //	Calls 2..K: cache read (growing) + cache write (tool I/O)
 //
 // Turn N (N>=2): same structure as A but with smaller base, cross-turn write = growth.
-func CumulativeCostB(turns int, x int, filteredTokens int, sp CostParams, p models.Pricing) float64 {
-	return CumulativeCostBWithInjectPages(turns, filteredTokens, 1, sp, p)
+func CumulativeCostB(turns int, x int, filteredTokens int, sp CostParams, m models.Model) float64 {
+	return CumulativeCostBWithInjectPages(turns, filteredTokens, 1, sp, m)
 }
 
 // CumulativeCostBWithInjectPages models opening a new session and injecting
@@ -168,9 +168,9 @@ func CumulativeCostB(turns int, x int, filteredTokens int, sp CostParams, p mode
 //	each page: read(overhead + previous page tokens) + write(page tokens)
 //
 // The active conversation after setup is still overhead + filteredTokens.
-func CumulativeCostBWithInjectPages(turns int, filteredTokens int, injectPages int, sp CostParams, p models.Pricing) float64 {
+func CumulativeCostBWithInjectPages(turns int, filteredTokens int, injectPages int, sp CostParams, m models.Model) float64 {
 	base := sp.Overhead + filteredTokens
-	total := newSessionSetupCost(filteredTokens, injectPages, sp, p)
+	total := newSessionSetupCost(filteredTokens, injectPages, sp, m)
 	extraCalls := extraCallsPerTurn(sp.K)
 	s := sp.ToolIOPerCall
 	g := sp.Growth
@@ -185,26 +185,35 @@ func CumulativeCostBWithInjectPages(turns int, filteredTokens int, injectPages i
 			prefixFromPrev = float64(base+sp.Prompt) + float64(n-1)*toolIOPerTurn + float64(n-2)*float64(g)
 			crossTurnWrite = g // R + P, same as Scenario A
 		}
-		total += prefixFromPrev*p.CachedRead/1e6 + float64(crossTurnWrite)*p.CacheWrite/1e6
-		total += intraTurnToolCost(prefixFromPrev+float64(crossTurnWrite), extraCalls, s, p)
+		total += requestCost(prefixFromPrev, float64(crossTurnWrite), m)
+		total += intraTurnToolCost(prefixFromPrev+float64(crossTurnWrite), extraCalls, s, m)
 	}
 	return total
 }
 
-func newSessionSetupCost(filteredTokens int, injectPages int, sp CostParams, p models.Pricing) float64 {
+func newSessionSetupCost(filteredTokens int, injectPages int, sp CostParams, m models.Model) float64 {
 	base := sp.Overhead + filteredTokens
 	if injectPages <= 1 {
-		return float64(base) * p.CacheWrite / 1e6
+		return requestCost(0, float64(base), m)
 	}
 
 	pageTokens := float64(filteredTokens) / float64(injectPages)
-	readTokens := 0.0
-	for page := 0; page < injectPages; page++ {
-		readTokens += float64(sp.Overhead) + float64(page)*pageTokens
-	}
-	writeTokens := float64(sp.Overhead) + float64(filteredTokens)
+	if p, isOneTier := singleTierPricing(m, float64(sp.Overhead), float64(base)); isOneTier {
+		readTokens := 0.0
+		for page := 0; page < injectPages; page++ {
+			readTokens += float64(sp.Overhead) + float64(page)*pageTokens
+		}
+		writeTokens := float64(sp.Overhead) + float64(filteredTokens)
 
-	return readTokens*p.CachedRead/1e6 + writeTokens*p.CacheWrite/1e6
+		return readTokens*p.CachedRead/1e6 + writeTokens*p.CacheWrite/1e6
+	}
+
+	// The setup prompt grows across the model's price threshold, so each request is priced on its own.
+	total := requestCost(0, float64(sp.Overhead), m)
+	for page := 0; page < injectPages; page++ {
+		total += requestCost(float64(sp.Overhead)+float64(page)*pageTokens, pageTokens, m)
+	}
+	return total
 }
 
 func extraCallsPerTurn(k float64) float64 {
@@ -214,7 +223,11 @@ func extraCallsPerTurn(k float64) float64 {
 	return k - 1
 }
 
-func intraTurnToolCost(firstPrefix float64, extraCalls float64, toolIOPerCall int, p models.Pricing) float64 {
+// intraTurnToolCost prices the extra tool round-trip calls of one turn. Call j
+// (1-based) reads firstPrefix + toolIO*(j-1) from cache and writes toolIO, so
+// its prompt is firstPrefix + toolIO*j. The last call is weighted by the
+// fractional part of extraCalls.
+func intraTurnToolCost(firstPrefix float64, extraCalls float64, toolIOPerCall int, m models.Model) float64 {
 	if extraCalls <= 0 {
 		return 0
 	}
@@ -223,52 +236,87 @@ func intraTurnToolCost(firstPrefix float64, extraCalls float64, toolIOPerCall in
 	fractionalCall := extraCalls - float64(fullCalls)
 	toolIO := float64(toolIOPerCall)
 
-	readTokens := float64(fullCalls)*firstPrefix + toolIO*float64(fullCalls*(fullCalls-1))/2
+	lastCall := fullCalls
 	if fractionalCall > 0 {
-		readTokens += fractionalCall * (firstPrefix + toolIO*float64(fullCalls))
+		lastCall++
 	}
-	writeTokens := extraCalls * toolIO
+	if p, isOneTier := singleTierPricing(m, firstPrefix+toolIO, firstPrefix+toolIO*float64(lastCall)); isOneTier {
+		readTokens := float64(fullCalls)*firstPrefix + toolIO*float64(fullCalls*(fullCalls-1))/2
+		if fractionalCall > 0 {
+			readTokens += fractionalCall * (firstPrefix + toolIO*float64(fullCalls))
+		}
+		writeTokens := extraCalls * toolIO
 
+		return readTokens*p.CachedRead/1e6 + writeTokens*p.CacheWrite/1e6
+	}
+
+	// The prompt grows across the model's price threshold during this turn, so each call is priced on its own.
+	total := 0.0
+	for call := 1; call <= lastCall; call++ {
+		weight := 1.0
+		if call > fullCalls {
+			weight = fractionalCall
+		}
+		total += weight * requestCost(firstPrefix+toolIO*float64(call-1), toolIO, m)
+	}
+	return total
+}
+
+// requestCost prices one API request that reads readTokens from cache and
+// writes writeTokens to it. The request's rates follow its prompt size, which
+// is readTokens + writeTokens.
+func requestCost(readTokens float64, writeTokens float64, m models.Model) float64 {
+	p := m.PricingFor(readTokens + writeTokens)
 	return readTokens*p.CachedRead/1e6 + writeTokens*p.CacheWrite/1e6
 }
 
+// singleTierPricing reports whether requests with prompts from smallestPrompt
+// to largestPrompt are all billed at the same rates, and returns those rates.
+// A non-tiered model always reports true. Callers keep their closed-form
+// formulas for that case so results for non-tiered models stay bit-for-bit
+// the same as before tiered pricing existed.
+func singleTierPricing(m models.Model, smallestPrompt float64, largestPrompt float64) (models.Pricing, bool) {
+	p := m.PricingFor(smallestPrompt)
+	return p, p == m.PricingFor(largestPrompt)
+}
+
 // ComputeCostMetrics populates the cost-related fields of r.
-func ComputeCostMetrics(r *Result, overheadTokens int, p models.Pricing) {
+func ComputeCostMetrics(r *Result, overheadTokens int, m models.Model) {
 	sp := NewCostParams(*r, overheadTokens)
 	r.BreakEven = -1
 	for n := 1; n <= 200; n++ {
-		if CumulativeCostBWithInjectPages(n, r.FilteredTokens, r.InjectPages, sp, p) < CumulativeCostA(n, r.ContextTokens, sp, p) {
+		if CumulativeCostBWithInjectPages(n, r.FilteredTokens, r.InjectPages, sp, m) < CumulativeCostA(n, r.ContextTokens, sp, m) {
 			r.BreakEven = n
 			break
 		}
 	}
 
-	cost10A := CumulativeCostA(10, r.ContextTokens, sp, p)
-	cost10B := CumulativeCostBWithInjectPages(10, r.FilteredTokens, r.InjectPages, sp, p)
+	cost10A := CumulativeCostA(10, r.ContextTokens, sp, m)
+	cost10B := CumulativeCostBWithInjectPages(10, r.FilteredTokens, r.InjectPages, sp, m)
 	if cost10A > 0 {
 		r.Saving10Pct = (cost10A - cost10B) * 100.0 / cost10A
 	}
 
-	cost100A := CumulativeCostA(100, r.ContextTokens, sp, p)
-	cost100B := CumulativeCostBWithInjectPages(100, r.FilteredTokens, r.InjectPages, sp, p)
+	cost100A := CumulativeCostA(100, r.ContextTokens, sp, m)
+	cost100B := CumulativeCostBWithInjectPages(100, r.FilteredTokens, r.InjectPages, sp, m)
 	if cost100A > 0 {
 		r.Saving100Pct = (cost100A - cost100B) * 100.0 / cost100A
 	}
 
 	r.WarmBreakEven = -1
 	for n := 1; n <= 200; n++ {
-		if CumulativeCostBWithInjectPages(n, r.FilteredTokens, r.InjectPages, sp, p) < CumulativeCostAWarm(n, r.ContextTokens, sp, p) {
+		if CumulativeCostBWithInjectPages(n, r.FilteredTokens, r.InjectPages, sp, m) < CumulativeCostAWarm(n, r.ContextTokens, sp, m) {
 			r.WarmBreakEven = n
 			break
 		}
 	}
 
-	cost10Warm := CumulativeCostAWarm(10, r.ContextTokens, sp, p)
+	cost10Warm := CumulativeCostAWarm(10, r.ContextTokens, sp, m)
 	if cost10Warm > 0 {
 		r.WarmSaving10Pct = (cost10Warm - cost10B) * 100.0 / cost10Warm
 	}
 
-	cost100Warm := CumulativeCostAWarm(100, r.ContextTokens, sp, p)
+	cost100Warm := CumulativeCostAWarm(100, r.ContextTokens, sp, m)
 	if cost100Warm > 0 {
 		r.WarmSaving100Pct = (cost100Warm - cost100B) * 100.0 / cost100Warm
 	}

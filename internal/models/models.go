@@ -18,12 +18,30 @@ type Pricing struct {
 	BaseInput  float64 // $/M tokens (uncached, after last breakpoint)
 }
 
+// LongPromptThreshold is the prompt size, in tokens, above which a request to a
+// model with LongPromptPricing is billed at the higher rates.
+const LongPromptThreshold = 100_000
+
 // Model describes one Claude model.
 type Model struct {
 	Name    string // canonical alias, e.g. "opus-5-5"
 	Family  string // family alias when this is the newest in its family, e.g. "opus"; "" otherwise
 	ID      string // Anthropic API model ID
 	Pricing Pricing
+	// LongPromptPricing replaces Pricing for a request whose prompt is over
+	// LongPromptThreshold tokens; nil for models with a single price list.
+	LongPromptPricing *Pricing
+}
+
+// PricingFor returns the rates for one API request whose prompt is promptTokens
+// long. The prompt counts every input token of the request: cache reads, cache
+// writes and uncached input. A prompt of exactly LongPromptThreshold tokens is
+// still billed at the standard rates.
+func (m Model) PricingFor(promptTokens float64) Pricing {
+	if m.LongPromptPricing != nil && promptTokens > LongPromptThreshold {
+		return *m.LongPromptPricing
+	}
+	return m.Pricing
 }
 
 // Alias returns the family alias if set, otherwise the canonical name.
@@ -36,7 +54,8 @@ func (m Model) Alias() string {
 
 // Cache read is billed at a different share of base input depending on the
 // model (Anthropic pricing docs): 0.025x for Fable 5.2 and 5.1, 0.05x for
-// Opus 5.5 and Sonnet 5.5, and 0.1x for every other model. Cost-savings numbers
+// Opus 5.5 and Sonnet 5.5, and 0.1x for every other model, Haiku 5.5 included
+// at both of its price levels. Cost-savings numbers
 // are therefore only directly comparable between models in the same group.
 
 // Opus 4.6, 4.7, 4.8 and Opus 5 share one price list.
@@ -49,6 +68,10 @@ var (
 		Pricing: Pricing{CachedRead: 0.20, CacheWrite: 2.50, BaseInput: 2.00}}
 	Sonnet46 = Model{Name: "sonnet-4-6", ID: "claude-sonnet-4-6",
 		Pricing: Pricing{CachedRead: 0.30, CacheWrite: 3.75, BaseInput: 3.00}}
+
+	Haiku55 = Model{Name: "haiku-5-5", Family: "haiku", ID: "claude-haiku-5-5",
+		Pricing:           Pricing{CachedRead: 0.01, CacheWrite: 0.125, BaseInput: 0.10},
+		LongPromptPricing: &Pricing{CachedRead: 0.05, CacheWrite: 0.625, BaseInput: 0.50}}
 
 	Opus55 = Model{Name: "opus-5-5", Family: "opus", ID: "claude-opus-5-5",
 		Pricing: Pricing{CachedRead: 0.20, CacheWrite: 5.00, BaseInput: 4.00}}
@@ -75,6 +98,7 @@ var DefaultCountTokens = Sonnet55
 var registry = []Model{
 	Opus55, Opus5, Opus48, Opus47, Opus46,
 	Sonnet55, Sonnet5, Sonnet46,
+	Haiku55,
 	Fable52, Fable51, Fable5,
 }
 

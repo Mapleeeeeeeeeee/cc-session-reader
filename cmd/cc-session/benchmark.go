@@ -190,7 +190,7 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 			Prompt:           prompt,
 			InjectPages:      injectPages,
 		}
-		bm.ComputeCostMetrics(&br, overheadToks, p)
+		bm.ComputeCostMetrics(&br, overheadToks, modelConfig)
 		results = append(results, br)
 	}
 

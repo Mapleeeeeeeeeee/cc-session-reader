@@ -21,6 +21,8 @@ func Test_Resolve_GivenKnownAlias_ThenReturnsExpectedModel(t *testing.T) {
 		{"sonnet-5-5", Sonnet55},
 		{"sonnet-5", Sonnet5},
 		{"sonnet-4-6", Sonnet46},
+		{"haiku", Haiku55},
+		{"haiku-5-5", Haiku55},
 		{"fable", Fable52},
 		{"fable-5-2", Fable52},
 		{"fable-5-1", Fable51},
@@ -84,7 +86,7 @@ func Test_Pricing_ThenCacheReadRatiosMatchPricingDocs(t *testing.T) {
 		m     Model
 		ratio float64
 	}{
-		{Sonnet5, 0.10}, {Sonnet46, 0.10}, {Opus5, 0.10}, {Opus48, 0.10}, {Fable5, 0.10},
+		{Sonnet5, 0.10}, {Sonnet46, 0.10}, {Opus5, 0.10}, {Opus48, 0.10}, {Fable5, 0.10}, {Haiku55, 0.10},
 		{Sonnet55, 0.05}, {Opus55, 0.05},
 		{Fable52, 0.025}, {Fable51, 0.025},
 	}
@@ -95,6 +97,38 @@ func Test_Pricing_ThenCacheReadRatiosMatchPricingDocs(t *testing.T) {
 		}
 		if want := tt.m.Pricing.BaseInput * 1.25; math.Abs(tt.m.Pricing.CacheWrite-want) > 1e-9 {
 			t.Errorf("%s CacheWrite = %v, want %v (1.25x BaseInput)", tt.m.Name, tt.m.Pricing.CacheWrite, want)
+		}
+	}
+}
+
+// Rates are the official Haiku 5.5 price list, $/MTok.
+func Test_PricingFor_GivenHaiku55_ThenRatesFollowPromptSize(t *testing.T) {
+	standard := Pricing{CachedRead: 0.01, CacheWrite: 0.125, BaseInput: 0.10}
+	higher := Pricing{CachedRead: 0.05, CacheWrite: 0.625, BaseInput: 0.50}
+	tests := []struct {
+		name         string
+		promptTokens float64
+		want         Pricing
+	}{
+		{"EmptyPrompt", 0, standard},
+		{"BelowThreshold", 99_999, standard},
+		{"ExactlyAtThreshold", 100_000, standard},
+		{"OneTokenOverThreshold", 100_001, higher},
+		{"FarOverThreshold", 900_000, higher},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Haiku55.PricingFor(tt.promptTokens); got != tt.want {
+				t.Errorf("Haiku55.PricingFor(%v) = %+v, want %+v", tt.promptTokens, got, tt.want)
+			}
+		})
+	}
+}
+
+func Test_PricingFor_GivenModelWithSinglePriceList_ThenPromptSizeDoesNotChangeRates(t *testing.T) {
+	for _, promptTokens := range []float64{0, 100_000, 100_001, 900_000} {
+		if got := Opus48.PricingFor(promptTokens); got != Opus48.Pricing {
+			t.Errorf("Opus48.PricingFor(%v) = %+v, want %+v", promptTokens, got, Opus48.Pricing)
 		}
 	}
 }
