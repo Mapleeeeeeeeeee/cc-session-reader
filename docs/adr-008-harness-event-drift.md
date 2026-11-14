@@ -74,6 +74,36 @@ Reader 靠比對字面字串認出 Claude Code 寫進 transcript 的事件。那
 - 壓縮續接前面多了 `<artifact-content-authored-by-others/>` 標籤（2.1.274），
   連同另外兩個分錯的樣本，見第 7 項。
 
+**追加樣本（2026-11-14）**：CLI 2.1.300（2026-10-16）起，transcript 多了 `api-request-blob` entry：
+`{"type":"api-request-blob","sessionId":…,"hash":…,"message":{"role":"user|assistant|system","content":[…]}}`，
+是 API request 內容的存檔副本，沒有 `timestamp`、`uuid`、`promptSource`。
+`parseLineWithToolCalls` 原本的判定是「不在 `noiseTypes`、又帶 `message.role` 就是對話」，
+所以 `read` 把每則使用者訊息、assistant 文字、tool call 印兩次（第二次時間戳是 `[??:??:??]`），
+`stats` 的 tool 呼叫數也跟著灌大（真實 session `508ba9cb`：Bash 199 → 136 次，`read` 輸出 306,899 → 195,271 位元組）。
+
+決定：對話的判定從排除清單改成正面表列，只有頂層 `type` 是 `user` 或 `assistant` 的 entry 才可能是對話（`conversationTypes`），
+其餘 type 一律不產生對話事件。依據是掃本機 6,893 個 transcript（2026-07-01 至今）：帶 `message.role` 的 entry 只有
+`user`（262,192 筆）、`assistant`（425,581 筆）、`api-request-blob`（54,172 筆）三種，
+沒有 type 與 role 不一致的對話 entry，也沒有 type 是 user/assistant 卻缺 `message.role` 的。
+
+這跟第 1 項不改成「反向白名單」的取捨不同邊。第 1 項擔心的是 `noiseTypes` 反過來列要解析的型別，
+一個真的帶對話內容的新型別會被靜默吃掉。這次的實測是反方向的失敗：排除清單每遇到一種新的帶 `message` 的 entry 就漏一次，
+而且漏的結果是對話重複輸出，使用者看得到。掃描範圍內 CLI 寫對話只用 `user` 和 `assistant` 兩個型別，窮舉得出來，
+所以對話這一側用正面表列。如果日後 CLI 另外開了一個對話型別，這份清單不認得它，它的對話會被丟掉；
+丟掉的紀錄由 `cc-session audit` 的「Dropped record types」區段列出，所以這個缺口看得到（見下段）。
+`noiseTypes` 仍是手寫清單，只負責記帳（`system_noise`），第 1 項對它的處理不變。
+
+`api-request-blob` 刻意不加進 `noiseTypes`：它是 transcript 裡已有內容的副本，記成 noise 會讓它的全文進 raw 字數，
+卻不進 filtered，「節省比例」會因為重複計入而虛高。不在兩份清單裡的 type 不計入 `stats` 的 raw 與 filtered。
+
+被丟掉的紀錄不是無聲消失：reader 對每筆不是 `user`／`assistant`、也不在 `noiseTypes` 的紀錄產生一個
+`EventDiscardedRecord` 事件（只帶 type、整行字數、是否帶 `message.role`、是否為已知 type），
+只有 `audit` 讀它，`read`、`stats`、`benchmark`、`inject` 都不處理這個事件種類，輸出與數字不變。
+`audit` 依 type 列出筆數、字數與帶 `message.role` 的筆數。已知的請求副本與中繼資料
+（`knownNonConversationTypes`：`api-request-blob`、`api-request`、`api-request-shape`、`session-owner`、`tools-used`）
+標為已知；不在已知清單、又帶 `message.role` 的 type 標 `ATTENTION`，可能是新的對話型別，排在最前面。
+已知清單同樣是手寫的，新的無害 type 出現時會先以未知型別被列出，確認後再補進清單。
+
 ## 1. `noiseTypes` 漏了 8 個 CLI 後來才加的 entry type
 
 `noiseTypes` 是手寫的白名單，收 13 個型別。實測出現、不在名單裡的有 8 個：

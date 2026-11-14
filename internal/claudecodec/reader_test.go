@@ -1205,6 +1205,29 @@ func TestScanHeader_GivenInterruptedToolCallSentinel_ThenTreatsItAsNoiseNotAProm
 	}
 }
 
+// Regression: api-request-blob records were emitted as duplicate conversation messages (v0.1.82)
+func TestParseLine_GivenNonConversationTypeCarryingMessage_WhenParsed_ThenEmitsNoEvent(t *testing.T) {
+	tests := map[string]string{
+		"api-request-blob copy of a user request":      `{"type":"api-request-blob","hash":"a","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}`,
+		"api-request-blob copy of an assistant reply":  `{"type":"api-request-blob","hash":"b","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}`,
+		"api-request-blob copy of a system prompt":     `{"type":"api-request-blob","hash":"c","message":{"role":"system","content":[{"type":"text","text":"rules"}]}}`,
+		"unlisted type with a user-role message":       `{"type":"some-future-record","message":{"role":"user","content":"hello"}}`,
+		"unlisted type with an assistant-role message": `{"type":"some-future-record","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}`,
+		"unlisted type with a tool_result":             `{"type":"some-future-record","toolUseResult":{"success":true},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"ok"}]}}`,
+	}
+	for name, line := range tests {
+		t.Run(name, func(t *testing.T) {
+			event, ok, err := ParseLine([]byte(line))
+			if err != nil {
+				t.Fatalf("ParseLine returned error: %v", err)
+			}
+			if ok {
+				t.Fatalf("ParseLine emitted a %s event, want none", event.Kind)
+			}
+		})
+	}
+}
+
 func parseLine(t *testing.T, line string) session.Event {
 	t.Helper()
 	event, ok, err := ParseLine([]byte(line))

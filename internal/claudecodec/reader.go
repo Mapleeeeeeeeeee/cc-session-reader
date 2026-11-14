@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
 )
@@ -57,6 +58,31 @@ var noiseTypes = map[string]bool{
 	// transcript, no "message" field, so it fell through unparsed instead
 	// of becoming EventNoise.
 	"fork-context-ref": true,
+}
+
+// conversationTypes are the only entry types that can be conversation. Any
+// other type is dropped even when it carries message.role, because Claude
+// Code keeps adding message-bearing records that are not conversation (since
+// 2.1.300, api-request-blob holds a copy of the API request content, which
+// would print every message a second time). Do not list such a type in
+// noiseTypes either: noise counts toward the raw side of stats, and a copy
+// of content already in the transcript would inflate the savings ratio.
+var conversationTypes = map[string]bool{
+	"user":      true,
+	"assistant": true,
+}
+
+// knownNonConversationTypes are dropped types seen in real transcripts that
+// are request copies or metadata. `audit` reports every other dropped type as
+// unknown, and flags one that carries message.role as possibly a new
+// conversation type. Seen since CLI 2.1.300 (2026-10-16); only
+// api-request-blob carries a message.
+var knownNonConversationTypes = map[string]bool{
+	"api-request-blob":  true,
+	"api-request":       true,
+	"api-request-shape": true,
+	"session-owner":     true,
+	"tools-used":        true,
 }
 
 func ReadFile(path string, handle func(session.Event) error) error {
@@ -110,8 +136,14 @@ func ReadAll(path string) ([]session.Event, error) {
 	return events, err
 }
 
+// ParseLine returns no event for a record the reader drops, including a
+// discarded record: those events exist only for ReadFile's callers.
 func ParseLine(line []byte) (session.Event, bool, error) {
-	return parseLineWithToolCalls(line, nil)
+	event, ok, err := parseLineWithToolCalls(line, nil)
+	if event.Kind == session.EventDiscardedRecord {
+		return session.Event{}, false, err
+	}
+	return event, ok, err
 }
 
 // toolCallInfo is the per-tool_use state ReadFile threads across the
@@ -151,19 +183,26 @@ func parseLineWithToolCalls(line []byte, toolCalls map[string]toolCallInfo) (ses
 		return event, true, nil
 	}
 
-	if raw.Message == nil {
-		if noiseTypes[raw.Type] {
-			event.Kind = session.EventNoise
-			event.Noise = &session.NoiseEvent{Text: raw.extractAllText()}
-			return event, true, nil
-		}
-		return session.Event{}, false, nil
-	}
-
 	if noiseTypes[raw.Type] {
 		event.Kind = session.EventNoise
 		event.Noise = &session.NoiseEvent{Text: raw.extractAllText()}
 		return event, true, nil
+	}
+
+	if !conversationTypes[raw.Type] {
+		return session.Event{
+			Kind:    session.EventDiscardedRecord,
+			RawType: raw.Type,
+			Discarded: &session.DiscardedRecord{
+				Chars:          utf8.RuneCount(bytes.TrimSpace(line)),
+				HasMessageRole: raw.Message != nil && raw.Message.Role != "",
+				IsKnown:        knownNonConversationTypes[raw.Type],
+			},
+		}, true, nil
+	}
+
+	if raw.Message == nil {
+		return session.Event{}, false, nil
 	}
 
 	if len(raw.ToolUseResult) > 0 {

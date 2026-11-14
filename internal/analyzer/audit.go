@@ -56,8 +56,32 @@ type FailureLengthStats struct {
 	Max    int
 }
 
+// DiscardedTypeStats totals the records of one entry type that the reader
+// dropped because the type is neither conversation nor listed noise.
+type DiscardedTypeStats struct {
+	Type string
+	// Records is how many records of this type were dropped.
+	Records int
+	// Chars is the combined rune count of their whole JSONL lines.
+	Chars int
+	// RecordsWithRole is how many of them carry message.role.
+	RecordsWithRole int
+	// IsKnown is true for a recognized request copy or metadata type.
+	IsKnown bool
+}
+
+// NeedsAttention reports whether the dropped type is unrecognized yet carries
+// message.role, which may mean Claude Code added a new conversation type.
+func (s DiscardedTypeStats) NeedsAttention() bool {
+	return !s.IsKnown && s.RecordsWithRole > 0
+}
+
 // AuditResult holds the CUT-content histogram and its samples.
 type AuditResult struct {
+	// DiscardedTypes lists every dropped record type, types that need
+	// attention first, then by Chars descending. Empty when nothing was
+	// dropped.
+	DiscardedTypes []DiscardedTypeStats
 	// BucketChars is the total CUT character count per bucket, keyed by the
 	// Bucket* constants above.
 	BucketChars map[string]int
@@ -78,6 +102,7 @@ func ComputeAudit(events []session.Event) AuditResult {
 	samples := make(map[string][]string, len(BucketOrder))
 	toolUseNames := map[string]string{}
 	var failureLengths []int
+	discardedByType := map[string]*DiscardedTypeStats{}
 
 	// addSample records chars CUT characters into bucket's total and appends
 	// display (a truncated, possibly tool-name-prefixed excerpt) as a sample.
@@ -90,6 +115,21 @@ func ComputeAudit(events []session.Event) AuditResult {
 
 	for _, event := range events {
 		switch event.Kind {
+		case session.EventDiscardedRecord:
+			if event.Discarded == nil {
+				continue
+			}
+			stats := discardedByType[event.RawType]
+			if stats == nil {
+				stats = &DiscardedTypeStats{Type: event.RawType, IsKnown: event.Discarded.IsKnown}
+				discardedByType[event.RawType] = stats
+			}
+			stats.Records++
+			stats.Chars += event.Discarded.Chars
+			if event.Discarded.HasMessageRole {
+				stats.RecordsWithRole++
+			}
+
 		case session.EventNoise:
 			if event.Noise == nil || strings.TrimSpace(event.Noise.Text) == "" {
 				continue
@@ -168,10 +208,29 @@ func ComputeAudit(events []session.Event) AuditResult {
 	}
 
 	return AuditResult{
-		BucketChars: bucketChars,
-		Samples:     samples,
-		Failures:    computeFailureLengthStats(failureLengths),
+		DiscardedTypes: sortedDiscardedTypes(discardedByType),
+		BucketChars:    bucketChars,
+		Samples:        samples,
+		Failures:       computeFailureLengthStats(failureLengths),
 	}
+}
+
+func sortedDiscardedTypes(byType map[string]*DiscardedTypeStats) []DiscardedTypeStats {
+	sorted := make([]DiscardedTypeStats, 0, len(byType))
+	for _, stats := range byType {
+		sorted = append(sorted, *stats)
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		a, b := sorted[i], sorted[j]
+		if a.NeedsAttention() != b.NeedsAttention() {
+			return a.NeedsAttention()
+		}
+		if a.Chars != b.Chars {
+			return a.Chars > b.Chars
+		}
+		return a.Type < b.Type
+	})
+	return sorted
 }
 
 // isHarnessNoiseMessage reports whether user carries one of the harness-

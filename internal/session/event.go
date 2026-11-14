@@ -28,6 +28,7 @@ const (
 	EventAssistantMessage EventKind = "assistant_message"
 	EventToolResult       EventKind = "tool_result"
 	EventNoise            EventKind = "noise"
+	EventDiscardedRecord  EventKind = "discarded_record"
 	EventCompactBoundary  EventKind = "compact_boundary"
 )
 
@@ -55,6 +56,7 @@ type Event struct {
 	Assistant *AssistantMessage
 	Tool      *ToolResult
 	Noise     *NoiseEvent
+	Discarded *DiscardedRecord
 }
 
 type UserMessage struct {
@@ -623,6 +625,21 @@ func firstMeaningfulLine(text string, maxRunes int, isNoise func(string) bool) s
 
 type NoiseEvent struct {
 	Text string
+}
+
+// DiscardedRecord describes a transcript record whose type is neither
+// conversation nor listed noise, so the reader dropped it. It exists only so
+// `audit` can show what was dropped; the event carries no Timestamp so it
+// cannot be taken for the session's first or last event.
+type DiscardedRecord struct {
+	// Chars is the rune count of the whole JSONL line.
+	Chars int
+	// HasMessageRole is true when the record carries message.role, the shape
+	// a conversation record has.
+	HasMessageRole bool
+	// IsKnown is true when the type is a recognized non-conversation type
+	// (a request copy or metadata) that is safe to drop.
+	IsKnown bool
 }
 
 func Truncate(s string, maxRunes int) string {
