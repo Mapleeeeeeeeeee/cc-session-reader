@@ -56,6 +56,13 @@ e61060b1       403,129     125,089    4.5      100%      turn 1       66%       
 Median break-even: turn 1 | 10-turn saving: 69% | 100-turn saving: 48%
 ```
 
+A session that never breaks even (within 200 turns) shows `never` in its row and
+counts as infinitely late in the median break-even, so the median lands on
+`never` when more than half of the sessions never break even. Whenever at least
+one session never breaks even, the summary line adds the count, for example
+`Median break-even: turn 1 (1 of 3 sessions never break even)`. The cold-cache and
+warm-cache tables follow the same rule.
+
 ## Cost Model
 
 ### Pricing
