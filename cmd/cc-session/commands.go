@@ -128,6 +128,14 @@ func init() {
 			run: func(args []string, reader claudecodec.Codec) { cmdBenchmark(args, reader) },
 		},
 		{
+			name:        "drift",
+			summary:     "掃描近期 session，列出 reader 尚未處理的紀錄形狀",
+			tracksUsage: true,
+			// No argHint: drift is a maintainer command run after a Claude
+			// Code update, not part of the skill's quick-launch surface.
+			run: func(args []string, _ claudecodec.Codec) { cmdDrift(args) },
+		},
+		{
 			name:        "inject",
 			hidden:      true,
 			tracksUsage: true,
