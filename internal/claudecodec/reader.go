@@ -59,6 +59,18 @@ var noiseTypes = map[string]bool{
 	"fork-context-ref": true,
 }
 
+// conversationTypes are the only entry types that can be conversation. Any
+// other type is dropped even when it carries message.role, because Claude
+// Code keeps adding message-bearing records that are not conversation (since
+// 2.1.300, api-request-blob holds a copy of the API request content, which
+// would print every message a second time). Do not list such a type in
+// noiseTypes either: noise counts toward the raw side of stats, and a copy
+// of content already in the transcript would inflate the savings ratio.
+var conversationTypes = map[string]bool{
+	"user":      true,
+	"assistant": true,
+}
+
 func ReadFile(path string, handle func(session.Event) error) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -151,19 +163,14 @@ func parseLineWithToolCalls(line []byte, toolCalls map[string]toolCallInfo) (ses
 		return event, true, nil
 	}
 
-	if raw.Message == nil {
-		if noiseTypes[raw.Type] {
-			event.Kind = session.EventNoise
-			event.Noise = &session.NoiseEvent{Text: raw.extractAllText()}
-			return event, true, nil
-		}
-		return session.Event{}, false, nil
-	}
-
 	if noiseTypes[raw.Type] {
 		event.Kind = session.EventNoise
 		event.Noise = &session.NoiseEvent{Text: raw.extractAllText()}
 		return event, true, nil
+	}
+
+	if !conversationTypes[raw.Type] || raw.Message == nil {
+		return session.Event{}, false, nil
 	}
 
 	if len(raw.ToolUseResult) > 0 {
