@@ -45,6 +45,7 @@ const (
 	ToolSkill           = "Skill"
 	ToolAskUserQuestion = "AskUserQuestion"
 	ToolSearch          = "ToolSearch"
+	ToolAdvisor         = "advisor"
 )
 
 type Event struct {

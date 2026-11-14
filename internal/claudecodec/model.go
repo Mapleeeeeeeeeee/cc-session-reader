@@ -119,7 +119,7 @@ func (m rawMessage) Assistant() session.AssistantMessage {
 			if strings.TrimSpace(block.Thinking) != "" {
 				thinking = append(thinking, block.Thinking)
 			}
-		case blockTypeToolUse:
+		case blockTypeToolUse, blockTypeServerToolUse:
 			input := map[string]any{}
 			if len(block.Input) > 0 {
 				_ = json.Unmarshal(block.Input, &input)

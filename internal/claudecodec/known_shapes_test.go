@@ -48,6 +48,20 @@ func Test_BlockTypeSets_Given_AHandledBlockType_When_Parsed_Then_ReaderUsesItAnd
 			check:     func(e session.Event) bool { return e.Tool != nil && e.Tool.ToolUseID == "toolu_1" },
 		},
 		{
+			name:      "server_tool_use in an assistant message",
+			blockType: "server_tool_use",
+			line:      `{"type":"assistant","message":{"role":"assistant","content":[{"type":"server_tool_use","id":"srvtoolu_1","name":"advisor","input":{}}]}}`,
+			check: func(e session.Event) bool {
+				return e.Assistant != nil && len(e.Assistant.ToolUses) == 1 && e.Assistant.ToolUses[0].ID == "srvtoolu_1"
+			},
+		},
+		{
+			name:      "advisor_tool_result in an assistant message",
+			blockType: "advisor_tool_result",
+			line:      `{"type":"assistant","message":{"role":"assistant","content":[{"type":"advisor_tool_result","tool_use_id":"srvtoolu_1","content":{"type":"advisor_redacted_result","encrypted_content":"x"}}]}}`,
+			check:     func(e session.Event) bool { return e.Tool != nil && e.Tool.ToolUseID == "srvtoolu_1" },
+		},
+		{
 			name:      "text inside a tool_result",
 			blockType: "text",
 			isInner:   true,

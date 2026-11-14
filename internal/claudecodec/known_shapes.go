@@ -1,13 +1,19 @@
 package claudecodec
 
-// Content block types inside message.content. The reader acts on these four
-// at the top level of a message, and on text alone inside a tool_result's own
-// content array; every other block type is skipped without a trace.
+// Content block types inside message.content. The reader acts on these at the
+// top level of a message, and on text alone inside a tool_result's own content
+// array; every other block type is skipped without a trace.
+//
+// server_tool_use and advisor_tool_result are the call and the reply of a tool
+// the API server runs itself (so far only advisor). Both sit in assistant
+// records, unlike tool_use and tool_result.
 const (
-	blockTypeText       = "text"
-	blockTypeThinking   = "thinking"
-	blockTypeToolUse    = "tool_use"
-	blockTypeToolResult = "tool_result"
+	blockTypeText              = "text"
+	blockTypeThinking          = "thinking"
+	blockTypeToolUse           = "tool_use"
+	blockTypeToolResult        = "tool_result"
+	blockTypeServerToolUse     = "server_tool_use"
+	blockTypeAdvisorToolResult = "advisor_tool_result"
 )
 
 const (
@@ -16,12 +22,15 @@ const (
 )
 
 // handledContentBlockTypes are the message.content block types the reader
-// reads (see rawMessage.Text, rawMessage.Assistant and extractToolResultText).
+// reads (see rawMessage.Text, rawMessage.Assistant, extractToolResultText and
+// rawMessage.advisorToolResultBlock).
 var handledContentBlockTypes = map[string]bool{
-	blockTypeText:       true,
-	blockTypeThinking:   true,
-	blockTypeToolUse:    true,
-	blockTypeToolResult: true,
+	blockTypeText:              true,
+	blockTypeThinking:          true,
+	blockTypeToolUse:           true,
+	blockTypeToolResult:        true,
+	blockTypeServerToolUse:     true,
+	blockTypeAdvisorToolResult: true,
 }
 
 // handledToolResultBlockTypes are the block types the reader reads inside a
