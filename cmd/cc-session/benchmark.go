@@ -33,7 +33,7 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 	minKB := fs.Int("min-kb", 100, "minimum JSONL file size in KB")
 	maxN := fs.Int("n", 10, "max sessions to include")
 	model := fs.String("model", models.DefaultBenchmark.Alias(), "model: "+models.Usage())
-	overhead := fs.Int("overhead", 0, "session overhead tokens (system+tools+CLAUDE.md); measure with a 1-turn session")
+	overhead := fs.Int("overhead", 0, bm.OverheadFlagUsage)
 	isNoAPI := fs.Bool("no-api", false, "skip API calls; estimate tokens from character counts (offline fallback)")
 	if err := fs.Parse(reorderArgs(args)); err != nil {
 		return err
@@ -44,10 +44,7 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 
 	logUsageAsync("benchmark", "")
 
-	overheadToks := *overhead
-	if overheadToks <= 0 {
-		overheadToks = bm.DefaultOverhead
-	}
+	overheadToks := bm.ResolveOverhead(*overhead)
 
 	modelConfig, err := models.Resolve(*model)
 	if err != nil {
@@ -134,7 +131,7 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 				return fmt.Errorf("count filtered tokens for %s: %w", session.ShortID(c.entry.SessionID, 8), err)
 			}
 		}
-		newContextToks := overheadToks + filteredToks
+		newContextToks := bm.NewContextTokens(overheadToks, filteredToks)
 		fullText, err := inject.RenderFullOutput(c.path, reader)
 		if err != nil {
 			return fmt.Errorf("render inject output for %s: %w", session.ShortID(c.entry.SessionID, 8), err)

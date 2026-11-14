@@ -39,6 +39,12 @@ All other parameters are derived automatically from your real session data.
 | `--no-api` | off | Skip the token counting API and estimate tokens from character counts (see [Offline token estimate](#offline-token-estimate---no-api)) |
 | `--model` | opus | Pricing and token-counting model: `opus` (`opus-5-5`), `opus-5`, `opus-4-8`, `opus-4-7`, `opus-4-6`, `sonnet` (`sonnet-5-5`), `sonnet-5`, `sonnet-4-6`, `haiku` (`haiku-5-5`), `fable` (`fable-5-2`), `fable-5-1`, or `fable-5` |
 
+`cc-session stats <session-id> --overhead <your-number>` prints a Token Savings
+section that uses the same definition as the `Saved` column of the compression
+table: the saved tokens are the original context minus the new context
+(`overhead + C`), not minus `C` alone. Without `--overhead`, `stats` falls back
+to the same default as `benchmark`.
+
 ### Example output
 
 ```

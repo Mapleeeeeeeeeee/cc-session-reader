@@ -92,12 +92,14 @@ func baseResult() StatsResult {
 
 func baseOpts() RenderOptions {
 	return RenderOptions{
-		TranscriptKB:   42.5,
-		SessionID:      "session-abc",
-		FilteredTokens: 1200,
-		RawTokens:      1800,
-		HasAPIData:     true,
-		TokenErr:       nil,
+		TranscriptKB:     42.5,
+		SessionID:        "session-abc",
+		FilteredTokens:   1200,
+		OverheadTokens:   300,
+		NewContextTokens: 1500,
+		RawTokens:        1800,
+		HasAPIData:       true,
+		TokenErr:         nil,
 	}
 }
 
@@ -189,9 +191,12 @@ func TestRenderStats_GivenHasAPIDataAndNoError_WhenRendered_ThenTokenSavingsSect
 	body := out.String()
 
 	assertOutputContains(t, body, "=== Token Savings ===")
-	assertOutputContains(t, body, "2,000") // Original context (LastContextTokens)
-	assertOutputContains(t, body, "1,200") // CLI filtered
-	assertOutputContains(t, body, "40.0%") // (2000-1200)/2000 = 40%
+	section := body[strings.Index(body, "=== Token Savings ==="):]
+	assertOutputLineContaining(t, section, "Original context:", "2,000") // LastContextTokens
+	assertOutputLineContaining(t, section, "CLI filtered:", "1,200")
+	assertOutputLineContaining(t, section, "Overhead:", "300")
+	assertOutputLineContaining(t, section, "New context:", "1,500")
+	assertOutputLineContaining(t, section, "Saved:", "500 (25.0%)") // (2000-1500)/2000
 }
 
 func TestRenderStats_GivenSkipTokens_WhenRendered_ThenTokenSectionAbsent(t *testing.T) {

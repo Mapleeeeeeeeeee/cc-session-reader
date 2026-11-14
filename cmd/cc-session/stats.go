@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/analyzer"
+	bm "github.com/Mapleeeeeeeeeee/cc-session-reader/internal/benchmark"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/parser"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
 )
@@ -20,6 +21,7 @@ func runStats(args []string, out io.Writer, errOut io.Writer, store parser.Store
 	fs := flag.NewFlagSet("stats", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	isNoTokens := fs.Bool("no-tokens", false, "skip token counting")
+	overhead := fs.Int("overhead", 0, bm.OverheadFlagUsage)
 	if err := fs.Parse(reorderArgs(args)); err != nil {
 		return err
 	}
@@ -58,6 +60,8 @@ func runStats(args []string, out io.Writer, errOut io.Writer, store parser.Store
 			} else {
 				filtAPI, errFilt := countTokens(result.FilteredText)
 				opts.FilteredTokens = filtAPI
+				opts.OverheadTokens = bm.ResolveOverhead(*overhead)
+				opts.NewContextTokens = bm.NewContextTokens(opts.OverheadTokens, filtAPI)
 				opts.TokenErr = errFilt
 			}
 		} else {
