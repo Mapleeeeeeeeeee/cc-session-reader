@@ -68,8 +68,8 @@ func PrintWarmCostSummary(out io.Writer, results []Result, p models.Pricing, mod
 
 func printCostSection(out io.Writer, results []Result, modelName string, fields func(Result) (int, float64, float64), titleFmt string) {
 	fmt.Fprintf(out, titleFmt, modelName)
-	fmt.Fprintf(out, "%-10s  %10s  %10s  %6s  %5s  %10s  %8s  %9s\n",
-		"Session", "Context", "NewCtx", "Ratio", "K", "Break-even", "10-turn", "100-turn")
+	fmt.Fprintf(out, "%-10s  %10s  %10s  %6s  %5s  %8s  %10s  %8s  %9s\n",
+		"Session", "Context", "NewCtx", "Ratio", "K", "1h-write", "Break-even", "10-turn", "100-turn")
 
 	for _, r := range results {
 		breakEven, saving10, saving100 := fields(r)
@@ -78,12 +78,13 @@ func printCostSection(out io.Writer, results []Result, modelName string, fields 
 			beStr = fmt.Sprintf("turn %d", breakEven)
 		}
 		ratio := r.RatioPct()
-		fmt.Fprintf(out, "%-10s  %10s  %10s  %5.1f%%  %5.1f  %10s  %7.0f%%  %8.0f%%\n",
+		fmt.Fprintf(out, "%-10s  %10s  %10s  %5.1f%%  %5.1f  %7.0f%%  %10s  %7.0f%%  %8.0f%%\n",
 			r.ShortID,
 			analyzer.FormatNumber(r.ContextTokens),
 			analyzer.FormatNumber(r.NewContextTokens),
 			ratio,
 			r.CallsPerTurn,
+			r.OneHourWriteShare*100,
 			beStr,
 			math.Round(saving10),
 			math.Round(saving100),

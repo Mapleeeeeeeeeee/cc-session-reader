@@ -90,7 +90,7 @@ func TestRunBenchmark_WhenSessionHasAPIUsage_ThenUsesTokenCountingAPIForNewConte
 
 	transcript := strings.Join([]string{
 		`{"type":"user","timestamp":"2026-05-28T00:00:00Z","message":{"role":"user","content":"hello"}}`,
-		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"hi"},{"type":"tool_use","name":"Bash","id":"toolu_1","input":{"command":"echo raw payload that must not be counted"}}],"usage":{"input_tokens":100000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1000}}}`,
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"hi"},{"type":"tool_use","name":"Bash","id":"toolu_1","input":{"command":"echo raw payload that must not be counted"}}],"usage":{"input_tokens":99000,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":1000,"ephemeral_1h_input_tokens":0},"cache_read_input_tokens":0,"output_tokens":1000}}}`,
 		`{"type":"user","timestamp":"2026-05-28T00:00:02Z","toolUseResult":{"success":true,"commandName":"Bash"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"raw result that is replaced by a summary"}]}}`,
 		"",
 	}, "\n")
@@ -217,7 +217,7 @@ func TestRunBenchmark_WhenTopCandidateIsSkipped_ThenNCountsProcessedResults(t *t
 	validSID := "dddddddd-dddd-dddd-dddd-dddddddddddd"
 	validTranscript := strings.Join([]string{
 		`{"type":"user","timestamp":"2026-05-28T00:00:00Z","message":{"role":"user","content":"hello"}}`,
-		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":"hi","usage":{"input_tokens":100000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1000}}}`,
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":"hi","usage":{"input_tokens":99000,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":1000,"ephemeral_1h_input_tokens":0},"cache_read_input_tokens":0,"output_tokens":1000}}}`,
 		"",
 	}, "\n")
 	if err := os.WriteFile(filepath.Join(projectDir, validSID+".jsonl"), []byte(validTranscript), 0o644); err != nil {
@@ -262,7 +262,7 @@ func TestRunBenchmark_GivenSonnetModel_ThenUsesSonnetTokenCounterModel(t *testin
 	sid := "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
 	transcript := strings.Join([]string{
 		`{"type":"user","timestamp":"2026-05-28T00:00:00Z","message":{"role":"user","content":"hello"}}`,
-		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":"hi","usage":{"input_tokens":100000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1000}}}`,
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":"hi","usage":{"input_tokens":99000,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":1000,"ephemeral_1h_input_tokens":0},"cache_read_input_tokens":0,"output_tokens":1000}}}`,
 		"",
 	}, "\n")
 	if err := os.WriteFile(filepath.Join(projectDir, sid+".jsonl"), []byte(transcript), 0o644); err != nil {
@@ -306,7 +306,7 @@ func TestRunBenchmark_GivenTwoValidSessions_ThenReusesTokenCounter(t *testing.T)
 	for _, sid := range []string{"ffffffff-ffff-ffff-ffff-ffffffffffff", "99999999-9999-9999-9999-999999999999"} {
 		transcript := strings.Join([]string{
 			`{"type":"user","timestamp":"2026-05-28T00:00:00Z","message":{"role":"user","content":"hello"}}`,
-			`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":"hi","usage":{"input_tokens":100000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1000}}}`,
+			`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":"hi","usage":{"input_tokens":99000,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":1000,"ephemeral_1h_input_tokens":0},"cache_read_input_tokens":0,"output_tokens":1000}}}`,
 			"",
 		}, "\n")
 		if err := os.WriteFile(filepath.Join(projectDir, sid+".jsonl"), []byte(transcript), 0o644); err != nil {
@@ -355,7 +355,7 @@ func TestRunBenchmark_GivenNoAPIFlag_ThenSkipsAPIAndEstimatesFilteredTokensWithC
 
 	transcript := strings.Join([]string{
 		`{"type":"user","timestamp":"2026-05-28T00:00:00Z","message":{"role":"user","content":"hello"}}`,
-		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":"hi","usage":{"input_tokens":100000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1000}}}`,
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":"hi","usage":{"input_tokens":99000,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":1000,"ephemeral_1h_input_tokens":0},"cache_read_input_tokens":0,"output_tokens":1000}}}`,
 		"",
 	}, "\n")
 	transcriptPath := filepath.Join(projectDir, sid+".jsonl")
@@ -420,9 +420,9 @@ func TestRunBenchmark_GivenNoAPIFlagAndToolUse_ThenToolIOPerCallUsesCharsPerToke
 	// K = APICallCount / UserTurnCount = 2 / 1 = 2, so toolIOPerTurn = toolIO*(K-1) != 0
 	transcript := strings.Join([]string{
 		`{"type":"user","timestamp":"2026-05-28T00:00:00Z","message":{"role":"user","content":"hello"}}`,
-		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"ok"},{"type":"tool_use","name":"Bash","id":"toolu_1","input":{"command":"` + strings.Repeat("x", 986) + `"}}],"usage":{"input_tokens":50000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":500}}}`,
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"ok"},{"type":"tool_use","name":"Bash","id":"toolu_1","input":{"command":"` + strings.Repeat("x", 986) + `"}}],"usage":{"input_tokens":49000,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":1000,"ephemeral_1h_input_tokens":0},"cache_read_input_tokens":0,"output_tokens":500}}}`,
 		`{"type":"user","timestamp":"2026-05-28T00:00:02Z","toolUseResult":{"success":true,"commandName":"Bash"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"` + strings.Repeat("y", 1000) + `"}]}}`,
-		`{"type":"assistant","timestamp":"2026-05-28T00:00:03Z","message":{"role":"assistant","content":[{"type":"text","text":"done"},{"type":"tool_use","name":"Bash","id":"toolu_2","input":{"command":"` + strings.Repeat("x", 986) + `"}}],"usage":{"input_tokens":51000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":500}}}`,
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:03Z","message":{"role":"assistant","content":[{"type":"text","text":"done"},{"type":"tool_use","name":"Bash","id":"toolu_2","input":{"command":"` + strings.Repeat("x", 986) + `"}}],"usage":{"input_tokens":50000,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":1000,"ephemeral_1h_input_tokens":0},"cache_read_input_tokens":0,"output_tokens":500}}}`,
 		`{"type":"user","timestamp":"2026-05-28T00:00:04Z","toolUseResult":{"success":true,"commandName":"Bash"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"` + strings.Repeat("y", 1000) + `"}]}}`,
 		"",
 	}, "\n")
@@ -493,12 +493,12 @@ func TestRunBenchmark_GivenFractionalK_ThenDerivesPromptFromFractionalCallsPerTu
 
 	transcript := strings.Join([]string{
 		`{"type":"user","timestamp":"2026-05-28T00:00:00Z","message":{"role":"user","content":"first prompt"}}`,
-		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":"first reply","usage":{"input_tokens":55000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1500}}}`,
-		`{"type":"assistant","timestamp":"2026-05-28T00:00:02Z","message":{"role":"assistant","content":"follow-up api call","usage":{"input_tokens":70000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1500}}}`,
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:01Z","message":{"role":"assistant","content":"first reply","usage":{"input_tokens":54000,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":1000,"ephemeral_1h_input_tokens":0},"cache_read_input_tokens":0,"output_tokens":1500}}}`,
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:02Z","message":{"role":"assistant","content":"follow-up api call","usage":{"input_tokens":69000,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":1000,"ephemeral_1h_input_tokens":0},"cache_read_input_tokens":0,"output_tokens":1500}}}`,
 		`{"type":"user","timestamp":"2026-05-28T00:00:03Z","message":{"role":"user","content":"second prompt"}}`,
-		`{"type":"assistant","timestamp":"2026-05-28T00:00:04Z","message":{"role":"assistant","content":"second reply","usage":{"input_tokens":85000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1500}}}`,
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:04Z","message":{"role":"assistant","content":"second reply","usage":{"input_tokens":84000,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":1000,"ephemeral_1h_input_tokens":0},"cache_read_input_tokens":0,"output_tokens":1500}}}`,
 		`{"type":"user","timestamp":"2026-05-28T00:00:05Z","message":{"role":"user","content":"third prompt"}}`,
-		`{"type":"assistant","timestamp":"2026-05-28T00:00:06Z","message":{"role":"assistant","content":"third reply","usage":{"input_tokens":100000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1500}}}`,
+		`{"type":"assistant","timestamp":"2026-05-28T00:00:06Z","message":{"role":"assistant","content":"third reply","usage":{"input_tokens":99000,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":1000,"ephemeral_1h_input_tokens":0},"cache_read_input_tokens":0,"output_tokens":1500}}}`,
 		"",
 	}, "\n")
 	transcriptPath := filepath.Join(projectDir, sid+".jsonl")

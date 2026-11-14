@@ -111,6 +111,13 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 			continue
 		}
 
+		oneHourWriteShare, hasTTLBreakdown := stats.OneHourCacheWriteShare()
+		if !hasTTLBreakdown {
+			fmt.Fprintf(out, "  skipping %s: no cache write TTL breakdown in usage\n",
+				session.ShortID(c.entry.SessionID, 8))
+			continue
+		}
+
 		var filteredToks int
 		if *isNoAPI {
 			filteredToks = stats.FilteredChars / bm.CharsPerToken
@@ -189,6 +196,8 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 			AvgResponse:      avgResp,
 			Prompt:           prompt,
 			InjectPages:      injectPages,
+
+			OneHourWriteShare: oneHourWriteShare,
 		}
 		bm.ComputeCostMetrics(&br, overheadToks, modelConfig)
 		results = append(results, br)

@@ -13,9 +13,17 @@ import (
 
 // Pricing holds per-million-token rates for a model tier.
 type Pricing struct {
-	CachedRead float64 // $/M tokens
-	CacheWrite float64 // $/M tokens
-	BaseInput  float64 // $/M tokens (uncached, after last breakpoint)
+	CachedRead   float64 // $/M tokens
+	CacheWrite5m float64 // $/M tokens, cache write with the 5-minute TTL
+	CacheWrite1h float64 // $/M tokens, cache write with the 1-hour TTL
+	BaseInput    float64 // $/M tokens (uncached, after last breakpoint)
+}
+
+// CacheWriteAt returns the $/M rate of a cache write when oneHourShare (0 to 1)
+// of the written tokens use the 1-hour TTL and the rest use the 5-minute TTL.
+// A share of 0 returns CacheWrite5m exactly.
+func (p Pricing) CacheWriteAt(oneHourShare float64) float64 {
+	return (1-oneHourShare)*p.CacheWrite5m + oneHourShare*p.CacheWrite1h
 }
 
 // LongPromptThreshold is the prompt size, in tokens, above which a request to a
@@ -57,35 +65,37 @@ func (m Model) Alias() string {
 // Opus 5.5 and Sonnet 5.5, and 0.1x for every other model, Haiku 5.5 included
 // at both of its price levels. Cost-savings numbers
 // are therefore only directly comparable between models in the same group.
+// Cache write is the same share of base input for every model: 1.25x with the
+// 5-minute TTL and 2x with the 1-hour TTL.
 
 // Opus 4.6, 4.7, 4.8 and Opus 5 share one price list.
-var pricingOpusStandard = Pricing{CachedRead: 0.50, CacheWrite: 6.25, BaseInput: 5.00}
+var pricingOpusStandard = Pricing{CachedRead: 0.50, CacheWrite5m: 6.25, CacheWrite1h: 10.00, BaseInput: 5.00}
 
 var (
 	Sonnet55 = Model{Name: "sonnet-5-5", Family: "sonnet", ID: "claude-sonnet-5-5",
-		Pricing: Pricing{CachedRead: 0.10, CacheWrite: 2.50, BaseInput: 2.00}}
+		Pricing: Pricing{CachedRead: 0.10, CacheWrite5m: 2.50, CacheWrite1h: 4.00, BaseInput: 2.00}}
 	Sonnet5 = Model{Name: "sonnet-5", ID: "claude-sonnet-5",
-		Pricing: Pricing{CachedRead: 0.20, CacheWrite: 2.50, BaseInput: 2.00}}
+		Pricing: Pricing{CachedRead: 0.20, CacheWrite5m: 2.50, CacheWrite1h: 4.00, BaseInput: 2.00}}
 	Sonnet46 = Model{Name: "sonnet-4-6", ID: "claude-sonnet-4-6",
-		Pricing: Pricing{CachedRead: 0.30, CacheWrite: 3.75, BaseInput: 3.00}}
+		Pricing: Pricing{CachedRead: 0.30, CacheWrite5m: 3.75, CacheWrite1h: 6.00, BaseInput: 3.00}}
 
 	Haiku55 = Model{Name: "haiku-5-5", Family: "haiku", ID: "claude-haiku-5-5",
-		Pricing:           Pricing{CachedRead: 0.01, CacheWrite: 0.125, BaseInput: 0.10},
-		LongPromptPricing: &Pricing{CachedRead: 0.05, CacheWrite: 0.625, BaseInput: 0.50}}
+		Pricing:           Pricing{CachedRead: 0.01, CacheWrite5m: 0.125, CacheWrite1h: 0.20, BaseInput: 0.10},
+		LongPromptPricing: &Pricing{CachedRead: 0.05, CacheWrite5m: 0.625, CacheWrite1h: 1.00, BaseInput: 0.50}}
 
 	Opus55 = Model{Name: "opus-5-5", Family: "opus", ID: "claude-opus-5-5",
-		Pricing: Pricing{CachedRead: 0.20, CacheWrite: 5.00, BaseInput: 4.00}}
+		Pricing: Pricing{CachedRead: 0.20, CacheWrite5m: 5.00, CacheWrite1h: 8.00, BaseInput: 4.00}}
 	Opus5  = Model{Name: "opus-5", ID: "claude-opus-5", Pricing: pricingOpusStandard}
 	Opus48 = Model{Name: "opus-4-8", ID: "claude-opus-4-8", Pricing: pricingOpusStandard}
 	Opus47 = Model{Name: "opus-4-7", ID: "claude-opus-4-7", Pricing: pricingOpusStandard}
 	Opus46 = Model{Name: "opus-4-6", ID: "claude-opus-4-6", Pricing: pricingOpusStandard}
 
 	Fable52 = Model{Name: "fable-5-2", Family: "fable", ID: "claude-fable-5-2",
-		Pricing: Pricing{CachedRead: 0.20, CacheWrite: 10.00, BaseInput: 8.00}}
+		Pricing: Pricing{CachedRead: 0.20, CacheWrite5m: 10.00, CacheWrite1h: 16.00, BaseInput: 8.00}}
 	Fable51 = Model{Name: "fable-5-1", ID: "claude-fable-5-1",
-		Pricing: Pricing{CachedRead: 0.25, CacheWrite: 12.50, BaseInput: 10.00}}
+		Pricing: Pricing{CachedRead: 0.25, CacheWrite5m: 12.50, CacheWrite1h: 20.00, BaseInput: 10.00}}
 	Fable5 = Model{Name: "fable-5", ID: "claude-fable-5",
-		Pricing: Pricing{CachedRead: 1.00, CacheWrite: 12.50, BaseInput: 10.00}}
+		Pricing: Pricing{CachedRead: 1.00, CacheWrite5m: 12.50, CacheWrite1h: 20.00, BaseInput: 10.00}}
 )
 
 // DefaultBenchmark is the model `cc-session benchmark` uses without --model.

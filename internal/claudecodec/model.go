@@ -63,6 +63,10 @@ type rawUsage struct {
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	OutputTokens             int `json:"output_tokens"`
+	CacheCreation            *struct {
+		Ephemeral5mInputTokens int `json:"ephemeral_5m_input_tokens"`
+		Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation"`
 }
 
 func (m *rawMessage) UnmarshalJSON(data []byte) error {
@@ -138,6 +142,10 @@ func (m rawMessage) Assistant() session.AssistantMessage {
 			CacheCreationInputTokens: m.Usage.CacheCreationInputTokens,
 			CacheReadInputTokens:     m.Usage.CacheReadInputTokens,
 			OutputTokens:             m.Usage.OutputTokens,
+		}
+		if cc := m.Usage.CacheCreation; cc != nil {
+			msg.Usage.CacheWrite5mTokens = cc.Ephemeral5mInputTokens
+			msg.Usage.CacheWrite1hTokens = cc.Ephemeral1hInputTokens
 		}
 	}
 	return msg

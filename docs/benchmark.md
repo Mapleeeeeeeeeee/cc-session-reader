@@ -1,6 +1,6 @@
 # Benchmark: cc-session Cost Savings
 
-Compares the input token cost of two scenarios after the Claude API prompt cache expires (5-minute TTL):
+Compares the input token cost of two scenarios after the Claude API prompt cache expires:
 
 - **Scenario A**: Stay in the original session. The entire context is re-cached on the first API call.
 - **Scenario B**: Open a new session, inject compressed history via cc-session, then continue working.
@@ -49,9 +49,9 @@ e61060b1       403,129     125,089  69.0%
 Median: 74.4%   Mean: 74.4%   Range: 69.0% — 79.8%
 
 === Cost Savings Per Session (opus) ===
-Session        Context      NewCtx      K  Break-even   10-turn   100-turn
-e61060b1       403,129     125,089    4.5      turn 1       66%        52%
-977b7360       381,032      76,808    5.5      turn 1       73%        45%
+Session        Context      NewCtx      K  1h-write  Break-even   10-turn   100-turn
+e61060b1       403,129     125,089    4.5      100%      turn 1       66%        52%
+977b7360       381,032      76,808    5.5      100%      turn 1       73%        45%
 
 Median break-even: turn 1 | 10-turn saving: 69% | 100-turn saving: 48%
 ```
@@ -65,9 +65,45 @@ From [Anthropic prompt caching docs](https://platform.claude.com/docs/en/build-w
 | Bucket | API field | Rate (Opus 4.x) | Rate (Opus 5.5) |
 |--------|-----------|:-----------:|:-----------:|
 | Cache read | `cache_read_input_tokens` | $0.50/M (0.1× base) | $0.20/M (0.05× base) |
-| Cache write | `cache_creation_input_tokens` | $6.25/M (1.25× base) | $5.00/M (1.25× base) |
+| Cache write, 5-minute TTL | `cache_creation.ephemeral_5m_input_tokens` | $6.25/M (1.25× base) | $5.00/M (1.25× base) |
+| Cache write, 1-hour TTL | `cache_creation.ephemeral_1h_input_tokens` | $10.00/M (2× base) | $8.00/M (2× base) |
 | Uncached input | `input_tokens` | $5.00/M (1× base) | $4.00/M (1× base) |
 | Output | `output_tokens` | $25/M (excluded — same for both scenarios) | $20/M (excluded) |
+
+### Cache write TTL
+
+A cache write is billed at 1.25× base input with the 5-minute TTL and at 2× base
+input with the 1-hour TTL, for every model. Claude Code writes the main
+conversation's cache with the 1-hour TTL, and subagents and sessions started
+through the SDK with the 5-minute TTL, so the benchmark measures each session
+instead of assuming one rate.
+
+For each session, the **1h-write** column is the share of its cache write tokens
+that used the 1-hour TTL: `ephemeral_1h_input_tokens` divided by all
+`cache_creation_input_tokens`, summed over the session's API calls (a response
+logged on several consecutive lines counts once, the same way `stats` counts API
+calls). Tokens that `cache_creation_input_tokens` includes but the two TTL
+fields do not account for are counted as 5-minute writes, which is how Claude
+Code prices them.
+
+Every cache write in both scenarios (growth, tool I/O, new-session setup and
+inject pages) is billed at the blend
+
+```
+writeRate = (1 - share) × write5m + share × write1h
+```
+
+Both scenarios use the same share, because a new session is started by the same
+kind of caller as the original. A session whose usage has no TTL breakdown
+(an older transcript format, or no cache write at all) is skipped with the
+reason `no cache write TTL breakdown in usage`, because its share is unknown
+and treating it as either TTL would be a guess. A share of 0 reproduces the
+5-minute-only results exactly.
+
+The 1-hour rate makes the new session's one-off setup write dearer, so the
+warm-cache break-even comes later and the warm-cache saving is smaller than with
+the 5-minute rate. The cold-cache results barely move, because both scenarios
+write a similar amount.
 
 ### Per-API-call billing
 
@@ -115,6 +151,9 @@ Turn N (N≥2):
   Calls 2..K: (prefixFromPrev + growth + s×(c-2)) × CachedRead + s × CacheWrite
 ```
 
+In every formula below, `CacheWrite` is the session's blended write rate from
+[Cache write TTL](#cache-write-ttl).
+
 **Scenario B** (new session + cc-session):
 
 ```
@@ -151,6 +190,7 @@ Turn N (N≥2): same as A but with smaller base
 | avgResponse | `TotalOutputTokens / APICallCount` | Avg output tokens per API call |
 | prompt (P) | `(LastContext - overhead) / turns - avgResp - toolIO×(K-1)` | Avg user prompt per turn |
 | growth | `avgResponse + prompt` | Cross-turn cache write (R + P) |
+| share | `ephemeral_1h_input_tokens / cache_creation_input_tokens` over the session's API calls | Share of cache writes billed at the 1-hour rate (`1h-write` column) |
 
 The compression table compares total context to total context: `X` vs `NewCtx`.
 Cost simulation still keeps `C`, `overhead`, and `injectPages` separate because
@@ -170,7 +210,7 @@ other alias is `claude-` followed by the alias (for example `opus-4-8` maps to
 `claude-opus-4-8`).
 Opus 5 and Opus 4.6, 4.7, and 4.8 use the same Opus pricing rates; Opus 5.5 has
 its own, lower rates (see the pricing table above).
-Sonnet 5.5 costs $2.00/M input, $0.10/M cache read, $2.50/M cache write, $10/M output.
+Sonnet 5.5 costs $2.00/M input, $0.10/M cache read, $2.50/M 5-minute cache write, $4.00/M 1-hour cache write, $10/M output.
 
 Fallback constants are used only for behavior that cannot be read directly from
 transcript usage, such as sparse tool I/O data.
@@ -184,10 +224,10 @@ rates after a later one crosses the threshold. The cost simulation applies this
 to every modeled request: each call of a turn, and each setup request of
 `cc-session inject` pagination.
 
-| Prompt size | Uncached input | Cache read | Cache write |
-|-------------|:--------------:|:----------:|:-----------:|
-| up to 100,000 tokens | $0.10/M | $0.01/M | $0.125/M |
-| over 100,000 tokens | $0.50/M | $0.05/M | $0.625/M |
+| Prompt size | Uncached input | Cache read | 5-minute cache write | 1-hour cache write |
+|-------------|:--------------:|:----------:|:--------------------:|:------------------:|
+| up to 100,000 tokens | $0.10/M | $0.01/M | $0.125/M | $0.20/M |
+| over 100,000 tokens | $0.50/M | $0.05/M | $0.625/M | $1.00/M |
 
 Source: [Anthropic pricing, long context pricing](https://platform.claude.com/docs/en/about-claude/pricing#long-context-pricing).
 
@@ -201,6 +241,7 @@ numbers are only directly comparable across rows using the same ratio.
 - **Uncached input (`input_tokens`) omitted**: with auto-caching the breakpoint sits on the last cacheable block, making the uncached tail near zero. This is an inference from the docs (not an explicit statement). Impact on results: < 2% based on sensitivity analysis.
 - **Output tokens excluded**: identical in both scenarios.
 - **Compacted sessions skipped**: sessions with `compact_boundary` events are excluded because the comparison is invalid when the original context was already summarized.
+- **One write rate per session**: the measured share is applied to every write, including the new session's setup, although the real mix of a future session may differ.
 
 ## How It Works Internally
 
@@ -266,4 +307,4 @@ numbers are only directly comparable across rows using the same ratio.
 
 - **Session JSONL** (`~/.claude/projects/<project>/<session-id>.jsonl`): raw transcript of all events (user messages, assistant responses, tool calls, tool results, API usage)
 - **Session metadata** (`~/.claude/usage-data/session-meta/<session-id>.json`): lightweight index with project path, timestamps, message counts
-- **API usage fields** (embedded in assistant message events in the JSONL): `input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `output_tokens` — these give us the real `LastContextTokens` and `TotalOutputTokens`
+- **API usage fields** (embedded in assistant message events in the JSONL): `input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `output_tokens` — these give us the real `LastContextTokens` and `TotalOutputTokens`. `cache_creation.ephemeral_5m_input_tokens` and `cache_creation.ephemeral_1h_input_tokens` split the cache writes by TTL and give the `1h-write` share

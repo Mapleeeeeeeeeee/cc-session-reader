@@ -20,10 +20,14 @@ type Result struct {
 	AvgResponse      int // derived from TotalOutputTokens / APICallCount
 	Prompt           int // derived from context growth, or fallback perTurnPrompt
 	InjectPages      int // pages needed by cc-session inject; <=1 keeps one-shot setup
-	BreakEven        int
-	Saving10Pct      float64
-	Saving100Pct     float64
-	WarmBreakEven    int
-	WarmSaving10Pct  float64
-	WarmSaving100Pct float64
+	// OneHourWriteShare is the session's measured share of cache write tokens on
+	// the 1-hour TTL; both scenarios use it because a new session is started by
+	// the same kind of caller as the original.
+	OneHourWriteShare float64
+	BreakEven         int
+	Saving10Pct       float64
+	Saving100Pct      float64
+	WarmBreakEven     int
+	WarmSaving10Pct   float64
+	WarmSaving100Pct  float64
 }

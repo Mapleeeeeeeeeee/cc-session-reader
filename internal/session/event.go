@@ -335,6 +335,13 @@ type Usage struct {
 	CacheCreationInputTokens int
 	CacheReadInputTokens     int
 	OutputTokens             int
+
+	// CacheWrite5mTokens and CacheWrite1hTokens split CacheCreationInputTokens
+	// by cache TTL. Both are 0 when the transcript has no TTL breakdown, and
+	// their sum can fall short of CacheCreationInputTokens when part of the
+	// write is unclassified.
+	CacheWrite5mTokens int
+	CacheWrite1hTokens int
 }
 
 // ContextTokens returns the total context window size for this API call:
@@ -350,7 +357,9 @@ func (u *Usage) Equal(other *Usage) bool {
 	return u.InputTokens == other.InputTokens &&
 		u.CacheCreationInputTokens == other.CacheCreationInputTokens &&
 		u.CacheReadInputTokens == other.CacheReadInputTokens &&
-		u.OutputTokens == other.OutputTokens
+		u.OutputTokens == other.OutputTokens &&
+		u.CacheWrite5mTokens == other.CacheWrite5mTokens &&
+		u.CacheWrite1hTokens == other.CacheWrite1hTokens
 }
 
 type AssistantMessage struct {
