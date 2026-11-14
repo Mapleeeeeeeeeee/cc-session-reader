@@ -34,30 +34,35 @@ func (m Model) Alias() string {
 	return m.Name
 }
 
-// Opus 4.x share one price list (4.6, 4.7, 4.8).
-var pricingOpus4x = Pricing{CachedRead: 0.50, CacheWrite: 6.25, BaseInput: 5.00}
+// Cache read is billed at a different share of base input depending on the
+// model (Anthropic pricing docs): 0.025x for Fable 5.2 and 5.1, 0.05x for
+// Opus 5.5 and Sonnet 5.5, and 0.1x for every other model. Cost-savings numbers
+// are therefore only directly comparable between models in the same group.
+
+// Opus 4.6, 4.7, 4.8 and Opus 5 share one price list.
+var pricingOpusStandard = Pricing{CachedRead: 0.50, CacheWrite: 6.25, BaseInput: 5.00}
 
 var (
 	Sonnet55 = Model{Name: "sonnet-5-5", Family: "sonnet", ID: "claude-sonnet-5-5",
+		Pricing: Pricing{CachedRead: 0.10, CacheWrite: 2.50, BaseInput: 2.00}}
+	Sonnet5 = Model{Name: "sonnet-5", ID: "claude-sonnet-5",
 		Pricing: Pricing{CachedRead: 0.20, CacheWrite: 2.50, BaseInput: 2.00}}
 	Sonnet46 = Model{Name: "sonnet-4-6", ID: "claude-sonnet-4-6",
 		Pricing: Pricing{CachedRead: 0.30, CacheWrite: 3.75, BaseInput: 3.00}}
 
-	// Opus 5.5's cache read is 5% of base input rather than the 10% Opus 4.x and
-	// Sonnet use (Anthropic pricing docs: "a cache hit costs 5% of the standard
-	// input price"), so its cost-savings numbers are not directly comparable to
-	// those rows.
 	Opus55 = Model{Name: "opus-5-5", Family: "opus", ID: "claude-opus-5-5",
 		Pricing: Pricing{CachedRead: 0.20, CacheWrite: 5.00, BaseInput: 4.00}}
-	Opus48 = Model{Name: "opus-4-8", ID: "claude-opus-4-8", Pricing: pricingOpus4x}
-	Opus47 = Model{Name: "opus-4-7", ID: "claude-opus-4-7", Pricing: pricingOpus4x}
-	Opus46 = Model{Name: "opus-4-6", ID: "claude-opus-4-6", Pricing: pricingOpus4x}
+	Opus5  = Model{Name: "opus-5", ID: "claude-opus-5", Pricing: pricingOpusStandard}
+	Opus48 = Model{Name: "opus-4-8", ID: "claude-opus-4-8", Pricing: pricingOpusStandard}
+	Opus47 = Model{Name: "opus-4-7", ID: "claude-opus-4-7", Pricing: pricingOpusStandard}
+	Opus46 = Model{Name: "opus-4-6", ID: "claude-opus-4-6", Pricing: pricingOpusStandard}
 
-	// Fable 5.1's cache read is 2.5% of base input (Anthropic pricing docs: "a
-	// cache hit costs 2.5% of the standard input price"), lower than the ratios
-	// above, so its cost-savings numbers are not directly comparable either.
-	Fable51 = Model{Name: "fable-5-1", Family: "fable", ID: "claude-fable-5-1",
+	Fable52 = Model{Name: "fable-5-2", Family: "fable", ID: "claude-fable-5-2",
+		Pricing: Pricing{CachedRead: 0.20, CacheWrite: 10.00, BaseInput: 8.00}}
+	Fable51 = Model{Name: "fable-5-1", ID: "claude-fable-5-1",
 		Pricing: Pricing{CachedRead: 0.25, CacheWrite: 12.50, BaseInput: 10.00}}
+	Fable5 = Model{Name: "fable-5", ID: "claude-fable-5",
+		Pricing: Pricing{CachedRead: 1.00, CacheWrite: 12.50, BaseInput: 10.00}}
 )
 
 // DefaultBenchmark is the model `cc-session benchmark` uses without --model.
@@ -67,7 +72,11 @@ var DefaultBenchmark = Opus55
 var DefaultCountTokens = Sonnet55
 
 // registry lists every known model, in the order aliases are shown to users.
-var registry = []Model{Opus55, Opus48, Opus47, Opus46, Sonnet55, Sonnet46, Fable51}
+var registry = []Model{
+	Opus55, Opus5, Opus48, Opus47, Opus46,
+	Sonnet55, Sonnet5, Sonnet46,
+	Fable52, Fable51, Fable5,
+}
 
 // Aliases returns every accepted alias: each family alias followed by its
 // canonical name, in registry order.

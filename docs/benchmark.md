@@ -36,7 +36,7 @@ All other parameters are derived automatically from your real session data.
 | `--days` | 30 | How far back to scan for sessions |
 | `--min-kb` | 100 | Minimum JSONL file size in KB |
 | `--n` | 10 | Max successful session results to report |
-| `--model` | opus | Pricing and token-counting model: `opus` (`opus-5-5`), `opus-4-6`, `opus-4-7`, `opus-4-8`, `sonnet` (`sonnet-5-5`), `sonnet-4-6`, or `fable` (`fable-5-1`) |
+| `--model` | opus | Pricing and token-counting model: `opus` (`opus-5-5`), `opus-5`, `opus-4-8`, `opus-4-7`, `opus-4-6`, `sonnet` (`sonnet-5-5`), `sonnet-5`, `sonnet-4-6`, `fable` (`fable-5-2`), `fable-5-1`, or `fable-5` |
 
 ### Example output
 
@@ -162,20 +162,20 @@ the historical one-shot `NewCtx × CacheWrite` behavior.
 
 `X` comes from transcript API usage and `C` comes from the Anthropic token
 counting API. The `--model` flag controls both pricing and the tokenizer used by
-the token counting API. `opus` and `opus-5-5` both map to `claude-opus-5-5`;
-explicit Opus 4.x versions map to `claude-opus-4-6`, `claude-opus-4-7`, or
-`claude-opus-4-8`. `sonnet` and `sonnet-5-5` both map to `claude-sonnet-5-5`
-($2.00/M input, $0.20/M cache read, $2.50/M cache write, $10/M output);
-`sonnet-4-6` maps to `claude-sonnet-4-6`.
-`fable` and `fable-5-1` both map to `claude-fable-5-1`.
-Opus 4.6, 4.7, and 4.8 use the same Opus pricing rates; Opus 5.5 has its own,
-lower rates (see the pricing table above).
+the token counting API. Each alias maps to the model ID of the same version:
+`opus` is `opus-5-5` (`claude-opus-5-5`), `sonnet` is `sonnet-5-5`
+(`claude-sonnet-5-5`), and `fable` is `fable-5-2` (`claude-fable-5-2`); every
+other alias is `claude-` followed by the alias (for example `opus-4-8` maps to
+`claude-opus-4-8`).
+Opus 5 and Opus 4.6, 4.7, and 4.8 use the same Opus pricing rates; Opus 5.5 has
+its own, lower rates (see the pricing table above).
+Sonnet 5.5 costs $2.00/M input, $0.10/M cache read, $2.50/M cache write, $10/M output.
 Fallback constants are used only for behavior that cannot be read directly from
 transcript usage, such as sparse tool I/O data.
 
-Cache read as a percentage of base input differs by model: Opus 4.x and Sonnet
-(4.6 and 5.5) use 10%, Opus 5.5 uses 5%, and Claude Fable 5.1 uses 2.5%. Cost-savings numbers
-are only directly comparable across rows using the same ratio.
+Cache read as a percentage of base input differs by model: Fable 5.2 and 5.1 use
+2.5%, Opus 5.5 and Sonnet 5.5 use 5%, and every other model uses 10%. Cost-savings
+numbers are only directly comparable across rows using the same ratio.
 
 ### Simplifications
 

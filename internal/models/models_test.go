@@ -13,14 +13,18 @@ func Test_Resolve_GivenKnownAlias_ThenReturnsExpectedModel(t *testing.T) {
 	}{
 		{"opus", Opus55},
 		{"opus-5-5", Opus55},
+		{"opus-5", Opus5},
 		{"opus-4-8", Opus48},
 		{"opus-4-7", Opus47},
 		{"opus-4-6", Opus46},
 		{"sonnet", Sonnet55},
 		{"sonnet-5-5", Sonnet55},
+		{"sonnet-5", Sonnet5},
 		{"sonnet-4-6", Sonnet46},
-		{"fable", Fable51},
+		{"fable", Fable52},
+		{"fable-5-2", Fable52},
 		{"fable-5-1", Fable51},
+		{"fable-5", Fable5},
 	}
 	for _, tt := range tests {
 		t.Run(tt.alias, func(t *testing.T) {
@@ -80,8 +84,9 @@ func Test_Pricing_ThenCacheReadRatiosMatchPricingDocs(t *testing.T) {
 		m     Model
 		ratio float64
 	}{
-		{Sonnet55, 0.10}, {Sonnet46, 0.10}, {Opus48, 0.10},
-		{Opus55, 0.05}, {Fable51, 0.025},
+		{Sonnet5, 0.10}, {Sonnet46, 0.10}, {Opus5, 0.10}, {Opus48, 0.10}, {Fable5, 0.10},
+		{Sonnet55, 0.05}, {Opus55, 0.05},
+		{Fable52, 0.025}, {Fable51, 0.025},
 	}
 	for _, tt := range tests {
 		if want := tt.m.Pricing.BaseInput * tt.ratio; math.Abs(tt.m.Pricing.CachedRead-want) > 1e-9 {
