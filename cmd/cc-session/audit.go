@@ -15,6 +15,17 @@ func cmdAudit(args []string, reader session.TranscriptReader) {
 	exitOnError(runAudit(args, os.Stdout, os.Stderr, parser.DefaultStore(), reader))
 }
 
+func discardedTypeNote(stats analyzer.DiscardedTypeStats) string {
+	switch {
+	case stats.NeedsAttention():
+		return "ATTENTION: unknown type with message.role, may be a new conversation type"
+	case stats.IsKnown:
+		return "known request copy or metadata"
+	default:
+		return "unknown type, no message.role"
+	}
+}
+
 func runAudit(args []string, out io.Writer, errOut io.Writer, store parser.Store, reader session.TranscriptReader) error {
 	fs := flag.NewFlagSet("audit", flag.ContinueOnError)
 	fs.SetOutput(errOut)
@@ -57,6 +68,16 @@ func runAudit(args []string, out io.Writer, errOut io.Writer, store parser.Store
 		fmt.Fprintf(out, "  count: %s   median: %s   p90: %s   max: %s\n",
 			analyzer.FormatNumber(f.Count), analyzer.FormatNumber(f.Median),
 			analyzer.FormatNumber(f.P90), analyzer.FormatNumber(f.Max))
+	}
+
+	fmt.Fprintln(out, "\n=== Dropped record types (not user/assistant, not noise) ===")
+	if len(result.DiscardedTypes) == 0 {
+		fmt.Fprintln(out, "  no dropped record types in this session")
+	}
+	for _, stats := range result.DiscardedTypes {
+		fmt.Fprintf(out, "  %-24s %8s records  %12s chars  %8s with message.role  %s\n",
+			stats.Type, analyzer.FormatNumber(stats.Records), analyzer.FormatNumber(stats.Chars),
+			analyzer.FormatNumber(stats.RecordsWithRole), discardedTypeNote(stats))
 	}
 
 	fmt.Fprintln(out, "\n=== Samples ===")

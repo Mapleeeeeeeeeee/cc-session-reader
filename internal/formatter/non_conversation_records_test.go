@@ -27,8 +27,13 @@ const apiRequestBlobTranscript = `{"type":"user","timestamp":"2026-10-16T01:00:0
 
 func readBlobTranscript(t *testing.T) []session.Event {
 	t.Helper()
+	return readTranscript(t, apiRequestBlobTranscript)
+}
+
+func readTranscript(t *testing.T, transcript string) []session.Event {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "session.jsonl")
-	if err := os.WriteFile(path, []byte(apiRequestBlobTranscript), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(transcript), 0o600); err != nil {
 		t.Fatalf("write transcript: %v", err)
 	}
 	events, err := claudecodec.Codec{}.ReadAll(path)
@@ -71,5 +76,27 @@ func TestIntegration_Stats_GivenApiRequestBlobCopies_WhenComputed_ThenToolCallsA
 	bash := stats.PerTool["Bash"]
 	if bash == nil || bash.CallCount != 1 {
 		t.Errorf("Bash tool calls = %+v, want CallCount 1", bash)
+	}
+}
+
+// Dropped records are reported by audit only; the raw side of stats, and with
+// it the savings ratio, must be what the transcript gives without them.
+func TestIntegration_Stats_GivenDroppedRecordTypes_WhenComputed_ThenRawAndFilteredMatchTranscriptWithoutThem(t *testing.T) {
+	var conversationOnly []string
+	for _, line := range strings.Split(apiRequestBlobTranscript, "\n") {
+		if !strings.Contains(line, `"type":"api-request-blob"`) {
+			conversationOnly = append(conversationOnly, line)
+		}
+	}
+	withDropped := apiRequestBlobTranscript +
+		`{"type":"brand-new-conversation","message":{"role":"assistant","content":"unlisted"}}` + "\n" +
+		`{"type":"brand-new-metadata","payload":{"value":1}}` + "\n"
+
+	got := analyzer.ComputeStats(readTranscript(t, withDropped))
+	want := analyzer.ComputeStats(readTranscript(t, strings.Join(conversationOnly, "\n")))
+
+	if got.RawText != want.RawText || got.FilteredText != want.FilteredText {
+		t.Errorf("stats changed by dropped records: raw %d vs %d chars, filtered %d vs %d chars",
+			got.RawChars, want.RawChars, got.FilteredChars, want.FilteredChars)
 	}
 }
