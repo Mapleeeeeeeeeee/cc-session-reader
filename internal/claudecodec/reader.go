@@ -245,6 +245,12 @@ func parseLineWithToolCalls(line []byte, toolCalls map[string]toolCallInfo) (ses
 		}
 		return event, true, nil
 	case "assistant":
+		if block, ok := raw.Message.advisorToolResultBlock(); ok {
+			toolResult := block.toAdvisorToolResult()
+			event.Kind = session.EventToolResult
+			event.Tool = &toolResult
+			return event, true, nil
+		}
 		assistant := raw.Message.Assistant()
 		if strings.TrimSpace(assistant.Text) == "" && len(assistant.ToolUses) == 0 && len(assistant.Thinking) == 0 {
 			return session.Event{}, false, nil
