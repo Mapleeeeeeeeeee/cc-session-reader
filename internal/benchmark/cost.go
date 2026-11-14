@@ -47,9 +47,9 @@ import "github.com/Mapleeeeeeeeeee/cc-session-reader/internal/models"
 // Per-session derived values (from real session data):
 //
 //	K (callsPerTurn):  APICallCount / UserTurnCount
-//	toolIOPerCall:     Σ(PerTool.InputChars + ResultChars) / Σ(CallCount) / 2 chars-per-token
-//	                   (empirically ~1.86 chars/token weighted average; only char counts
-//	                   available — raw tool text not stored — so API call not applicable here)
+//	toolIOPerCall:     estimated tokens of Σ(PerTool.InputChars + ResultChars) / Σ(CallCount)
+//	                   (only char counts are available — raw tool text not stored — so the
+//	                   count is estimated with tokens.EstimateFromRuneCounts, not the API)
 //	avgResponse:       TotalOutputTokens / APICallCount (includes thinking tokens)
 //
 // Assumptions (not derivable from session data):
@@ -63,14 +63,12 @@ const (
 	PerTurnPrompt   = 10000 // assumption: same for A and B, cancels in comparison
 	PerTurnResponse = 2000  // fallback when TotalOutputTokens unavailable
 	PerCallToolIO   = 3000  // fallback when PerTool data unavailable
-	// empirically measured ~1.86 chars/token weighted avg across 16 content types
-	CharsPerToken = 2
 )
 
 // CostParams bundles per-session derived values for cost functions.
 type CostParams struct {
 	K             float64 // API calls per user turn (derived: APICallCount / UserTurnCount)
-	ToolIOPerCall int     // tokens per intra-turn API call (derived: PerTool chars / calls / 2)
+	ToolIOPerCall int     // tokens per intra-turn API call (derived: estimated PerTool tokens / calls)
 	AvgResponse   int     // avg output tokens per API call (derived: TotalOutputTokens / APICallCount)
 	Prompt        int     // avg user prompt tokens per turn (derived from context growth)
 	Growth        int     // cross-turn cache write = avgResponse + prompt
