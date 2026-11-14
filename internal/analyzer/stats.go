@@ -7,6 +7,7 @@ import (
 
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/formatter"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/tokens"
 )
 
 // ToolStats tracks per-tool usage metrics accumulated during ComputeStats.
@@ -14,6 +15,9 @@ type ToolStats struct {
 	CallCount   int
 	InputChars  int
 	ResultChars int
+	// CJKChars is how many of InputChars + ResultChars are CJK runes, which
+	// cost more tokens per character than the rest.
+	CJKChars int
 }
 
 type StatsResult struct {
@@ -177,6 +181,7 @@ func ComputeStats(events []session.Event) StatsResult {
 				}
 				ts.CallCount++
 				ts.InputChars += utf8.RuneCountInString(rawJSON)
+				ts.CJKChars += tokens.CountCJKRunes(rawJSON)
 			}
 
 		case session.EventToolResult:
@@ -206,6 +211,7 @@ func ComputeStats(events []session.Event) StatsResult {
 				perTool[toolName] = ts
 			}
 			ts.ResultChars += utf8.RuneCountInString(event.Tool.Text)
+			ts.CJKChars += tokens.CountCJKRunes(event.Tool.Text)
 		}
 	}
 

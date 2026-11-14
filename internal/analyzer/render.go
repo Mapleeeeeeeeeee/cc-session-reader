@@ -18,10 +18,15 @@ type RenderOptions struct {
 	TranscriptKB   float64
 	SessionID      string
 	FilteredTokens int
-	RawTokens      int
-	TokenErr       error
-	HasAPIData     bool // true when the caller had context token data from the API
-	SkipTokens     bool // true when -no-tokens was requested
+	// OverheadTokens and NewContextTokens describe the new session that the
+	// filtered history is injected into; they are only read when HasAPIData is
+	// true, and NewContextTokens is the overhead plus FilteredTokens.
+	OverheadTokens   int
+	NewContextTokens int
+	RawTokens        int
+	TokenErr         error
+	HasAPIData       bool // true when the caller had context token data from the API
+	SkipTokens       bool // true when -no-tokens was requested
 }
 
 // RenderStats writes the formatted stats report to out.
@@ -102,10 +107,12 @@ func RenderStats(out io.Writer, errOut io.Writer, result StatsResult, opts Rende
 	fmt.Fprintln(out)
 	if opts.HasAPIData {
 		if opts.TokenErr == nil {
-			saved := result.LastContextTokens - opts.FilteredTokens
+			saved := result.LastContextTokens - opts.NewContextTokens
 			fmt.Fprintln(out, "=== Token Savings ===")
 			fmt.Fprintf(out, "  Original context: %10s\n", FormatNumber(result.LastContextTokens))
 			fmt.Fprintf(out, "  CLI filtered:     %10s\n", FormatNumber(opts.FilteredTokens))
+			fmt.Fprintf(out, "  Overhead:         %10s\n", FormatNumber(opts.OverheadTokens))
+			fmt.Fprintf(out, "  New context:      %10s\n", FormatNumber(opts.NewContextTokens))
 			if result.LastContextTokens > 0 {
 				pct := float64(saved) * 100.0 / float64(result.LastContextTokens)
 				fmt.Fprintf(out, "  Saved:            %10s (%.1f%%)\n", FormatNumber(saved), pct)

@@ -15,6 +15,7 @@ import (
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/models"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/parser"
 	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/session"
+	"github.com/Mapleeeeeeeeeee/cc-session-reader/internal/tokens"
 )
 
 func cmdBenchmark(args []string, reader session.TranscriptReader) {
@@ -32,8 +33,8 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 	minKB := fs.Int("min-kb", 100, "minimum JSONL file size in KB")
 	maxN := fs.Int("n", 10, "max sessions to include")
 	model := fs.String("model", models.DefaultBenchmark.Alias(), "model: "+models.Usage())
-	overhead := fs.Int("overhead", 0, "session overhead tokens (system+tools+CLAUDE.md); measure with a 1-turn session")
-	isNoAPI := fs.Bool("no-api", false, "skip API calls; estimate filtered-text tokens with chars/2 (offline fallback)")
+	overhead := fs.Int("overhead", 0, bm.OverheadFlagUsage)
+	isNoAPI := fs.Bool("no-api", false, "skip API calls; estimate tokens from character counts (offline fallback)")
 	if err := fs.Parse(reorderArgs(args)); err != nil {
 		return err
 	}
@@ -43,10 +44,7 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 
 	logUsageAsync("benchmark", "")
 
-	overheadToks := *overhead
-	if overheadToks <= 0 {
-		overheadToks = bm.DefaultOverhead
-	}
+	overheadToks := bm.ResolveOverhead(*overhead)
 
 	modelConfig, err := models.Resolve(*model)
 	if err != nil {
@@ -120,7 +118,7 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 
 		var filteredToks int
 		if *isNoAPI {
-			filteredToks = stats.FilteredChars / bm.CharsPerToken
+			filteredToks = tokens.Estimate(stats.FilteredText)
 		} else {
 			if tokenCounter == nil {
 				tokenCounter, err = newCountTokensFn(tokenCountModel)
@@ -133,7 +131,7 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 				return fmt.Errorf("count filtered tokens for %s: %w", session.ShortID(c.entry.SessionID, 8), err)
 			}
 		}
-		newContextToks := overheadToks + filteredToks
+		newContextToks := bm.NewContextTokens(overheadToks, filteredToks)
 		fullText, err := inject.RenderFullOutput(c.path, reader)
 		if err != nil {
 			return fmt.Errorf("render inject output for %s: %w", session.ShortID(c.entry.SessionID, 8), err)
@@ -147,19 +145,19 @@ func runBenchmark(args []string, out io.Writer, errOut io.Writer, store parser.S
 			cpt = float64(stats.APICallCount) / float64(stats.UserTurnCount)
 		}
 
-		// Derive perCallToolIO from actual PerTool data (chars → tokens).
-		// PerTool.InputChars = tool_use JSON, PerTool.ResultChars = tool_result text.
-		// Empirically measured weighted average: ~1.86 chars/token; chars/2 is the best
-		// estimate without sending raw tool text to the API.
+		// Derive perCallToolIO from actual PerTool data. The raw tool text is not
+		// kept, so its tokens are estimated from character counts, never sent to the API.
 		toolIO := bm.PerCallToolIO // fallback to constant
 		totalToolChars := 0
+		totalToolCJKChars := 0
 		totalToolCalls := 0
 		for _, ts := range stats.PerTool {
 			totalToolChars += ts.InputChars + ts.ResultChars
+			totalToolCJKChars += ts.CJKChars
 			totalToolCalls += ts.CallCount
 		}
 		if totalToolCalls > 0 {
-			toolIO = totalToolChars / totalToolCalls / bm.CharsPerToken
+			toolIO = tokens.EstimateFromRuneCounts(totalToolCJKChars, totalToolChars-totalToolCJKChars) / totalToolCalls
 			if toolIO < 500 {
 				toolIO = 500
 			}

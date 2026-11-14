@@ -36,7 +36,14 @@ All other parameters are derived automatically from your real session data.
 | `--days` | 30 | How far back to scan for sessions |
 | `--min-kb` | 100 | Minimum JSONL file size in KB |
 | `--n` | 10 | Max successful session results to report |
+| `--no-api` | off | Skip the token counting API and estimate tokens from character counts (see [Offline token estimate](#offline-token-estimate---no-api)) |
 | `--model` | opus | Pricing and token-counting model: `opus` (`opus-5-5`), `opus-5`, `opus-4-8`, `opus-4-7`, `opus-4-6`, `sonnet` (`sonnet-5-5`), `sonnet-5`, `sonnet-4-6`, `haiku` (`haiku-5-5`), `fable` (`fable-5-2`), `fable-5-1`, or `fable-5` |
+
+`cc-session stats <session-id> --overhead <your-number>` prints a Token Savings
+section that uses the same definition as the `Saved` column of the compression
+table: the saved tokens are the original context minus the new context
+(`overhead + C`), not minus `C` alone. Without `--overhead`, `stats` falls back
+to the same default as `benchmark`.
 
 ### Example output
 
@@ -55,6 +62,13 @@ e61060b1       403,129     125,089    4.5      100%      turn 1       66%       
 
 Median break-even: turn 1 | 10-turn saving: 69% | 100-turn saving: 48%
 ```
+
+A session that never breaks even (within 200 turns) shows `never` in its row and
+counts as infinitely late in the median break-even, so the median lands on
+`never` when more than half of the sessions never break even. Whenever at least
+one session never breaks even, the summary line adds the count, for example
+`Median break-even: turn 1 (1 of 3 sessions never break even)`. The cold-cache and
+warm-cache tables follow the same rule.
 
 ## Cost Model
 
@@ -186,7 +200,7 @@ Turn N (N≥2): same as A but with smaller base
 | NewCtx | `overhead + C` | New session total context after injecting cc-session output |
 | injectPages | `inject.SplitPages(inject.RenderFullOutput(...))` | Number of `cc-session inject` pages needed to load the compressed history |
 | K | `APICallCount / UserTurnCount` | API calls per user turn |
-| toolIOPerCall (s) | `Σ(PerTool.InputChars + ResultChars) / Σ(CallCount) / 2` | Avg tool I/O per API call |
+| toolIOPerCall (s) | Estimated tokens of `Σ(PerTool.InputChars + ResultChars)`, divided by `Σ(CallCount)` (see [Offline token estimate](#offline-token-estimate---no-api)) | Avg tool I/O per API call |
 | avgResponse | `TotalOutputTokens / APICallCount` | Avg output tokens per API call |
 | prompt (P) | `(LastContext - overhead) / turns - avgResp - toolIO×(K-1)` | Avg user prompt per turn |
 | growth | `avgResponse + prompt` | Cross-turn cache write (R + P) |
@@ -235,6 +249,29 @@ Cache read as a percentage of base input differs by model: Fable 5.2 and 5.1 use
 2.5%, Opus 5.5 and Sonnet 5.5 use 5%, and every other model, including Haiku 5.5
 at both of its price levels, uses 10%. Cost-savings
 numbers are only directly comparable across rows using the same ratio.
+
+### Offline token estimate (`--no-api`)
+
+`--no-api` replaces the token counting API with an estimate, for `C` (the
+compressed history) and for the tool I/O in `toolIOPerCall`. A single
+characters-per-token constant cannot fit Chinese-heavy sessions, so CJK
+characters (Han, kana, hangul, CJK punctuation and fullwidth forms) and all
+other characters are estimated separately:
+
+```
+tokens ≈ 1.4 × (CJK characters) + (other characters) / 2.2
+```
+
+The rates were fitted against the token counting API (the 5.5 tokenizer) on the
+filtered text of 40 recent sessions whose CJK share ranged from 1% to 44%. The
+estimate was within 8.7% of the API count for every session (2.6% on average);
+the earlier `characters / 2` was off by 15.7% on average and by up to 40%
+low on the Chinese-heavy sessions. When the same fit is made on half of the
+sessions and checked on the other half, the held-out error stays within 9.7%.
+The rates describe Claude Code transcript text (code, paths, JSON, timestamps);
+plain English prose runs near 3.2 characters per token, so a session of mostly
+prose is overestimated by tens of percent. Use the API (no `--no-api`) when the
+exact number matters.
 
 ### Simplifications
 

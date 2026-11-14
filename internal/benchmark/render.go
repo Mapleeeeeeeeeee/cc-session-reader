@@ -92,13 +92,17 @@ func printCostSection(out io.Writer, results []Result, modelName string, fields 
 	}
 	fmt.Fprintln(out)
 
-	breakEvens := make([]float64, 0, len(results))
+	breakEvens := make([]float64, len(results))
+	neverCount := 0
 	saving10s := make([]float64, len(results))
 	saving100s := make([]float64, len(results))
 	for i, r := range results {
 		breakEven, saving10, saving100 := fields(r)
+		breakEvens[i] = math.Inf(1)
 		if breakEven > 0 {
-			breakEvens = append(breakEvens, float64(breakEven))
+			breakEvens[i] = float64(breakEven)
+		} else {
+			neverCount++
 		}
 		saving10s[i] = saving10
 		saving100s[i] = saving100
@@ -108,9 +112,13 @@ func printCostSection(out io.Writer, results []Result, modelName string, fields 
 	sort.Float64s(saving10s)
 	sort.Float64s(saving100s)
 
+	// A session that never breaks even counts as infinitely late, so it stays in the median.
 	beMedian := "never"
-	if len(breakEvens) > 0 {
-		beMedian = formatMedianTurn(MedianFloat64(breakEvens))
+	if median := MedianFloat64(breakEvens); !math.IsInf(median, 1) {
+		beMedian = formatMedianTurn(median)
+	}
+	if neverCount > 0 {
+		beMedian += fmt.Sprintf(" (%d of %d sessions never break even)", neverCount, len(results))
 	}
 
 	fmt.Fprintf(out, "Median break-even: %s | 10-turn saving: %.0f%% | 100-turn saving: %.0f%%\n",
