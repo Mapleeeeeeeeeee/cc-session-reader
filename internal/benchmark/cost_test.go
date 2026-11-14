@@ -10,7 +10,7 @@ import (
 const epsilon = 1e-9
 
 // Expected values below assume the Opus 4.x rates ($5 / $6.25 / $0.50).
-var testPricing = models.Opus48.Pricing
+var testPricing = models.Opus48
 
 func approxEqual(got, want float64) bool {
 	return math.Abs(got-want) < epsilon
@@ -509,5 +509,207 @@ func Test_ComputeCostMetrics_GivenNoCompression_ThenBreakEvenNeverReached(t *tes
 	}
 	if r.WarmBreakEven != -1 {
 		t.Errorf("WarmBreakEven = %d, want -1 when filteredTokens == contextTokens (no compression)", r.WarmBreakEven)
+	}
+}
+
+// Haiku 5.5 is billed per request: a request whose prompt (cache read + cache
+// write) is over 100,000 tokens pays the higher rates, and every other request
+// keeps the standard rates. Rates in $/M tokens:
+//
+//	prompt <= 100000: cache read 0.01, cache write 0.125
+//	prompt >  100000: cache read 0.05, cache write 0.625
+//
+// All expected values are hand-derived from those rates. testParams has
+// P=10000, g=12000, toolIO=3000; K=3 adds two tool round-trip calls per turn.
+func Test_CumulativeCost_GivenTieredModel_ThenEachRequestIsBilledByItsOwnPromptSize(t *testing.T) {
+	haiku := models.Haiku55
+	k3 := testParams
+	k3.K = 3.0
+	k2dot5 := testParams
+	k2dot5.K = 2.5
+
+	tests := []struct {
+		name string
+		got  float64
+		want float64
+	}{
+		// Cold existing session (CumulativeCostA)
+		{
+			name: "A_GivenEveryPromptBelowThreshold_ThenOnlyStandardRates",
+			// turn1: 60000 write = 0.0075; turn2: read 60000 + write 12000 = 0.0006 + 0.0015
+			got:  CumulativeCostA(2, 50000, testParams, haiku),
+			want: 0.0096,
+		},
+		{
+			name: "A_GivenEveryPromptAboveThreshold_ThenOnlyHigherRates",
+			// turn1: 210000 write = 0.13125; turn2: read 210000 + write 12000 = 0.0105 + 0.0075
+			got:  CumulativeCostA(2, 200000, testParams, haiku),
+			want: 0.14925,
+		},
+		{
+			name: "A_GivenPromptCrossesThresholdBetweenTurns_ThenEarlierTurnsKeepStandardRates",
+			// turn1: 90000 write (standard) = 0.01125
+			// turn2: read 90000 + write 12000 = 102000 (higher) = 0.0045 + 0.0075
+			// turn3: read 102000 + write 12000 = 114000 (higher) = 0.0051 + 0.0075
+			got:  CumulativeCostA(3, 80000, testParams, haiku),
+			want: 0.03585,
+		},
+		{
+			name: "A_GivenFirstWritePromptExactlyAtThreshold_ThenStandardRates",
+			got:  CumulativeCostA(1, 90000, testParams, haiku),
+			want: 0.0125, // 100000 * 0.125 / 1e6
+		},
+		{
+			name: "A_GivenFirstWritePromptOneTokenOverThreshold_ThenHigherRates",
+			got:  CumulativeCostA(1, 90001, testParams, haiku),
+			want: 0.062500625, // 100001 * 0.625 / 1e6
+		},
+		{
+			name: "A_GivenCacheReadAloneBelowThresholdButReadPlusWriteOver_ThenHigherRates",
+			// turn1: 98000 write (standard) = 0.01225
+			// turn2: read 98000 + write 12000 = 110000 (higher) = 0.0049 + 0.0075
+			got:  CumulativeCostA(2, 88000, testParams, haiku),
+			want: 0.02465,
+		},
+		{
+			name: "A_GivenReadPlusWriteExactlyAtThreshold_ThenStandardRates",
+			// turn1: 88000 write = 0.011; turn2: read 88000 + write 12000 = 100000 = 0.00088 + 0.0015
+			got:  CumulativeCostA(2, 78000, testParams, haiku),
+			want: 0.01338,
+		},
+		{
+			name: "A_GivenToolCallsAllAboveThreshold_ThenHigherRatesForEveryCall",
+			// call1: 210000 write = 0.13125
+			// tool1: read 210000 + write 3000 = 0.0105 + 0.001875
+			// tool2: read 213000 + write 3000 = 0.01065 + 0.001875
+			got:  CumulativeCostA(1, 200000, k3, haiku),
+			want: 0.15615,
+		},
+		{
+			name: "A_GivenPromptCrossesThresholdBetweenToolCalls_ThenCallsBeforeCrossingKeepStandardRates",
+			// call1: 95000 write (standard) = 0.011875
+			// tool1: read 95000 + write 3000 = 98000 (standard) = 0.00095 + 0.000375
+			// tool2: read 98000 + write 3000 = 101000 (higher) = 0.0049 + 0.001875
+			got:  CumulativeCostA(1, 85000, k3, haiku),
+			want: 0.019975,
+		},
+		{
+			name: "A_GivenFractionalToolCallCrossesThreshold_ThenItIsWeightedAtHigherRates",
+			// call1 = 0.011875; tool1 (standard) = 0.001325
+			// fractional tool2: 0.5 * (read 98000 + write 3000 = 101000 (higher) = 0.0049 + 0.001875)
+			got:  CumulativeCostA(1, 85000, k2dot5, haiku),
+			want: 0.0165875,
+		},
+
+		// Warm existing session (CumulativeCostAWarm)
+		{
+			name: "AWarm_GivenReadPlusWriteExactlyAtThreshold_ThenStandardRates",
+			got:  CumulativeCostAWarm(1, 88000, testParams, haiku),
+			want: 0.00238, // read 88000 * 0.01 + write 12000 * 0.125, per M
+		},
+		{
+			name: "AWarm_GivenReadPlusWriteOneTokenOverThreshold_ThenHigherRates",
+			got:  CumulativeCostAWarm(1, 88001, testParams, haiku),
+			want: 0.01190005, // read 88001 * 0.05 + write 12000 * 0.625, per M
+		},
+		{
+			name: "AWarm_GivenPromptCrossesThresholdBetweenTurns_ThenEarlierTurnsKeepStandardRates",
+			// turn1: read 80000 + write 12000 = 92000 (standard) = 0.0008 + 0.0015
+			// turn2: read 92000 + write 12000 = 104000 (higher) = 0.0046 + 0.0075
+			got:  CumulativeCostAWarm(2, 80000, testParams, haiku),
+			want: 0.0144,
+		},
+
+		// New session with one-shot setup (CumulativeCostB)
+		{
+			name: "B_GivenSetupAndTurnPromptsExactlyAtThreshold_ThenStandardRates",
+			// setup: 90000 write = 0.01125; turn1: read 90000 + write 10000 = 100000 = 0.0009 + 0.00125
+			got:  CumulativeCostB(1, 0, 50000, testParams, haiku),
+			want: 0.0134,
+		},
+		{
+			name: "B_GivenSetupBelowThresholdAndTurnOneTokenOver_ThenOnlyTheTurnPaysHigherRates",
+			// setup: 90001 write (standard) = 0.011250125
+			// turn1: read 90001 + write 10000 = 100001 (higher) = 0.0045000500 + 0.00625
+			got:  CumulativeCostB(1, 0, 50001, testParams, haiku),
+			want: 0.022000175,
+		},
+		{
+			name: "B_GivenSetupAboveThreshold_ThenSetupPaysHigherRates",
+			got:  CumulativeCostB(0, 0, 70000, testParams, haiku),
+			want: 0.06875, // 110000 * 0.625 / 1e6
+		},
+
+		// New session with paginated setup (CumulativeCostBWithInjectPages)
+		{
+			name: "BPages_GivenEveryRequestBelowThreshold_ThenOnlyStandardRates",
+			// 40000 overhead write + five pages of 10000: reads 40000..80000 step 10000 (300000 in total)
+			// reads 300000 * 0.01 + writes (40000 + 50000) * 0.125, per M
+			got:  CumulativeCostBWithInjectPages(0, 50000, 5, testParams, haiku),
+			want: 0.01425,
+		},
+		{
+			name: "BPages_GivenEveryRequestAboveThreshold_ThenOnlyHigherRates",
+			// overhead 120000, five pages of 10000: reads 120000..160000 step 10000
+			// reads 700000 * 0.05 + writes (120000 + 50000) * 0.625, per M
+			got: CumulativeCostBWithInjectPages(0, 50000, 5, CostParams{Overhead: 120000}, haiku),
+			// 0.035 + 0.10625
+			want: 0.14125,
+		},
+		{
+			name: "BPages_GivenPromptCrossesThresholdDuringSetup_ThenOnlyLaterPagesPayHigherRates",
+			// overhead 40000, five pages of 20000
+			// overhead write: 40000 = 0.005
+			// page0: read 40000 + write 20000 = 0.0004 + 0.0025
+			// page1: read 60000 + write 20000 = 0.0006 + 0.0025
+			// page2: read 80000 + write 20000 = 100000, standard = 0.0008 + 0.0025
+			// page3: read 100000 + write 20000 = 120000, higher = 0.005 + 0.0125
+			// page4: read 120000 + write 20000 = 140000, higher = 0.006 + 0.0125
+			got:  CumulativeCostBWithInjectPages(0, 100000, 5, testParams, haiku),
+			want: 0.0503,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !approxEqual(tt.got, tt.want) {
+				t.Fatalf("cost = %.10f, want %.10f", tt.got, tt.want)
+			}
+		})
+	}
+}
+
+func Test_CumulativeCost_GivenNonTieredModel_ThenPromptSizeDoesNotChangeRates(t *testing.T) {
+	k3 := testParams
+	k3.K = 3.0
+	opus := models.Opus48 // $0.50 read, $6.25 write per M at every prompt size
+
+	tests := []struct {
+		name string
+		got  float64
+		want float64
+	}{
+		{
+			name: "GivenPromptCrossesHundredThousandBetweenTurns",
+			// turn1: 90000 write = 0.5625; turn2: read 90000 + write 12000 = 0.045 + 0.075
+			got:  CumulativeCostA(2, 80000, testParams, opus),
+			want: 0.6825,
+		},
+		{
+			name: "GivenPromptCrossesHundredThousandBetweenToolCalls",
+			// call1: 95000 write = 0.59375
+			// tool1: read 95000 + write 3000 = 0.0475 + 0.01875
+			// tool2: read 98000 + write 3000 = 0.049 + 0.01875
+			got:  CumulativeCostA(1, 85000, k3, opus),
+			want: 0.72775,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !approxEqual(tt.got, tt.want) {
+				t.Fatalf("cost = %.10f, want %.10f", tt.got, tt.want)
+			}
+		})
 	}
 }
