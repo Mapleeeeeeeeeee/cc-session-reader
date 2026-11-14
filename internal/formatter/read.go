@@ -76,7 +76,16 @@ func renderReadEvents(events []session.Event, rc renderContext) error {
 			}
 			hasText := strings.TrimSpace(event.Assistant.Text) != ""
 			hasTools := len(event.Assistant.ToolUses) > 0
-			if hasText {
+			isAPIError := hasText && event.Assistant.IsAPIError
+			switch {
+			case isAPIError:
+				rendered := renderAPIError(event.Assistant)
+				flush()
+				writeEventBlock(rc, event.Timestamp, rendered.role, rendered.body, true)
+				if rc.sink != nil {
+					rc.sink(CategoryUserText, rendered.body)
+				}
+			case hasText:
 				flush()
 				writeEventBlock(rc, event.Timestamp, "assistant", event.Assistant.Text, false)
 				if rc.sink != nil {
@@ -86,7 +95,7 @@ func renderReadEvents(events []session.Event, rc renderContext) error {
 			for _, tool := range event.Assistant.ToolUses {
 				pendingTools = append(pendingTools, summarizeToolUse(tool))
 			}
-			if hasText && !hasTools {
+			if hasText && !hasTools && !isAPIError {
 				fmt.Fprintln(rc.out)
 			}
 

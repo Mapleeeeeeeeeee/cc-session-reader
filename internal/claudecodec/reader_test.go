@@ -161,8 +161,8 @@ func TestParseLine_ToolResult_GivenExitCodeZero_ThenNotSniffedAsFailed(t *testin
 }
 
 // TestParseLine_ToolResult_GivenExitCodeMentionedMidSentence_ThenNotSniffedAsFailed
-// guards the nonZeroExitCodeLine regex anchor `(?m)^Exit code (\d+)\s*$`: it
-// only matches a bare "Exit code N" line, not the phrase appearing inside
+// guards the nonZeroExitCodeLine regex anchor `^Exit code (\d+)\s*$`: it
+// only matches a bare "Exit code N" first line, not the phrase appearing inside
 // other text. This protects against a future edit that loosens the anchor
 // (e.g. dropping `^`/`$` or switching to a plain substring match), which
 // would sniff any result mentioning "Exit code 1" as FAILED regardless of

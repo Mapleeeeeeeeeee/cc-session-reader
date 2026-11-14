@@ -189,6 +189,39 @@ func classifyContinuePrompt(text string, isMeta bool) *session.UserMessage {
 	return &session.UserMessage{Text: text, IsContinuePrompt: true}
 }
 
+// originKindAutoContinuation is the origin.kind Claude Code writes on the
+// prompts it sends by itself to resume work, such as the retry offer after a
+// permission was granted and the continuation after a usage limit reset.
+const originKindAutoContinuation = "auto-continuation"
+
+// invocationNoticePattern matches the opening of the isMeta text Claude Code
+// writes after a slash command that launches a published Artifact type:
+// "`/design` was invoked: ...". Only /design has been seen, so the command
+// name is not fixed. Group 1 is the command with its slash.
+var invocationNoticePattern = regexp.MustCompile("^`(/[^`\\s]+)` was invoked:")
+
+// classifyInjectedUserMessage detects user entries Claude Code writes itself
+// by the fields it stamps on them, falling back to the invocation notice's
+// fixed wording only where no field exists. It returns nil for any other
+// entry. isMeta alone is not a marker (see harnessMarkerFields.IsMeta), so
+// the notice requires both isMeta and its opening sentence.
+func classifyInjectedUserMessage(text string, fields harnessMarkerFields) *session.UserMessage {
+	if fields.UsageLimitNote != "" {
+		return &session.UserMessage{Text: text, UsageLimitNote: fields.UsageLimitNote}
+	}
+	if fields.Origin != nil && fields.Origin.Kind == originKindAutoContinuation {
+		return &session.UserMessage{Text: text, IsAutoContinuation: true}
+	}
+	if !fields.IsMeta {
+		return nil
+	}
+	match := invocationNoticePattern.FindStringSubmatch(strings.TrimSpace(text))
+	if match == nil {
+		return nil
+	}
+	return &session.UserMessage{Text: text, IsInvocationNotice: true, InvokedCommand: match[1]}
+}
+
 // classifyCompactionSummaryByField detects a harness-injected conversation
 // summary via the top-level isCompactSummary field Claude Code writes on the
 // entry, taking priority over classifyHarnessUserMessage's text-based prefix

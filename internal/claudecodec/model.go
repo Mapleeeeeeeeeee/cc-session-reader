@@ -14,7 +14,30 @@ var userAnswerPrefixes = []string{
 	"Your questions have been answered:",
 }
 
+// harnessMarkerFields are the top-level fields Claude Code stamps on user
+// entries it writes itself. They live in their own struct so ScanHeader and
+// the full parse decode them from one definition.
+type harnessMarkerFields struct {
+	// IsMeta is not a harness marker on its own: image placeholders and
+	// stop-hook feedback also carry it (ADR-009), so it only counts together
+	// with another signal.
+	IsMeta bool `json:"isMeta"`
+
+	// UsageLimitNote is "wrap_up" or "release" on the notes injected around a
+	// usage limit.
+	UsageLimitNote string `json:"usageLimitNote"`
+
+	Origin *rawOrigin `json:"origin"`
+}
+
+// rawOrigin is the top-level origin object. Only its kind is read.
+type rawOrigin struct {
+	Kind string `json:"kind"`
+}
+
 type rawEntry struct {
+	harnessMarkerFields
+
 	Type          string          `json:"type"`
 	Subtype       string          `json:"subtype"`
 	Timestamp     string          `json:"timestamp"`
@@ -22,14 +45,18 @@ type rawEntry struct {
 	ToolUseResult json.RawMessage `json:"toolUseResult"`
 	Cwd           string          `json:"cwd"`
 
-	// IsMeta and SourceToolUseID identify a harness-injected user entry that
-	// is the tail of an earlier tool_use block (e.g. a skill body injection
-	// following a Skill tool call), correlated by tool_use_id. Not every
-	// isMeta entry is a skill injection — image placeholders and stop-hook
-	// feedback also carry it — so the link must be resolved against the
-	// preceding tool_use's name, not treated as a marker on its own.
-	IsMeta          bool   `json:"isMeta"`
+	// SourceToolUseID, together with IsMeta, identifies a harness-injected
+	// user entry that is the tail of an earlier tool_use block (e.g. a skill
+	// body injection following a Skill tool call), correlated by tool_use_id.
+	// Not every isMeta entry is a skill injection, so the link must be
+	// resolved against the preceding tool_use's name.
 	SourceToolUseID string `json:"sourceToolUseID"`
+
+	// IsAPIErrorMessage is set on the assistant entries Claude Code writes to
+	// report a failed API call or a usage limit. Their model field is
+	// "<synthetic>", but so is that of some real model answers, so the model
+	// field cannot tell the two apart.
+	IsAPIErrorMessage bool `json:"isApiErrorMessage"`
 
 	// PromptSource is written by Claude Code (CLI >= 2.1.165) on some user
 	// entries: "typed", "sdk", "system", "queued", "suggestion_accepted".
@@ -286,15 +313,16 @@ func countContentLines(content string) int {
 	return len(lines)
 }
 
-// nonZeroExitCodeLine matches a bare Bash "Exit code N" line. Claude Code
-// appends this line to Bash results regardless of outcome, so N must be
-// checked: "Exit code 0" is a success marker, not a failure signature.
-var nonZeroExitCodeLine = regexp.MustCompile(`(?m)^Exit code (\d+)\s*$`)
+// nonZeroExitCodeLine matches the bare "Exit code N" line Claude Code puts at
+// the top of a failed Bash result. N must be checked: "Exit code 0" is a
+// success marker, not a failure signature.
+var nonZeroExitCodeLine = regexp.MustCompile(`^Exit code (\d+)\s*$`)
 
-// hookErrorSignature matches PreToolUse/PostToolUse hook rejection text,
-// which Claude Code renders as ordinary result content ending in
-// "... hook error" rather than setting is_error.
-var hookErrorSignature = regexp.MustCompile(`hook error`)
+// hookErrorSignature matches the first line of a PreToolUse/PostToolUse hook
+// rejection, which Claude Code renders as ordinary result content rather than
+// setting is_error. Two shapes are seen: "PreToolUse:Bash hook error: ..." and
+// the older "PreToolUse:Bash [<command>] hook error: ...".
+var hookErrorSignature = regexp.MustCompile(`^(?:Pre|Post)ToolUse(?::\S+)?(?: \[.*\])? hook error`)
 
 // determineSuccess applies the ADR-003 status ladder: the first applicable
 // signal wins. explicitSuccess is nil when toolUseResult.success was absent
@@ -312,17 +340,22 @@ func determineSuccess(explicitSuccess *bool, isError bool, text string) bool {
 	return true
 }
 
-// hasKnownFailureSignature sniffs result text for the small, enumerated set
-// of known-failure patterns from ADR-003. This is deliberately not a general
-// heuristic: a false FAILED misleads the reader as badly as a false ok, so
-// new signatures are added only with a real transcript sample as evidence.
+// hasKnownFailureSignature sniffs the first line of the result text for the
+// small, enumerated set of known-failure patterns from ADR-003. This is
+// deliberately not a general heuristic: a false FAILED misleads the reader as
+// badly as a false ok, so new signatures are added only with a real transcript
+// sample as evidence.
+//
+// Only the first line is read because both signatures open the result. A
+// signature further down is the body of a successful result that happens to
+// quote one, such as a paged `cc-session inherit` output of a session that
+// hit a hook error.
 func hasKnownFailureSignature(text string) bool {
-	for _, match := range nonZeroExitCodeLine.FindAllStringSubmatch(text, -1) {
-		if match[1] != "0" {
-			return true
-		}
+	firstLine, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
+	if match := nonZeroExitCodeLine.FindStringSubmatch(firstLine); match != nil && match[1] != "0" {
+		return true
 	}
-	return hookErrorSignature.MatchString(text)
+	return hookErrorSignature.MatchString(firstLine)
 }
 
 func extractToolResultText(blocks []rawContentBlock) (string, string, bool) {
