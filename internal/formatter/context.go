@@ -53,17 +53,7 @@ func renderContextEvents(events []session.Event, agentIDs map[string]bool, opts 
 				continue
 			}
 			flush()
-			prefix := "U"
-			switch rendered.role {
-			case RoleHarness:
-				prefix = "H"
-			case RoleUserSDK:
-				// ADR-009: "S" sits next to "U"/"H" for a promptSource="sdk"
-				// message, which is still the user's position but not typed
-				// by a person.
-				prefix = "S"
-			}
-			fmt.Fprintf(out, "%s: %s\n\n", prefix, rendered.body)
+			fmt.Fprintf(out, "%s: %s\n\n", contextRolePrefix(rendered.role), rendered.body)
 
 		case session.EventAssistantMessage:
 			if event.Assistant == nil {
@@ -77,7 +67,12 @@ func renderContextEvents(events []session.Event, agentIDs map[string]bool, opts 
 			}
 			if strings.TrimSpace(event.Assistant.Text) != "" {
 				flush()
-				fmt.Fprintf(out, "A: %s\n\n", event.Assistant.Text)
+				if event.Assistant.IsAPIError {
+					rendered := renderAPIError(event.Assistant)
+					fmt.Fprintf(out, "%s: %s\n\n", contextRolePrefix(rendered.role), rendered.body)
+				} else {
+					fmt.Fprintf(out, "A: %s\n\n", event.Assistant.Text)
+				}
 			}
 			for _, tool := range event.Assistant.ToolUses {
 				pendingTools = append(pendingTools, summarizeToolUse(tool))
@@ -103,6 +98,22 @@ func renderContextEvents(events []session.Event, agentIDs map[string]bool, opts 
 
 	flush()
 	return nil
+}
+
+// contextRolePrefix maps a role label to the one-letter prefix of the context
+// format.
+func contextRolePrefix(role string) string {
+	switch role {
+	case RoleHarness:
+		return "H"
+	case RoleUserSDK:
+		// ADR-009: "S" sits next to "U"/"H" for a promptSource="sdk"
+		// message, which is still the user's position but not typed
+		// by a person.
+		return "S"
+	default:
+		return "U"
+	}
 }
 
 // writeContextHeader writes the one-line session header that opens every

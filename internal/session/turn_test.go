@@ -72,6 +72,18 @@ func TestCountsAsTurn_GivenMessageKind_WhenCounted_ThenFollowsWorkUnitPolicy(t *
 			message: UserMessage{Text: "Continue from where you left off.", IsContinuePrompt: true},
 			want:    false,
 		},
+		"an invocation notice keeps counting as it did before it was classified": {
+			message: UserMessage{Text: "…", IsInvocationNotice: true, InvokedCommand: "/design"},
+			want:    true,
+		},
+		"a usage-limit note keeps counting as it did before it was classified": {
+			message: UserMessage{Text: "…", UsageLimitNote: "wrap_up"},
+			want:    true,
+		},
+		"an auto-continuation prompt keeps counting as it did before it was classified": {
+			message: UserMessage{Text: "…", IsAutoContinuation: true},
+			want:    true,
+		},
 		"a worker-fork preamble is a turn: it starts the fork's work": {
 			message: UserMessage{Text: "…", IsForkBoilerplate: true},
 			want:    true,

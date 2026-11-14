@@ -167,6 +167,15 @@ func renderUserMessage(user *session.UserMessage, opts FormatOptions, seenSkills
 	if user.IsContinuePrompt {
 		return harnessRender("[continue]")
 	}
+	if user.IsInvocationNotice {
+		return harnessRender("[invoked: " + user.InvokedCommand + "]")
+	}
+	if user.UsageLimitNote != "" {
+		return harnessRender("[usage limit note: " + user.UsageLimitNote + "]")
+	}
+	if user.IsAutoContinuation {
+		return harnessRender("[auto-continue]")
+	}
 
 	if strings.TrimSpace(user.Text) == "" {
 		return userRender{}
@@ -176,6 +185,14 @@ func renderUserMessage(user *session.UserMessage, opts FormatOptions, seenSkills
 
 func harnessRender(body string) userRender {
 	return userRender{body: body, role: RoleHarness, show: true}
+}
+
+// renderAPIError resolves how an API error message from Claude Code appears.
+// Its text stays in full because the error type and the time the limit
+// resets are the useful part, but it is labelled as the harness: the model
+// never said it.
+func renderAPIError(assistant *session.AssistantMessage) userRender {
+	return harnessRender("[api error] " + strings.TrimSpace(assistant.Text))
 }
 
 // plainTextRole resolves the role label for a message none of the text

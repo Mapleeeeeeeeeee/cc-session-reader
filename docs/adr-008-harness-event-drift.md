@@ -104,6 +104,38 @@ Reader 靠比對字面字串認出 Claude Code 寫進 transcript 的事件。那
 標為已知；不在已知清單、又帶 `message.role` 的 type 標 `ATTENTION`，可能是新的對話型別，排在最前面。
 已知清單同樣是手寫的，新的無害 type 出現時會先以未知型別被列出，確認後再補進清單。
 
+**追加樣本（2026-11-14，harness 自己寫的文字）**：v0.1.84 的 `read` 把四種 harness 自己寫的文字印成 `user:` 或 `assistant:`。
+掃本機 6,813 個 transcript（2026-07-01 至今，含 subagent 層）找到的形狀：
+
+| 形狀 | 結構欄位 | 則數 | 呈現 | 算 turn |
+|---|---|---:|---|---|
+| `` `/design` was invoked: …`` | `isMeta` + `turnCompanion`，沒有 `sourceToolUseID` | 4 | `[invoked: /design]` | 是 |
+| `[Usage limit reached; …` / `[Earlier usage-limit notes no longer app…` | `usageLimitNote`（`wrap_up` 16、`release` 15） | 31 | `[usage limit note: wrap_up]` | 是 |
+| `Permission granted for …`、`Your claude.ai usage limit has reset…`、`You can continue now…` | `origin.kind = "auto-continuation"` | 7 | `[auto-continue]` | 是 |
+| `API Error: …`、`You've hit your N-hour limit · resets …`、`Login expired …` | assistant 的 `isApiErrorMessage: true`（model 都是 `<synthetic>`） | 636 | `[api error] <原文>` | 不適用 |
+
+- 前三種比照第 2 項歸為 harness 並壓成短標記，偵測優先看結構欄位。`/design` 通知沒有專屬欄位，
+  比對條件是 `isMeta` 加上開頭句型 `` `/<指令>` was invoked: ``。只有 `isMeta` 不夠，ADR-009 否決過；
+  只有句型也不夠，使用者自己打這句話時不會帶 `isMeta`。指令名稱不寫死 `/design`：本機只看到 `/design`，
+  句型是 harness 的，換成別的 Artifact 類型指令時不必再改。通知內文的「The brief:」後面是使用者的需求，
+  但同一份需求已經在前一筆 command injection 的 `<command-args>` 裡，所以通知整段壓掉不損失資訊。
+- `list` 的預覽（`ScanHeader`）跳過這三種，原本 `/design` 的通知會變成 session 的預覽文字。
+  兩條路徑共用 `classifyInjectedUserMessage`，欄位定義收在 `harnessMarkerFields`。
+- 這三種的 turn 判定維持分類前的結果（都算）：它們原本是一般訊息，預設就算。
+  `turnCompanion` 的語意是「這筆不是發起這一輪的」，暗示 `/design` 通知與 usage-limit 通知不該算，
+  但沒有逐種量測「啟動一輪」的比例，也牽涉上面「沒有解決的」那段 slash command 的 turn 歸屬，
+  這次只修標籤，不動 K。
+- API 錯誤訊息只認 `isApiErrorMessage`，不認 `model: "<synthetic>"`。本機另有 60 則 `<synthetic>` 訊息帶
+  `isApiErrorMessage: false`，其中 39 則是 `No response requested.`，其餘 21 則是長篇的實質回答
+  （讀開頭的樣本像是側問的回覆）。用 model 判斷會把那 21 則標成 harness。636 則 `isApiErrorMessage: true` 的 model 全是 `<synthetic>`，
+  沒有 model 不是 `<synthetic>` 的。
+- 錯誤訊息保留原文並加 `[api error]` 前綴，標在 `harness:` 角色下：錯誤種類與 reset 時間就是使用者回顧時要看的資訊，
+  原文都在一行內。事件仍是 assistant 訊息（`AssistantMessage.IsAPIError`），所以 `stats` 的 API 呼叫數、`benchmark`
+  的讀取不受影響。`context` 格式用 `H:` 前綴。
+- `No response requested.`（39 則，`<synthetic>`、`isApiErrorMessage: false`）仍以 `assistant:` 印出。它也是 harness 寫的，
+  但沒有結構欄位可以把它跟模型的真實回覆分開，只有文字比對可用；這次不處理。
+- 圖片佔位符（`[Image: …]`，帶 `isMeta` 與 `turnCompanion`）的行為不變，有測試釘住。
+
 ## 1. `noiseTypes` 漏了 8 個 CLI 後來才加的 entry type
 
 `noiseTypes` 是手寫的白名單，收 13 個型別。實測出現、不在名單裡的有 8 個：

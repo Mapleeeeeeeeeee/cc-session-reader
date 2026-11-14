@@ -14,7 +14,30 @@ var userAnswerPrefixes = []string{
 	"Your questions have been answered:",
 }
 
+// harnessMarkerFields are the top-level fields Claude Code stamps on user
+// entries it writes itself. They live in their own struct so ScanHeader and
+// the full parse decode them from one definition.
+type harnessMarkerFields struct {
+	// IsMeta is not a harness marker on its own: image placeholders and
+	// stop-hook feedback also carry it (ADR-009), so it only counts together
+	// with another signal.
+	IsMeta bool `json:"isMeta"`
+
+	// UsageLimitNote is "wrap_up" or "release" on the notes injected around a
+	// usage limit.
+	UsageLimitNote string `json:"usageLimitNote"`
+
+	Origin *rawOrigin `json:"origin"`
+}
+
+// rawOrigin is the top-level origin object. Only its kind is read.
+type rawOrigin struct {
+	Kind string `json:"kind"`
+}
+
 type rawEntry struct {
+	harnessMarkerFields
+
 	Type          string          `json:"type"`
 	Subtype       string          `json:"subtype"`
 	Timestamp     string          `json:"timestamp"`
@@ -22,14 +45,18 @@ type rawEntry struct {
 	ToolUseResult json.RawMessage `json:"toolUseResult"`
 	Cwd           string          `json:"cwd"`
 
-	// IsMeta and SourceToolUseID identify a harness-injected user entry that
-	// is the tail of an earlier tool_use block (e.g. a skill body injection
-	// following a Skill tool call), correlated by tool_use_id. Not every
-	// isMeta entry is a skill injection — image placeholders and stop-hook
-	// feedback also carry it — so the link must be resolved against the
-	// preceding tool_use's name, not treated as a marker on its own.
-	IsMeta          bool   `json:"isMeta"`
+	// SourceToolUseID, together with IsMeta, identifies a harness-injected
+	// user entry that is the tail of an earlier tool_use block (e.g. a skill
+	// body injection following a Skill tool call), correlated by tool_use_id.
+	// Not every isMeta entry is a skill injection, so the link must be
+	// resolved against the preceding tool_use's name.
 	SourceToolUseID string `json:"sourceToolUseID"`
+
+	// IsAPIErrorMessage is set on the assistant entries Claude Code writes to
+	// report a failed API call or a usage limit. Their model field is
+	// "<synthetic>", but so is that of some real model answers, so the model
+	// field cannot tell the two apart.
+	IsAPIErrorMessage bool `json:"isApiErrorMessage"`
 
 	// PromptSource is written by Claude Code (CLI >= 2.1.165) on some user
 	// entries: "typed", "sdk", "system", "queued", "suggestion_accepted".

@@ -226,6 +226,8 @@ func parseLineWithToolCalls(line []byte, toolCalls map[string]toolCallInfo) (ses
 			event.User = classified
 		} else if classified := classifyContinuePrompt(text, raw.IsMeta); classified != nil {
 			event.User = classified
+		} else if classified := classifyInjectedUserMessage(text, raw.harnessMarkerFields); classified != nil {
+			event.User = classified
 		} else if classified := classifySkillInjectionByLink(text, raw.IsMeta, raw.SourceToolUseID, toolCalls); classified != nil {
 			event.User = classified
 		} else if classified := classifyCommandUserMessage(text); classified != nil {
@@ -246,6 +248,7 @@ func parseLineWithToolCalls(line []byte, toolCalls map[string]toolCallInfo) (ses
 		return event, true, nil
 	case "assistant":
 		assistant := raw.Message.Assistant()
+		assistant.IsAPIError = raw.IsAPIErrorMessage
 		if strings.TrimSpace(assistant.Text) == "" && len(assistant.ToolUses) == 0 && len(assistant.Thinking) == 0 {
 			return session.Event{}, false, nil
 		}
@@ -311,6 +314,8 @@ const requestInterruptedPrefix = "[Request interrupted by user"
 // its text normalization across string vs. block-array content) stays a
 // single source of truth shared with the full parse path in classify.go.
 type headerLine struct {
+	harnessMarkerFields
+
 	Type      string      `json:"type"`
 	Timestamp string      `json:"timestamp"`
 	Message   *rawMessage `json:"message"`
@@ -369,6 +374,9 @@ func (Codec) ScanHeader(path string) (*session.HeaderInfo, error) {
 		}
 		if classified := classifyHarnessUserMessage(text); classified != nil {
 			captureCommandFallback(&commandFallback, text)
+			continue
+		}
+		if classifyInjectedUserMessage(text, h.harnessMarkerFields) != nil {
 			continue
 		}
 		trimmed := strings.TrimSpace(text)

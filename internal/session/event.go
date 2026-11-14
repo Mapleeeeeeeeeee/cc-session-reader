@@ -176,6 +176,25 @@ type UserMessage struct {
 	// notice.
 	IsStopHookFeedback bool
 
+	// IsInvocationNotice marks the isMeta text Claude Code writes after a
+	// slash command that launches a published Artifact type ("`/design` was
+	// invoked: ..."). InvokedCommand is the command with its slash. The
+	// command's own arguments already appear in the command injection entry
+	// before it.
+	IsInvocationNotice bool
+	InvokedCommand     string
+
+	// UsageLimitNote is the value of the top-level "usageLimitNote" field
+	// Claude Code writes on the notes it injects around a usage limit:
+	// "wrap_up" when the limit is reached, "release" when it no longer
+	// applies. Empty on every other message.
+	UsageLimitNote string
+
+	// IsAutoContinuation marks an entry whose origin.kind is
+	// "auto-continuation": the prompt Claude Code sends by itself to resume
+	// work, after a permission was granted or after a usage limit reset.
+	IsAutoContinuation bool
+
 	// PromptSource carries the top-level "promptSource" field Claude Code
 	// (CLI >= 2.1.165) writes on some user entries (see the PromptSource*
 	// constants). Empty when the field is absent: older CLI versions never
@@ -244,7 +263,8 @@ func (u UserMessage) IsCompactedHarnessInjection() bool {
 		u.IsForkBoilerplate || u.IsNoVisibleOutputNudge ||
 		u.IsWorkflowUserRequest || u.IsWorkflowComputedTask ||
 		u.IsHandbackNudge || u.IsStructuredOutputNudge ||
-		u.IsCutOffResumeNudge || u.IsStopHookFeedback
+		u.IsCutOffResumeNudge || u.IsStopHookFeedback ||
+		u.IsInvocationNotice || u.UsageLimitNote != "" || u.IsAutoContinuation
 }
 
 // CountsAsTurn reports whether this message starts a unit of agent work: an
@@ -276,6 +296,10 @@ func (u UserMessage) IsCompactedHarnessInjection() bool {
 // not describe a round already underway. IsHandbackNudge,
 // IsStructuredOutputNudge, and IsCutOffResumeNudge count for the same
 // reason — each demands a new response, not a report of one already given.
+//
+// IsInvocationNotice, UsageLimitNote and IsAutoContinuation keep counting as
+// they did when they were still read as plain messages: classifying them was
+// a labelling fix, and no sample measures what follows them.
 //
 // IsMidTurnUserMessage is false: the harness's own wording says the message
 // "arrives ... within the running turn," so it does not start a new one —
@@ -314,7 +338,8 @@ func (u UserMessage) CountsAsTurn() bool {
 	if u.IsTeammateMessage || u.IsTaskNotification || u.IsCompactionSummary ||
 		u.IsCoordinatorMessage || u.IsForkBoilerplate || u.IsNoVisibleOutputNudge ||
 		u.IsWorkflowComputedTask || u.IsHandbackNudge || u.IsStructuredOutputNudge ||
-		u.IsCutOffResumeNudge || u.IsStopHookFeedback {
+		u.IsCutOffResumeNudge || u.IsStopHookFeedback ||
+		u.IsInvocationNotice || u.UsageLimitNote != "" || u.IsAutoContinuation {
 		return true
 	}
 	return !u.IsCommandNoise &&
@@ -367,6 +392,11 @@ type AssistantMessage struct {
 	Thinking []string
 	ToolUses []ToolUse
 	Usage    *Usage
+
+	// IsAPIError marks a message Claude Code wrote itself to report a failed
+	// API call or a usage limit (top-level isApiErrorMessage). Its Text is
+	// the error, not something the model said.
+	IsAPIError bool
 }
 
 type ToolUse struct {
