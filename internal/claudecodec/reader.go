@@ -178,7 +178,7 @@ func parseLineWithToolCalls(line []byte, toolCalls map[string]toolCallInfo) (ses
 		RawType:   raw.Type,
 	}
 
-	if raw.Type == "system" && raw.Subtype == "compact_boundary" {
+	if raw.Type == recordTypeSystem && raw.Subtype == systemSubtypeCompaction {
 		event.Kind = session.EventCompactBoundary
 		return event, true, nil
 	}
