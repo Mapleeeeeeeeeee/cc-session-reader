@@ -43,6 +43,7 @@ func runNoAPIBenchmark(t *testing.T, root string) string {
 	return stdout.String()
 }
 
+// Regression: benchmark priced 1-hour cache writes at the 5-minute rate (v0.1.84)
 func TestRunBenchmark_GivenSessionsWithDifferentCacheWriteTTL_ThenEachRowShowsItsOneHourShare(t *testing.T) {
 	root := t.TempDir()
 	writeBenchmarkSession(t, root, "11111111-1111-1111-1111-111111111111",

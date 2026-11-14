@@ -11,6 +11,8 @@ func withOneHourShare(sp CostParams, share float64) CostParams {
 	return sp
 }
 
+// Regression: benchmark priced 1-hour cache writes at the 5-minute rate (v0.1.84)
+//
 // Cache write rates in $/M tokens, from the official price list:
 //
 //	Opus 4.8 (testPricing): 5-minute 6.25, 1-hour 10.00
@@ -145,6 +147,8 @@ func Test_CumulativeCost_GivenOneHourWriteShare_ThenCacheWritesUseTheBlendedRate
 	}
 }
 
+// Regression: benchmark priced 1-hour cache writes at the 5-minute rate (v0.1.84)
+//
 // Warm: the existing session already holds its context in cache, so staying
 // pays almost no cache write, while opening a new session pays one large
 // write. A dearer write therefore lifts the new session's cost and pushes
